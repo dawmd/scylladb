@@ -8,18 +8,21 @@
 
 #pragma once
 
-#include <cstdint>
-#include <filesystem>
 #include <seastar/core/abort_source.hh>
-#include <seastar/core/semaphore.hh>
+#include <seastar/core/future.hh>
 #include <seastar/core/gate.hh>
 #include <seastar/core/memory.hh>
-#include <seastar/core/future.hh>
+#include <seastar/core/semaphore.hh>
+
+#include "enum_set.hh"
+#include "locator/host_id.hh"
 #include "seastarx.hh"
-#include <unordered_set>
 #include "utils/small_vector.hh"
 #include "utils/updateable_value.hh"
-#include "enum_set.hh"
+
+#include <cstdint>
+#include <filesystem>
+#include <unordered_set>
 
 // Usually we don't define namespace aliases in our headers
 // but this one is already entrenched.
@@ -30,8 +33,7 @@ class storage_proxy;
 }
 
 namespace gms {
-    class gossiper;
-    class inet_address;
+class gossiper;
 } // namespace gms
 
 namespace db {
@@ -46,7 +48,7 @@ class manager;
 
 class space_watchdog {
 private:
-    using ep_key_type = gms::inet_address;
+    using ep_key_type = locator::host_id;
     static const std::chrono::seconds _watchdog_period;
 
     struct manager_hash {

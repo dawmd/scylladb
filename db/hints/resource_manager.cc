@@ -102,7 +102,7 @@ future<> space_watchdog::scan_one_ep_dir(fs::path path, manager& shard_manager, 
                 return lister::scan_dir(path, lister::dir_entry_types::of<directory_entry_type::regular>(), [this, ep_key, &shard_manager] (fs::path dir, directory_entry de) {
                     // Put the current end point ID to state.eps_with_pending_hints when we see the second hints file in its directory
                     if (_files_count == 1) {
-                        shard_manager.add_ep_with_pending_hints(ep_key);
+                        shard_manager.add_host_with_pending_hints(ep_key);
                     }
                     ++_files_count;
 
@@ -137,7 +137,7 @@ void space_watchdog::on_timer() {
     for (auto& per_device_limits : _per_device_limits_map | boost::adaptors::map_values) {
         _total_size = 0;
         for (manager& shard_manager : per_device_limits.managers) {
-            shard_manager.clear_eps_with_pending_hints();
+            shard_manager.clear_hosts_with_pending_hints();
             lister::scan_dir(shard_manager.hints_dir(), lister::dir_entry_types::of<directory_entry_type::directory>(), [this, &shard_manager] (fs::path dir, directory_entry de) {
                 _files_count = 0;
                 // Let's scan per-end-point directories and enumerate hints files...
@@ -146,7 +146,7 @@ void space_watchdog::on_timer() {
                 // not hintable).
                 // If exists - let's take a file update lock so that files are not changed under our feet. Otherwise, simply
                 // continue to enumeration - there is no one to change them.
-                auto it = shard_manager.find_ep_manager(de.name);
+                auto it = shard_manager.find_host_manager(de.name);
                 if (it != shard_manager.ep_managers_end()) {
                     return with_file_update_mutex(it->second, [this, &shard_manager, dir = std::move(dir), ep_name = std::move(de.name)] () mutable {
                         return scan_one_ep_dir(dir / ep_name, shard_manager, ep_key_type(ep_name));
