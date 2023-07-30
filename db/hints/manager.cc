@@ -45,6 +45,7 @@
 #include "seastar/core/semaphore.hh"
 #include "seastar/core/sleep.hh"
 #include "seastar/core/thread.hh"
+#include "utils/directories.hh"
 #include "utils/disk-error-handler.hh"
 #include "utils/div_ceil.hh"
 #include "utils/error_injection.hh"
@@ -191,7 +192,7 @@ sync_point::shard_rps manager::calculate_current_sync_point(const std::vector<lo
     return rps;
 }
 
-seastar::future<> manager::wait_for_sync_point(seastar::abort_source &as, const sync_point::shard_rps &rps) {
+seastar::future<> manager::wait_for_sync_point(seastar::abort_source& as, const sync_point::shard_rps& rps) {
     seastar::abort_source local_as;
 
     auto sub = as.subscribe([&local_as] () noexcept {
@@ -1240,13 +1241,197 @@ void manager::rebalance_segments(const seastar::sstring& hints_directory, hints_
         hints_per_host[host_id] = std::transform_reduce(
                 host_hints_map.begin(), host_hints_map.end(),
                 size_t{0}, std::plus<>(),
-                [] (const auto& pair) { return pair.second.size(); }
-        );
+                [] (const auto& pair) { return pair.second.size(); });
 
         manager_logger.trace("{}: total files: {}", host_id, hints_per_host[host_id]);
     }
 
-    std::unordered_map<
+    std::unordered_map<locator::host_id, std::list<fs::path>> segments_to_move;
+    for (const auto& [host_id, host_segments] : segment_map) {
+        const size_t q = hints_per_host[host_id] / smp::count;
+        auto& current_segments_to_move = segments_to_move[host_id];
+
+        for (const auto& [shard_id, shard_segments] : host_segments) {
+            if (shard_id >= smp::count) {
+                current_segments_to_move.splice(current_segments_to_move.end(), shard_segments);
+            } else if (shard_segments.size() > q) {
+                current_segments_to_move.splice(
+                        current_segments_to_move.end(),
+                        shard_segments,
+                        std::next(shard_segments.begin(), q),
+                        shard_segments.end());
+            }
+        }
+    }
+
+    for (const auto [host_id, N] : hints_per_host) {
+        const size_t [q, r] = std::div(N, smp::count);
+        auto& current_segments_to_move = segments_to_move[host_id];
+        auto& current_segments_map = segments_map[host_id];
+
+        if (q) {
+            rebalance_segments_for(host_id, q, hints_directory, current_segments_map, current_segments_to_move);
+        }
+        if (r) {
+            rebalance_segments_for(host_id, q + 1, hints_directory, current_segments_map, current_segments_to_move);
+        }
+    }
+}
+
+void rebalance_segments_for(locator::host_id host_id, size_t segments_per_shard, const seastar::sstring& hints_directory,
+        host_hints_segment_map& host_segments, std::list<fs::path>& segments_to_move)
+{
+    manager_logger.trace("{}: segments_per_shard: {}, total number of segments to move: {}",
+            host_id, segments_per_shard, segments_to_move.size());
+    
+    if (segments_to_move.empty() || !segments_per_shard) {
+        return;
+    }
+
+    for (unsigned i = 0; i < smp::count && !segments_to_move.empty(); ++i) {
+        fs::path shard_path_dir{fs::path{hints_directory.c_str()} / seastar::format("{:d}", i).c_str() / host_id.to_sstring()};
+        std::list<fs::path>& current_shard_segments = host_segments[i];
+
+        // TODO: namespace seatar?
+        io_check([name = shard_path_dir.c_str()] {
+            return seastar::recursive_touch_directory(name);
+        }).get();
+
+        while (current_shard_segments.size() < segments_per_shard && !segments_to_move.empty()) {
+            auto seg_path_it = segments_to_move.begin();
+            fs::path new_path{shard_path_dir / seg_path_it->filename()};
+
+            if (*seg_path_it != new_path) {
+                manager_logger.trace("going to move: {} -> {}", *seg_path_it, new_path);
+                io_check(rename_file, seg_path_it->native(), new_path.native()).get();
+            } else {
+                manager_logger.trace("skipping: {}", *seg_path_it);
+            }
+            
+            current_shard_segments.splice(current_shard_segments.end(), segments_to_move, seg_path_it, std::next(seg_path_it));
+        }
+    }
+}
+
+void manager::remove_irrelevant_shards_directories(const seastar::sstring& hints_directory) {
+    scan_for_hints_dirs(hints_directory, [] (fs::path dir, directory_entry de, unsigned shard_id) {
+        if (shard_id >= smp::count) {
+            return lister::scan_dir(
+                    dir / de.name.c_str(),
+                    lister::dir_entry_types::full(),
+                    lister::show_hidden::yes,
+                    [] (fs::path dir, directory_entry de) {
+                        return io_check(remove_file, (dir / de.name.c_str()).native());
+                    }).then([shard_base_dir = dir, shard_entry = de] {
+                        return io_check(remove_file, (shard_base_dir / shard_entry.name.c_str()).native());
+                    })
+        }
+        return seastar::make_ready_future<>();
+    }).get();
+}
+
+seastar::future<> manager::rebalance(seastar::sstring hints_directory) {
+    co_await seastar::async([hints_directory = std::move(hints_directory)] {
+        hints_segment_map current_hints_segments = get_current_hints_segments(hints_directory);
+
+        rebalance_segments(hints_directory, current_hints_segments);
+
+        remove_irrelevant_shards_directories(hints_directory);
+    });
+}
+
+void manager::update_backlog(size_t backlog, size_t max_backlog) {
+    if (backlog < max_backlog) {
+        allow_hints();
+    } else {
+        forbid_hints_for_hosts_with_pending_hints();
+    }
+}
+
+class directory_initializer::impl {
+private:
+    enum class state {
+        uninitialized = 0,
+        created_and_validated = 1,
+        rebalanced = 2
+    };
+
+private:
+    utils::directories& _dirs;
+    seastar::sstring _hints_directory;
+    state _state = state::uninitialized;
+    seastar::named_semaphore _lock = { 1, seastar::named_semaphore_exception_factory{"hints directory initialization lock" } };
+
+public:
+    impl(utils::directories& dirs, seastar::sstring hints_directory)
+        : _dirs{dirs}
+        , _hints_directory{std::move(hints_directory)}
+    {}
+
+public:
+    seastar::future<> ensure_created_and_verified() {
+        if (_state > state::uninitialized) {
+            co_return;
+        }
+
+        co_await seastar::with_semaphore(_lock, 1, [this] () -> seastar::future<> {
+            utils::directories::set dir_set;
+            dir_set.add_sharded(_hints_directory);
+
+            co_await _dirs.create_and_verify(std::move(dir_set));
+            manager_logger.debug("Creating and validating hint directories: {}", _hints_directory);
+            _state = state::created_and_validated;
+        });
+    }
+
+    seastar::future<> ensure_rebalanced() {
+        if (_state < state::created_and_validated) {
+            throw std::logic_error{"hints directory needs to be created and validated before rebalancing"};
+        }
+
+        if (_state > state::created_and_validated) {
+            co_return;
+        }
+
+        co_await seastar::with_semaphore(_lock, 1, [this] () -> seastar::future<> {
+            manager_logger.debug("Rebalancing hints in {}", _hints_directory);
+            co_await manager::rebalance(_hints_directory);
+            _state = state::rebalanced;
+        });
+    }
+};
+
+directory_initializer::directory_initializer(std::shared_ptr<directory_initializer::impl> impl)
+    : _impl{std::move(impl)}
+{}
+
+directory_initializer::~directory_initializer() {}
+
+seastar::future<directory_initializer> directory_initializer::make(utils::directories& dirs, seastar::sstring hints_directory) {
+    co_await smp::submit_to(0, [&dirs, hints_directory = std::move(hints_directory)] () mutable {
+        auto impl = std::make_shared<directory_initializer::impl>(dirs, std::move(hints_directory));
+        return seastar::make_ready_future<directory_initializer>({ std::move(impl) });
+    });
+}
+
+seastar::future<> directory_initializer::ensure_created_and_verified() {
+    if (!_impl) {
+        co_return;
+    }
+
+    co_await smp::submit_to(0, [impl = _impl] () mutable {
+        return impl->ensure_created_and_verified().then([impl] {/* extend the lifetime? */});
+    });
+}
+
+seastar::future<> directory_initializer::ensure_rebalanced() {
+    if (!_impl) {
+        co_return;
+    }
+
+    co_await smp::submit_to(0, [impl = _impl] () mutable {
+        return impl->ensure_rebalanced().then([impl] {/* extend the lifetime */});
+    });
 }
 
 } // namespace db::hints

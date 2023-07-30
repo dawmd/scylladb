@@ -63,10 +63,10 @@ using hint_entry_reader = commitlog_entry_reader;
 class directory_initializer {
 private:
     class impl;
-    ::std::shared_ptr<impl> _impl;
+    std::shared_ptr<impl> _impl;
 
 private:
-    directory_initializer(::std::shared_ptr<impl> impl);
+    directory_initializer(std::shared_ptr<impl> impl);
 public:
     ~directory_initializer();
 
