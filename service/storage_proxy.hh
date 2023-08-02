@@ -326,7 +326,7 @@ private:
     template<typename Range>
     size_t hint_to_dead_endpoints(std::unique_ptr<mutation_holder>& mh, const Range& targets, db::write_type type, tracing::trace_state_ptr tr_state) noexcept;
     void hint_to_dead_endpoints(response_id_type, db::consistency_level);
-    template<typename Range>
+    template<locator::host_id_range Range>
     bool cannot_hint(const Range& targets, db::write_type type) const;
     bool hints_enabled(db::write_type type) const noexcept;
     db::hints::manager& hints_manager_for(db::write_type type);
@@ -662,7 +662,8 @@ public:
     future<> change_hints_host_filter(db::hints::host_filter new_filter);
     const db::hints::host_filter& get_hints_host_filter() const;
 
-    future<db::hints::sync_point> create_hint_sync_point(const std::vector<gms::inet_address> target_hosts) const;
+    future<db::hints::sync_point> create_hint_sync_point(const std::vector<locator::host_id> target_hosts) const;
+    future<db::hints::sync_point> create_hint_sync_point(const std::vector<gms::inet_address>& target_hosts) const;
     future<> wait_for_hint_sync_point(const db::hints::sync_point spoint, clock_type::time_point deadline);
 
     const stats& get_stats() const {
