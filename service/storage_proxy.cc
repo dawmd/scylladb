@@ -8,97 +8,109 @@
  * SPDX-License-Identifier: (AGPL-3.0-or-later and Apache-2.0)
  */
 
-#include <random>
-#include <seastar/core/sleep.hh>
-#include <seastar/util/defer.hh>
-#include "partition_range_compat.hh"
-#include "db/consistency_level.hh"
-#include "db/commitlog/commitlog.hh"
-#include "storage_proxy.hh"
-#include "unimplemented.hh"
-#include "mutation/mutation.hh"
-#include "mutation/frozen_mutation.hh"
-#include "supervisor.hh"
-#include "query_result_merger.hh"
+#include "service/storage_proxy.hh"
+
+// Seastar features.
+#include <seastar/util/lazy.hh>
+#include <seastar/core/coroutine.hh>
 #include <seastar/core/do_with.hh>
-#include "message/messaging_service.hh"
-#include "locator/tablets.hh"
-#include "gms/gossiper.hh"
+#include <seastar/core/execution_stage.hh>
 #include <seastar/core/future-util.hh>
-#include "db/read_repair_decision.hh"
-#include "db/config.hh"
-#include "db/batchlog_manager.hh"
-#include "db/hints/manager.hh"
-#include "db/system_keyspace.hh"
-#include "exceptions/exceptions.hh"
-#include <boost/range/algorithm_ext/push_back.hpp>
-#include <boost/iterator/counting_iterator.hpp>
-#include <boost/range/adaptors.hpp>
+#include <seastar/core/metrics.hh>
+#include <seastar/core/sleep.hh>
+#include <seastar/coroutine/all.hh>
+#include <seastar/coroutine/as_future.hh>
+#include <seastar/coroutine/parallel_for_each.hh>
+#include <seastar/util/defer.hh>
+
+// Boost features.
 #include <boost/algorithm/cxx11/any_of.hpp>
 #include <boost/algorithm/cxx11/none_of.hpp>
 #include <boost/algorithm/cxx11/partition_copy.hpp>
+#include <boost/intrusive/list.hpp>
+#include <boost/iterator/counting_iterator.hpp>
+#include <boost/outcome/result.hpp>
+#include <boost/range/adaptors.hpp>
+#include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/algorithm/count_if.hpp>
 #include <boost/range/algorithm/find.hpp>
 #include <boost/range/algorithm/find_if.hpp>
-#include <boost/range/algorithm/remove_if.hpp>
 #include <boost/range/algorithm/heap_algorithm.hpp>
-#include <boost/range/numeric.hpp>
-#include <boost/range/algorithm/sort.hpp>
-#include <boost/range/empty.hpp>
 #include <boost/range/algorithm/min_element.hpp>
-#include <boost/range/adaptor/transformed.hpp>
-#include <boost/range/combine.hpp>
-#include <boost/range/algorithm/transform.hpp>
 #include <boost/range/algorithm/partition.hpp>
-#include <boost/intrusive/list.hpp>
-#include <boost/outcome/result.hpp>
-#include "utils/latency.hh"
-#include "schema/schema.hh"
-#include "query_ranges_to_vnodes.hh"
-#include "schema/schema_registry.hh"
-#include <seastar/util/lazy.hh>
-#include <seastar/core/metrics.hh>
-#include <seastar/core/execution_stage.hh>
-#include "db/timeout_clock.hh"
-#include "multishard_mutation_query.hh"
-#include "replica/database.hh"
-#include "db/consistency_level_validations.hh"
+#include <boost/range/algorithm/remove_if.hpp>
+#include <boost/range/algorithm/sort.hpp>
+#include <boost/range/algorithm/transform.hpp>
+#include <boost/range/algorithm_ext/push_back.hpp>
+#include <boost/range/combine.hpp>
+#include <boost/range/empty.hpp>
+#include <boost/range/iterator_range_core.hpp>
+#include <boost/range/numeric.hpp>
+
+// Scylla includes.
+#include "cdc/cdc_options.hh"
 #include "cdc/log.hh"
 #include "cdc/stats.hh"
-#include "cdc/cdc_options.hh"
-#include "utils/histogram_metrics_helper.hh"
-#include "service/paxos/prepare_summary.hh"
-#include "service/migration_manager.hh"
-#include "service/client_state.hh"
-#include "service/paxos/proposal.hh"
-#include "locator/token_metadata.hh"
-#include <seastar/core/coroutine.hh>
-#include <seastar/coroutine/parallel_for_each.hh>
-#include <seastar/coroutine/as_future.hh>
-#include <seastar/coroutine/all.hh>
-#include "locator/abstract_replication_strategy.hh"
-#include "service/paxos/cas_request.hh"
-#include "mutation/mutation_partition_view.hh"
-#include "service/paxos/paxos_state.hh"
-#include "gms/feature_service.hh"
+#include "db/commitlog/commitlog.hh"
+#include "db/hints/manager.hh"
+#include "db/batchlog_manager.hh"
+#include "db/config.hh"
+#include "db/consistency_level.hh"
+#include "db/consistency_level_validations.hh"
+#include "db/operation_type.hh"
+#include "db/read_repair_decision.hh"
+#include "db/system_keyspace.hh"
+#include "db/timeout_clock.hh"
 #include "db/virtual_table.hh"
-#include "mutation/canonical_mutation.hh"
-#include "schema_mutations.hh"
+#include "exceptions/exceptions.hh"
+#include "gms/feature_service.hh"
+#include "gms/gossiper.hh"
+#include "gms/inet_address.hh"
 #include "idl/frozen_schema.dist.hh"
 #include "idl/frozen_schema.dist.impl.hh"
 #include "idl/storage_proxy.dist.hh"
+#include "locator/abstract_replication_strategy.hh"
+#include "locator/host_id.hh"
+#include "locator/tablets.hh"
+#include "locator/token_metadata.hh"
+#include "locator/util.hh"
+#include "message/messaging_service.hh"
+#include "mutation/canonical_mutation.hh"
+#include "mutation/frozen_mutation.hh"
+#include "mutation/mutation.hh"
+#include "mutation/mutation_partition_view.hh"
+#include "schema/schema.hh"
+#include "schema/schema_registry.hh"
+#include "replica/database.hh"
+#include "replica/exceptions.hh"
+#include "service/client_state.hh"
+#include "service/migration_manager.hh"
+#include "service/paxos/cas_request.hh"
+#include "service/paxos/paxos_state.hh"
+#include "service/paxos/prepare_summary.hh"
+#include "service/paxos/proposal.hh"
+#include "tracing/trace_state.hh"
+#include "utils/error_injection.hh"
+#include "utils/exceptions.hh"
+#include "utils/histogram_metrics_helper.hh"
+#include "utils/latency.hh"
+#include "utils/overloaded_functor.hh"
 #include "utils/result.hh"
 #include "utils/result_combinators.hh"
 #include "utils/result_loop.hh"
-#include "utils/overloaded_functor.hh"
 #include "utils/result_try.hh"
-#include "utils/error_injection.hh"
-#include "utils/exceptions.hh"
-#include "utils/tuple_utils.hh"
 #include "utils/rpc_utils.hh"
-#include "replica/exceptions.hh"
-#include "db/operation_type.hh"
-#include "locator/util.hh"
+#include "utils/tuple_utils.hh"
+#include "multishard_mutation_query.hh"
+#include "partition_range_compat.hh"
+#include "query_ranges_to_vnodes.hh"
+#include "query_result_merger.hh"
+#include "schema_mutations.hh"
+#include "supervisor.hh"
+#include "unimplemented.hh"
+
+// STD.
+#include <random>
 
 namespace bi = boost::intrusive;
 
@@ -978,8 +990,11 @@ class mutation_holder {
 protected:
     size_t _size = 0;
     schema_ptr _schema;
+    const storage_proxy& _proxy;
 public:
+    mutation_holder(const storage_proxy& proxy) noexcept : _proxy{proxy} {}
     virtual ~mutation_holder() {}
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id host_id, tracing::trace_state_ptr tr_state) = 0;
     virtual bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) = 0;
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
@@ -1007,7 +1022,9 @@ class per_destination_mutation : public mutation_holder {
     std::unordered_map<gms::inet_address, lw_shared_ptr<const frozen_mutation>> _mutations;
     dht::token _token;
 public:
-    per_destination_mutation(const std::unordered_map<gms::inet_address, std::optional<mutation>>& mutations) {
+    per_destination_mutation(const storage_proxy& proxy, const std::unordered_map<gms::inet_address, std::optional<mutation>>& mutations)
+        : mutation_holder{proxy}
+    {
         for (auto&& m : mutations) {
             lw_shared_ptr<const frozen_mutation> fm;
             if (m.second) {
@@ -1019,10 +1036,23 @@ public:
             _mutations.emplace(m.first, std::move(fm));
         }
     }
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id host_id, tracing::trace_state_ptr tr_state) override {
+        const auto ep = _proxy.get_token_metadata_ptr()->get_endpoint_for_host_id(host_id);
+        if (!ep) {
+            return false;
+        }
+        auto m = _mutations[*ep];
+        if (m) {
+            return hm.store_hint(host_id, _schema, std::move(m), tr_state);
+        } else {
+            return false;
+        }
+    }
     virtual bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) override {
         auto m = _mutations[ep];
+        const auto id = _proxy.get_token_metadata_ptr()->get_host_id(ep);
         if (m) {
-            return hm.store_hint(ep, _schema, std::move(m), tr_state);
+            return hm.store_hint(id, _schema, std::move(m), tr_state);
         } else {
             return false;
         }
@@ -1071,15 +1101,25 @@ class shared_mutation : public mutation_holder {
 protected:
     lw_shared_ptr<const frozen_mutation> _mutation;
 public:
-    explicit shared_mutation(frozen_mutation_and_schema&& fm_a_s)
-            : _mutation(make_lw_shared<const frozen_mutation>(std::move(fm_a_s.fm))) {
+    explicit shared_mutation(const storage_proxy& proxy, frozen_mutation_and_schema&& fm_a_s)
+            : mutation_holder{proxy}
+            , _mutation(make_lw_shared<const frozen_mutation>(std::move(fm_a_s.fm))) {
         _size = _mutation->representation().size();
         _schema = std::move(fm_a_s.s);
     }
-    explicit shared_mutation(const mutation& m) : shared_mutation(frozen_mutation_and_schema{freeze(m), m.schema()}) {
+    explicit shared_mutation(const storage_proxy& proxy, const mutation& m)
+            : shared_mutation{proxy, frozen_mutation_and_schema{freeze(m), m.schema()}} {
+    }
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id host_id, tracing::trace_state_ptr tr_state) override {
+        const auto ep = _proxy.get_token_metadata_ptr()->get_endpoint_for_host_id(host_id);
+        if (!ep) {
+            return false;
+        }
+        return hm.store_hint(host_id, _schema, _mutation, tr_state);
     }
     virtual bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) override {
-            return hm.store_hint(ep, _schema, _mutation, tr_state);
+        const auto id = _proxy.get_token_metadata_ptr()->get_host_id(ep);
+        return hm.store_hint(id, _schema, _mutation, tr_state);
     }
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
@@ -1224,13 +1264,17 @@ class cas_mutation : public mutation_holder {
     lw_shared_ptr<paxos::proposal> _proposal;
     shared_ptr<paxos_response_handler> _handler;
 public:
-    explicit cas_mutation(lw_shared_ptr<paxos::proposal> proposal, schema_ptr s, shared_ptr<paxos_response_handler> handler)
-            : _proposal(std::move(proposal)), _handler(std::move(handler)) {
+    explicit cas_mutation(const storage_proxy& proxy, lw_shared_ptr<paxos::proposal> proposal, schema_ptr s, shared_ptr<paxos_response_handler> handler)
+            : mutation_holder{proxy}
+            , _proposal(std::move(proposal)), _handler(std::move(handler)) {
         _size = _proposal->update.representation().size();
         _schema = std::move(s);
     }
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id host_id, tracing::trace_state_ptr tr_state) override {
+        return false; // CAS does not save hints yet
+    }
     virtual bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) override {
-            return false; // CAS does not save hints yet
+        return false; // CAS does not save hints yet
     }
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
@@ -3031,9 +3075,18 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
     });
     pending_endpoints.erase(itend, pending_endpoints.end());
 
+    // TODO: Optimize this...
     auto all = boost::range::join(natural_endpoints, pending_endpoints);
+    auto host_all = boost::copy_range<std::vector<locator::host_id>>(all | boost::adaptors::transformed([&] (const auto& ep) {
+        auto result = get_token_metadata_ptr()->get_host_id_if_known(ep);
+        return result;
+    }) | boost::adaptors::filtered([] (const auto& wrapper) noexcept {
+        return wrapper.has_value();
+    }) | boost::adaptors::transformed([] (const auto& wrapper) noexcept {
+        return wrapper.value();
+    }));
 
-    if (cannot_hint(all, type)) {
+    if (cannot_hint(host_all, type)) {
         get_stats().writes_failed_due_to_too_many_in_flight_hints++;
         // avoid OOMing due to excess hints.  we need to do this check even for "live" nodes, since we can
         // still generate hints for those if it's overloaded or simply dead but not yet known-to-be-dead.
@@ -3080,13 +3133,13 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
  */
 result<storage_proxy::response_id_type>
 storage_proxy::create_write_response_handler(const mutation& m, db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit) {
-    return create_write_response_handler_helper(m.schema(), m.token(), std::make_unique<shared_mutation>(m), cl, type, tr_state,
+    return create_write_response_handler_helper(m.schema(), m.token(), std::make_unique<shared_mutation>(*this, m), cl, type, tr_state,
             std::move(permit), allow_limit, is_cancellable::no);
 }
 
 result<storage_proxy::response_id_type>
 storage_proxy::create_write_response_handler(const hint_wrapper& h, db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit) {
-    return create_write_response_handler_helper(h.mut.schema(), h.mut.token(), std::make_unique<hint_mutation>(h.mut), cl, type, tr_state,
+    return create_write_response_handler_helper(h.mut.schema(), h.mut.token(), std::make_unique<hint_mutation>(*this, h.mut), cl, type, tr_state,
             std::move(permit), allow_limit, is_cancellable::yes);
 }
 
@@ -3096,7 +3149,7 @@ storage_proxy::create_write_response_handler(const read_repair_mutation& mut, db
     const auto& m = mut.value;
     endpoints.reserve(m.size());
     boost::copy(m | boost::adaptors::map_keys, std::inserter(endpoints, endpoints.begin()));
-    auto mh = std::make_unique<per_destination_mutation>(m);
+    auto mh = std::make_unique<per_destination_mutation>(*this, m);
 
     slogger.trace("creating write handler for read repair token: {} endpoint: {}", mh->token(), endpoints);
     tracing::trace(tr_state, "Creating write handler for read repair token: {} endpoint: {}", mh->token(), endpoints);
@@ -3110,7 +3163,7 @@ storage_proxy::create_write_response_handler(const std::tuple<lw_shared_ptr<paxo
         db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit) {
     auto& [commit, s, h, t] = meta;
 
-    return create_write_response_handler_helper(s, t, std::make_unique<cas_mutation>(std::move(commit), s, std::move(h)), cl,
+    return create_write_response_handler_helper(s, t, std::make_unique<cas_mutation>(*this, std::move(commit), s, std::move(h)), cl,
             db::write_type::CAS, tr_state, std::move(permit), allow_limit, is_cancellable::no);
 }
 
@@ -3127,7 +3180,7 @@ storage_proxy::create_write_response_handler(const std::tuple<lw_shared_ptr<paxo
     auto ermp = table.get_effective_replication_map();
 
     // No rate limiting for paxos (yet)
-    return create_write_response_handler(std::move(ermp), cl, db::write_type::CAS, std::make_unique<cas_mutation>(std::move(commit), s, nullptr), std::move(endpoints),
+    return create_write_response_handler(std::move(ermp), cl, db::write_type::CAS, std::make_unique<cas_mutation>(*this, std::move(commit), s, nullptr), std::move(endpoints),
                     inet_address_vector_topology_change(), inet_address_vector_topology_change(), std::move(tr_state), get_stats(), std::move(permit), std::monostate(), is_cancellable::no);
 }
 
@@ -3659,7 +3712,7 @@ storage_proxy::mutate_atomically_result(std::vector<mutation> mutations, db::con
             return _p.mutate_prepare<>(std::array<mutation, 1>{std::move(m)}, cl, db::write_type::BATCH_LOG, _permit, [this] (const mutation& m, db::consistency_level cl, db::write_type type, service_permit permit) {
                 auto& table = _p._db.local().find_column_family(m.schema()->id());
                 auto ermp = table.get_effective_replication_map();
-                return _p.create_write_response_handler(std::move(ermp), cl, type, std::make_unique<shared_mutation>(m), _batchlog_endpoints, {}, {}, _trace_state, _stats, std::move(permit), std::monostate(), is_cancellable::no);
+                return _p.create_write_response_handler(std::move(ermp), cl, type, std::make_unique<shared_mutation>(_p, m), _batchlog_endpoints, {}, {}, _trace_state, _stats, std::move(permit), std::monostate(), is_cancellable::no);
             }).then(utils::result_wrap([this, cl] (unique_response_handler_vector ids) {
                 _p.register_cdc_operation_result_tracker(ids, _cdc_tracker);
                 return _p.mutate_begin(std::move(ids), cl, _trace_state, _timeout);
@@ -3751,8 +3804,11 @@ mutation storage_proxy::get_batchlog_mutation_for(const std::vector<mutation>& m
     return m;
 }
 
-template<typename Range>
+template<locator::host_id_range Range>
 bool storage_proxy::cannot_hint(const Range& targets, db::write_type type) const {
+    // if (!_hints_manager.started()) {
+    //     return true;
+    // }
     // if hints are disabled we "can always hint" since there's going to be no hint generated in this case
     return hints_enabled(type) && boost::algorithm::any_of(targets, std::bind(&db::hints::manager::too_many_in_flight_hints_for, &_hints_manager, std::placeholders::_1));
 }
@@ -3822,7 +3878,7 @@ future<> storage_proxy::send_to_endpoint(
         allow_hints allow_hints,
         is_cancellable cancellable) {
     return send_to_endpoint(
-            std::make_unique<shared_mutation>(std::move(fm_a_s)),
+            std::make_unique<shared_mutation>(*this, std::move(fm_a_s)),
             std::move(target),
             std::move(pending_endpoints),
             type,
@@ -3842,7 +3898,7 @@ future<> storage_proxy::send_to_endpoint(
         allow_hints allow_hints,
         is_cancellable cancellable) {
     return send_to_endpoint(
-            std::make_unique<shared_mutation>(std::move(fm_a_s)),
+            std::make_unique<shared_mutation>(*this, std::move(fm_a_s)),
             std::move(target),
             std::move(pending_endpoints),
             type,
@@ -3855,7 +3911,7 @@ future<> storage_proxy::send_to_endpoint(
 future<> storage_proxy::send_hint_to_endpoint(frozen_mutation_and_schema fm_a_s, gms::inet_address target) {
     if (!_features.hinted_handoff_separate_connection) {
         return send_to_endpoint(
-                std::make_unique<shared_mutation>(std::move(fm_a_s)),
+                std::make_unique<shared_mutation>(*this, std::move(fm_a_s)),
                 std::move(target),
                 { },
                 db::write_type::SIMPLE,
@@ -3866,7 +3922,7 @@ future<> storage_proxy::send_hint_to_endpoint(frozen_mutation_and_schema fm_a_s,
     }
 
     return send_to_endpoint(
-            std::make_unique<hint_mutation>(std::move(fm_a_s)),
+            std::make_unique<hint_mutation>(*this, std::move(fm_a_s)),
             std::move(target),
             { },
             db::write_type::SIMPLE,
@@ -6359,7 +6415,7 @@ const db::hints::host_filter& storage_proxy::get_hints_host_filter() const {
     return _hints_manager.get_host_filter();
 }
 
-future<db::hints::sync_point> storage_proxy::create_hint_sync_point(const std::vector<gms::inet_address> target_hosts) const {
+future<db::hints::sync_point> storage_proxy::create_hint_sync_point(const std::vector<locator::host_id> target_hosts) const {
     db::hints::sync_point spoint;
     spoint.regular_per_shard_rps.resize(smp::count);
     spoint.mv_per_shard_rps.resize(smp::count);
@@ -6377,6 +6433,18 @@ future<db::hints::sync_point> storage_proxy::create_hint_sync_point(const std::v
         spoint.mv_per_shard_rps[shard] = std::move(p.second);
     });
     co_return spoint;
+}
+
+future<db::hints::sync_point> storage_proxy::create_hint_sync_point(const std::vector<gms::inet_address>& target_hosts) const {
+    // TODO: Reuse the memory allocated by the vector if that's possible. Or simply do something better here.
+    //
+    // Ultimately, this function will be removed (once locator::host_id has replaced IPs in storage_proxy),
+    // so it's not THAT important to optimize it.
+    auto target_ids = boost::copy_range<std::vector<locator::host_id>>(target_hosts | boost::adaptors::transformed(
+            [&] (const gms::inet_address& ep) {
+        return get_token_metadata_ptr()->get_host_id(ep);
+    }));
+    return create_hint_sync_point(std::move(target_ids));
 }
 
 future<> storage_proxy::wait_for_hint_sync_point(const db::hints::sync_point spoint, clock_type::time_point deadline) {
@@ -6453,8 +6521,9 @@ future<> storage_proxy::wait_for_hint_sync_point(const db::hints::sync_point spo
 void storage_proxy::on_join_cluster(const gms::inet_address& endpoint) {};
 
 void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {
-    _hints_manager.drain_for(endpoint);
-    _hints_for_views_manager.drain_for(endpoint);
+    const auto id = get_token_metadata_ptr()->get_host_id(endpoint);
+    _hints_manager.drain_for(id);
+    _hints_for_views_manager.drain_for(id);
 }
 
 void storage_proxy::on_up(const gms::inet_address& endpoint) {};

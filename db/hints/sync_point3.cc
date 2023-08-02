@@ -6,7 +6,9 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#include <algorithm>
+#include <exception>
+#include <unordered_set>
+
 #include <seastar/core/simple-stream.hh>
 #include <seastar/core/smp.hh>
 
@@ -17,12 +19,8 @@
 #include "utils/base64.hh"
 #include "utils/xx_hasher.hh"
 
-#include <exception>
-#include <ranges>
-#include <unordered_set>
-
-namespace db::hints {
-
+namespace db {
+namespace hints {
 // Sync points can be encoded in two formats: V1 and V2. V2 extends V1 by adding
 // a checksum. Currently, we use the V2 format, but sync points encoded in the V1
 // format still can be safely decoded.
@@ -52,80 +50,40 @@ namespace db::hints {
 //       Flattened representation was chosen in order to save space on
 //       vector lengths etc.
 
-namespace {
+static constexpr size_t version_size = sizeof(uint8_t);
+static constexpr size_t checksum_size = sizeof(uint64_t);
 
-constexpr size_t version_size = sizeof(uint8_t);
-constexpr size_t checksum_size = sizeof(uint64_t);
-
-
-per_manager_sync_point_v1 encode_one_type_v1(unsigned shards, const std::vector<sync_point::shard_rps>& rps) {
-    per_manager_sync_point_v1 ret;
-
-    // Gather all host_ids, from all shards.
-    std::unordered_set<locator::host_id> all_host_ids;
-    for (const auto& shard_rps : rps) {
-        for (const auto& [id, _] : shard_rps) {
-            all_host_ids.insert(id);
-        }
-    }
-
-    ret.flattened_rps.reserve(size_t(shards) * all_host_ids.size());
-
-    // Encode into v1 struct
-    // For each host ID, we encode a replay position for all shards.
-    // If there is no replay position for a shard, we use a zero replay position.
-    for (const auto id : all_host_ids) {
-        ret.hosts.push_back(id);
-        for (const auto& shard_rps : rps) {
-            auto it = shard_rps.find(id);
-            if (it != shard_rps.end()) {
-                ret.flattened_rps.push_back(it->second);
-            } else {
-                ret.flattened_rps.push_back(db::replay_position());
-            }
-        }
-        // Fill with zeros for remaining shards
-        for (unsigned i = rps.size(); i < shards; i++) {
-            ret.flattened_rps.push_back(db::replay_position());
-        }
-    }
-
-    return ret;
-}
-
-std::vector<sync_point::shard_rps> decode_one_type_v1(uint16_t shard_count, const per_manager_sync_point_v1& v1) {
+static std::vector<sync_point::shard_rps> decode_one_type_v1(uint16_t shard_count, const per_manager_sync_point_v1& v1) {
     std::vector<sync_point::shard_rps> ret;
 
-    if (size_t(shard_count) * v1.hosts.size() != v1.flattened_rps.size()) {
+    if (size_t(shard_count) * v1.addresses.size() != v1.flattened_rps.size()) {
         throw std::runtime_error(format("Could not decode the sync point - there should be {} rps in flattened_rps, but there are only {}",
-                size_t(shard_count) * v1.hosts.size(), v1.flattened_rps.size()));
+                size_t(shard_count) * v1.addresses.size(), v1.flattened_rps.size()));
     }
 
     ret.resize(std::max(unsigned(shard_count), smp::count));
 
     auto rps_it = v1.flattened_rps.begin();
-    for (const auto id : v1.hosts) {
+    for (const auto addr : v1.addresses) {
         uint16_t shard;
         for (shard = 0; shard < shard_count; shard++) {
-            ret[shard].emplace(id, *rps_it++);
+            ret[shard].emplace(addr, *rps_it++);
         }
         // Fill missing shards with zero replay positions so that segments
         // which were moved across shards will be correctly waited on
         for (; shard < smp::count; shard++) {
-            ret[shard].emplace(id, db::replay_position());
+            ret[shard].emplace(addr, db::replay_position());
         }
     }
 
     return ret;
 }
 
-uint64_t calculate_checksum(const sstring_view s) {
+static uint64_t calculate_checksum(const sstring_view s) {
     xx_hasher h;
     h.update(s.data(), s.size());
     return h.finalize_uint64();
 }
-
-} // anonymous namespace
 
 sync_point sync_point::decode(sstring_view s) {
     bytes raw = base64_decode(s);
@@ -161,6 +119,41 @@ sync_point sync_point::decode(sstring_view s) {
     };
 }
 
+static per_manager_sync_point_v1 encode_one_type_v1(unsigned shards, const std::vector<sync_point::shard_rps>& rps) {
+    per_manager_sync_point_v1 ret;
+
+    // Gather all addresses, from all shards
+    std::unordered_set<gms::inet_address> all_addrs;
+    for (const auto& shard_rps : rps) {
+        for (const auto& p : shard_rps) {
+            all_addrs.insert(p.first);
+        }
+    }
+
+    ret.flattened_rps.reserve(size_t(shards) * all_addrs.size());
+
+    // Encode into v1 struct
+    // For each address, we encode a replay position for all shards.
+    // If there is no replay position for a shard, we use a zero replay position.
+    for (const auto addr : all_addrs) {
+        ret.addresses.push_back(addr);
+        for (const auto& shard_rps : rps) {
+            auto it = shard_rps.find(addr);
+            if (it != shard_rps.end()) {
+                ret.flattened_rps.push_back(it->second);
+            } else {
+                ret.flattened_rps.push_back(db::replay_position());
+            }
+        }
+        // Fill with zeros for remaining shards
+        for (unsigned i = rps.size(); i < shards; i++) {
+            ret.flattened_rps.push_back(db::replay_position());
+        }
+    }
+
+    return ret;
+}
+
 sstring sync_point::encode() const {
     // Encode as v1 structure
     sync_point_v1 v1;
@@ -194,4 +187,5 @@ std::ostream& operator<<(std::ostream& out, const sync_point& sp) {
     return out;
 }
 
-} // namespace db::hints
+}
+}
