@@ -362,10 +362,10 @@ seastar::future<> manager::host_hint_manager::stop(drain should_drain) {
 // TODO: Check the order if it makes sense. I've changed it compared to the original version.
 manager::host_hint_manager::host_hint_manager(locator::host_id host_id, manager& shard_manager)
     : _host_id(host_id)
+    , _shard_manager(shard_manager)
     , _sender(*this, _shard_manager.local_storage_proxy(), _shard_manager.local_db(), _shard_manager.local_gossiper())
     , _state(hint_manager_state_set::of<hint_manager_state::stopped>())
-    , _shard_manager(shard_manager)
-    , _file_update_mutex_ptr(seastar::lw_shared_ptr<seastar::shared_mutex>())
+    , _file_update_mutex_ptr(seastar::make_lw_shared<seastar::shared_mutex>())
     , _file_update_mutex(*_file_update_mutex_ptr)
     , _last_written_rp(seastar::this_shard_id(), std::chrono::duration_cast<std::chrono::milliseconds>(runtime::get_boot_time().time_since_epoch()).count())
 {}
@@ -373,10 +373,10 @@ manager::host_hint_manager::host_hint_manager(locator::host_id host_id, manager&
 // TODO: Ditto.
 manager::host_hint_manager::host_hint_manager(host_hint_manager&& other)
     : _host_id(other._host_id)
+    , _shard_manager(other._shard_manager)
     , _sender(other._sender, *this)
     , _state(other._state)
     , _hints_dir(std::move(other._hints_dir))
-    , _shard_manager(other._shard_manager)
     , _file_update_mutex_ptr(std::move(other._file_update_mutex_ptr)) // ???? Why move?
     , _file_update_mutex(*_file_update_mutex_ptr)
     , _last_written_rp(other._last_written_rp)

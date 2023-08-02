@@ -268,11 +268,11 @@ private:
     
     private:
         locator::host_id _host_id;
+        manager& _shard_manager;
         sender _sender;
         hint_manager_state_set _state;
 
         const fs::path _hints_dir;
-        manager& _shard_manager;
         seastar::gate _store_gate;
         hints_store_ptr _hints_store_anchor;
 
