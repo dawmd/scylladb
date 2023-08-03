@@ -196,7 +196,7 @@ private:
             gms::gossiper& _gossiper;
 
             seastar::shared_mutex& _file_update_mutex;
-            std::multimap<db::replay_position, seastar::lw_shared_ptr<std::optional<promise<>>>> _replay_waiters;
+            std::multimap<db::replay_position, seastar::lw_shared_ptr<std::optional<seastar::promise<>>>> _replay_waiters;
 
         public:
             sender(host_hint_manager& parent, service::storage_proxy& local_storage_proxy,
@@ -268,6 +268,7 @@ private:
     
     private:
         locator::host_id _host_id;
+        seastar::lw_shared_ptr<seastar::shared_mutex> _file_update_mutex_ptr;
         manager& _shard_manager;
         sender _sender;
         hint_manager_state_set _state;
@@ -275,9 +276,6 @@ private:
         const fs::path _hints_dir;
         seastar::gate _store_gate;
         hints_store_ptr _hints_store_anchor;
-
-        seastar::lw_shared_ptr<seastar::shared_mutex> _file_update_mutex_ptr;
-        seastar::shared_mutex& _file_update_mutex;
 
         uint64_t _hints_in_progress = 0;
         db::replay_position _last_written_rp;
@@ -348,7 +346,7 @@ private:
     
     private:
         seastar::shared_mutex& file_update_mutex() noexcept {
-            return _file_update_mutex;
+            return *_file_update_mutex_ptr;
         }
 
         seastar::future<db::commitlog> add_store() noexcept;

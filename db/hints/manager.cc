@@ -97,6 +97,7 @@ manager::manager(seastar::sstring hints_directory, host_filter filter, int64_t m
     , _local_db(db.local())
     , _resource_manager(res_manager)
 {
+    fmt::print(stderr, "\t\tMANAGER HINT DIR: {}\n\n", _hints_dir);
     if (utils::get_local_injector().enter("decrease_hints_flush_period")) {
         hints_flush_period = std::chrono::seconds(1);
     }
@@ -264,7 +265,7 @@ bool manager::host_hint_manager::store_hint(schema_ptr s, seastar::lw_shared_ptr
         tracing::trace_state_ptr tr_state) noexcept
 {
     try {
-        (void) seastar::with_gate(_store_gate, [this, s = std::move(s), fm = std::move(fm), tr_state] () mutable {
+        (void) seastar::with_gate(_store_gate, [this, s = std::move(s), fm = std::move(fm), tr_state = std::move(tr_state)] () mutable {
             ++_hints_in_progress;
             size_t mut_size = fm->representation().size();
             shard_stats().size_of_hints_in_progress += mut_size;
@@ -362,23 +363,21 @@ seastar::future<> manager::host_hint_manager::stop(drain should_drain) {
 // TODO: Check the order if it makes sense. I've changed it compared to the original version.
 manager::host_hint_manager::host_hint_manager(locator::host_id host_id, manager& shard_manager)
     : _host_id(host_id)
+    , _file_update_mutex_ptr(seastar::make_lw_shared<seastar::shared_mutex>())
     , _shard_manager(shard_manager)
     , _sender(*this, _shard_manager.local_storage_proxy(), _shard_manager.local_db(), _shard_manager.local_gossiper())
     , _state(hint_manager_state_set::of<hint_manager_state::stopped>())
-    , _file_update_mutex_ptr(seastar::make_lw_shared<seastar::shared_mutex>())
-    , _file_update_mutex(*_file_update_mutex_ptr)
     , _last_written_rp(seastar::this_shard_id(), std::chrono::duration_cast<std::chrono::milliseconds>(runtime::get_boot_time().time_since_epoch()).count())
 {}
 
 // TODO: Ditto.
 manager::host_hint_manager::host_hint_manager(host_hint_manager&& other)
     : _host_id(other._host_id)
+    , _file_update_mutex_ptr(other._file_update_mutex_ptr)
     , _shard_manager(other._shard_manager)
     , _sender(other._sender, *this)
     , _state(other._state)
     , _hints_dir(std::move(other._hints_dir))
-    , _file_update_mutex_ptr(std::move(other._file_update_mutex_ptr)) // ???? Why move?
-    , _file_update_mutex(*_file_update_mutex_ptr)
     , _last_written_rp(other._last_written_rp)
 {}
 
@@ -569,6 +568,7 @@ seastar::future<> manager::host_hint_manager::sender::flush_maybe() noexcept {
 
 seastar::future<::timespec> manager::host_hint_manager::sender::get_last_file_modification(const seastar::sstring& fname) {
     file f = co_await seastar::open_file_dma(fname, seastar::open_flags::ro);
+    // TODO: Do we really need `seastar::do_with` here? This looks like non-idiomatic coroutine code to me.
     const auto st = co_await seastar::do_with(std::move(f), [] (auto& f) {
         return f.stat();
     });

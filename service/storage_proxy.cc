@@ -11,7 +11,6 @@
 #include "service/storage_proxy.hh"
 
 // Seastar features.
-#include <boost/range/iterator_range_core.hpp>
 #include <seastar/util/lazy.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/do_with.hh>
@@ -46,6 +45,7 @@
 #include <boost/range/combine.hpp>
 #include <boost/range/empty.hpp>
 #include <boost/range/numeric.hpp>
+#include <boost/range/iterator_range_core.hpp>
 
 // Scylla includes.
 #include "cdc/cdc_options.hh"
