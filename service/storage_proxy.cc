@@ -46,6 +46,7 @@
 #include <boost/range/empty.hpp>
 #include <boost/range/iterator_range_core.hpp>
 #include <boost/range/numeric.hpp>
+#include <boost/range/iterator_range_core.hpp>
 
 // Scylla includes.
 #include "cdc/cdc_options.hh"
