@@ -8,6 +8,7 @@
  */
 
 #include <algorithm>
+#include <exception>
 #include <seastar/core/future.hh>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/sleep.hh>
@@ -374,8 +375,9 @@ bool manager::store_hint(ep_key_type ep, schema_ptr s, lw_shared_ptr<const froze
 
         return get_ep_manager(ep).store_hint(std::move(s), std::move(fm), tr_state);
     } catch (...) {
-        manager_logger.trace("Failed to store a hint to {}: {}", ep, std::current_exception());
-        tracing::trace(tr_state, "Failed to store a hint to {}: {}", ep, std::current_exception());
+        const auto eptr = std::current_exception();
+        manager_logger.trace("Failed to store a hint to {}: {}", ep, eptr);
+        tracing::trace(tr_state, "Failed to store a hint to {}: {}", ep, eptr);
 
         ++_stats.errors;
         return false;

@@ -81,12 +81,12 @@ per_manager_sync_point_v1 encode_one_type_v1(unsigned shards, const std::vector<
             if (it != shard_rps.end()) {
                 ret.flattened_rps.push_back(it->second);
             } else {
-                ret.flattened_rps.push_back(db::replay_position());
+                ret.flattened_rps.push_back(db::replay_position{});
             }
         }
         // Fill with zeros for remaining shards
         for (unsigned i = rps.size(); i < shards; i++) {
-            ret.flattened_rps.push_back(db::replay_position());
+            ret.flattened_rps.push_back(db::replay_position{});
         }
     }
 
@@ -112,7 +112,7 @@ std::vector<sync_point::shard_rps> decode_one_type_v1(uint16_t shard_count, cons
         // Fill missing shards with zero replay positions so that segments
         // which were moved across shards will be correctly waited on
         for (; shard < smp::count; shard++) {
-            ret[shard].emplace(id, db::replay_position());
+            ret[shard].emplace(id, db::replay_position{});
         }
     }
 
@@ -133,7 +133,7 @@ sync_point sync_point::decode(sstring_view s) {
         throw std::runtime_error("Could not decode the sync point - not a valid hex string");
     }
 
-    sstring_view raw_s(reinterpret_cast<const char*>(raw.data()), raw.size());
+    sstring_view raw_s{reinterpret_cast<const char*>(raw.data()), raw.size()};
     seastar::simple_memory_input_stream in{raw_s.data(), raw_s.size()};
 
     uint8_t version = ser::serializer<uint8_t>::read(in);
@@ -145,11 +145,11 @@ sync_point sync_point::decode(sstring_view s) {
         seastar::simple_memory_input_stream in_checksum{raw_s.end() - checksum_size, checksum_size};
         uint64_t checksum = ser::serializer<uint64_t>::read(in_checksum);
         if (checksum != calculate_checksum(raw_s.substr(0, raw_s.size() - checksum_size))) {
-            throw std::runtime_error("Could not decode the sync point encoded in the V2 format - wrong checksum");
+            throw std::runtime_error{"Could not decode the sync point encoded in the V2 format - wrong checksum"};
         }
     }
     else if (version != 1) {
-        throw std::runtime_error(format("Unsupported sync point format version: {}", int(version)));
+        throw std::runtime_error{seastar::format("Unsupported sync point format version: {}", int(version))};
     }
 
     sync_point_v1 v1 = ser::serializer<sync_point_v1>::read(in);
@@ -161,7 +161,7 @@ sync_point sync_point::decode(sstring_view s) {
     };
 }
 
-sstring sync_point::encode() const {
+seastar::sstring sync_point::encode() const {
     // Encode as v1 structure
     sync_point_v1 v1;
     v1.host_id = this->host_id;
@@ -180,7 +180,7 @@ sstring sync_point::encode() const {
     seastar::simple_memory_output_stream out{reinterpret_cast<char*>(serialized.data()), serialized.size()};
     ser::serializer<uint8_t>::write(out, 2);
     ser::serializer<sync_point_v1>::write(out, v1);
-    sstring_view serialized_s(reinterpret_cast<const char*>(serialized.data()), version_size + measure.size());
+    sstring_view serialized_s{reinterpret_cast<const char*>(serialized.data()), version_size + measure.size()};
     uint64_t checksum = calculate_checksum(serialized_s);
     ser::serializer<uint64_t>::write(out, checksum);
 

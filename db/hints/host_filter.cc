@@ -25,18 +25,18 @@
 namespace db::hints {
 
 host_filter::host_filter(host_filter::enabled_for_all_tag)
-    : _enabled_kind(host_filter::enabled_kind::enabled_for_all)
+    : _enabled_kind{host_filter::enabled_kind::enabled_for_all}
 {}
 
 host_filter::host_filter(host_filter::disabled_for_all_tag)
-    : _enabled_kind(host_filter::enabled_kind::disabled_for_all)
+    : _enabled_kind{host_filter::enabled_kind::disabled_for_all}
 {}
 
 host_filter::host_filter(std::unordered_set<seastar::sstring> allowed_dcs)
-    : _enabled_kind(allowed_dcs.empty()
+    : _enabled_kind{allowed_dcs.empty()
             ? host_filter::enabled_kind::disabled_for_all
-            : host_filter::enabled_kind::disabled_for_all)
-    , _dcs(std::move(allowed_dcs))
+            : host_filter::enabled_kind::enabled_selectively}
+    , _dcs{std::move(allowed_dcs)}
 {}
 
 host_filter host_filter::parse_from_config_string(seastar::sstring opt) {
@@ -61,10 +61,10 @@ host_filter host_filter::parse_from_dc_list(seastar::sstring opt) {
         }
     });
 
-    return host_filter{{dcs.begin(), dcs.end()}};
+    return host_filter{std::unordered_set<seastar::sstring>{dcs.begin(), dcs.end()}};
 }
 
-bool host_filter::can_hint_for(const locator::topology &topo, locator::host_id host_id) const {
+bool host_filter::can_hint_for(const locator::topology &topo, const locator::host_id& host_id) const {
     switch (_enabled_kind) {
         case enabled_kind::enabled_for_all:
             return true;

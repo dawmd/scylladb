@@ -28,7 +28,7 @@
 
 namespace db::hints {
 
-static logging::logger resource_manager_logger("hints_resource_manager");
+static logging::logger resource_manager_logger{"hints_resource_manager"};
 
 seastar::future<dev_t> get_device_id(const fs::path& path) {
     const auto sd = co_await seastar::file_stat(path.native());
@@ -70,9 +70,9 @@ size_t resource_manager::sending_queue_length() const {
 const std::chrono::seconds space_watchdog::_watchdog_period = std::chrono::seconds(1);
 
 space_watchdog::space_watchdog(shard_managers_set& managers, per_device_limits_map& per_device_limits_map)
-    : _shard_managers(managers)
-    , _per_device_limits_map(per_device_limits_map)
-    , _update_lock(1, seastar::named_semaphore_exception_factory{"update lock"})
+    : _shard_managers{managers}
+    , _per_device_limits_map{per_device_limits_map}
+    , _update_lock{1, seastar::named_semaphore_exception_factory{"update lock"}}
 {}
 
 void space_watchdog::start() {
@@ -99,25 +99,24 @@ seastar::future<> space_watchdog::stop() noexcept {
 }
 
 // Called under the end_point_hints_manager::file_update_mutex() of the corresponding end_point_hints_manager instance.
-seastar::future<> space_watchdog::scan_one_host_dir(fs::path path, manager& shard_manager, host_id_type host_id) {
-    co_await seastar::do_with(std::move(path), [this, host_id, &shard_manager] (fs::path& path) -> seastar::future<> {
-        // It may happen that we get here and the directory has already been deleted in the context of manager::drain_for().
-        // In this case simply bail out.
-        if (!co_await seastar::file_exists(path.native())) {
-            co_return;
+seastar::future<> space_watchdog::scan_one_host_dir(fs::path path, manager& shard_manager, const host_id_type& host_id) {
+    // It may happen that we get here and the directory has already been deleted in the context of manager::drain_for().
+    // In this case simply bail out.
+    if (!co_await seastar::file_exists(path.native())) {
+        co_return;
+    }
+
+    namespace sc = seastar::coroutine;
+    co_await lister::scan_dir(path, lister::dir_entry_types::of<directory_entry_type::regular>(),
+            sc::lambda([this, host_id, &shard_manager] (fs::path dir, seastar::directory_entry de) -> seastar::future<> {
+        // Put the current end point ID to state.eps_with_pending_hints when we see the second hints file in its directory
+        if (_files_count == 1) {
+            shard_manager.add_host_with_pending_hints(host_id);
         }
+        ++_files_count;
 
-        co_await lister::scan_dir(path, lister::dir_entry_types::of<directory_entry_type::regular>(),
-                [this, host_id, &shard_manager] (fs::path dir, directory_entry de) -> seastar::future<> {
-            // Put the current end point ID to state.eps_with_pending_hints when we see the second hints file in its directory
-            if (_files_count == 1) {
-                shard_manager.add_host_with_pending_hints(host_id);
-            }
-            ++_files_count;
-
-            _total_size += co_await io_check(file_size, (dir / de.name.c_str()).c_str());
-        });
-    });
+        _total_size += co_await io_check(file_size, (dir / de.name.c_str()).c_str());
+    }));
 }
 
 // Called from the context of a seastar::thread.
@@ -181,22 +180,25 @@ void space_watchdog::on_timer() {
     }
 }
 
-seastar::future<> resource_manager::start(seastar::shared_ptr<service::storage_proxy> proxy_ptr, shared_ptr<gms::gossiper> gossiper_ptr) {
+seastar::future<> resource_manager::start(seastar::shared_ptr<service::storage_proxy> proxy_ptr,
+        seastar::shared_ptr<gms::gossiper> gossiper_ptr)
+{
     _proxy_ptr = std::move(proxy_ptr);
     _gossiper_ptr = std::move(gossiper_ptr);
 
-    co_await seastar::with_semaphore(_operation_lock, 1, [this] () -> seastar::future<> {
-        co_await seastar::parallel_for_each(_shard_managers, [this] (manager& m) {
+    namespace sc = seastar::coroutine;
+    co_await seastar::with_semaphore(_operation_lock, 1, sc::lambda([this] () -> seastar::future<> {
+        co_await seastar::parallel_for_each(_shard_managers, sc::lambda([this] (manager& m) {
             return m.start(_proxy_ptr, _gossiper_ptr);
-        });
+        }));
         
-        co_await seastar::do_for_each(_shard_managers, [this] (manager& m) {
+        co_await seastar::do_for_each(_shard_managers, sc::lambda([this] (manager& m) {
             return prepare_per_device_limits(m);
-        });
+        }));
         
         _space_watchdog.start();
         set_running();
-    });
+    }));
 }
 
 void resource_manager::allow_replaying() noexcept {
@@ -205,20 +207,23 @@ void resource_manager::allow_replaying() noexcept {
 }
 
 seastar::future<> resource_manager::stop() noexcept {
-    co_await seastar::with_semaphore(_operation_lock, 1, [this] () -> seastar::future<> {
-        try {
-            co_await seastar::parallel_for_each(_shard_managers, [] (manager& m) { return m.stop(); });
-        } catch (...) {/* ignore */}
-
-        co_await _space_watchdog.stop();
-        unset_running();
+    return seastar::with_semaphore(_operation_lock, 1, [this] {
+        return seastar::parallel_for_each(_shard_managers, [] (manager& m) {
+            return m.stop();
+        }).finally([this] {
+            return _space_watchdog.stop();
+        }).then([this] {
+            unset_running();
+        });
     });
 }
 
 seastar::future<> resource_manager::register_manager(manager& m) {
-    co_await seastar::with_semaphore(_operation_lock, 1, [this, &m] {
-        return seastar::with_semaphore(_space_watchdog.update_lock(), 1,
-                [this, &m] () -> seastar::future<> {
+    namespace sc = seastar::coroutine;
+    co_await seastar::with_semaphore(_operation_lock, 1,
+            sc::lambda([this, &m] () -> seastar::future<> {
+        co_await seastar::with_semaphore(_space_watchdog.update_lock(), 1,
+                sc::lambda([this, &m] () -> seastar::future<> {
             const auto [it, inserted] = _shard_managers.insert(m);
             if (!inserted) {
                 // Already registered
@@ -242,8 +247,8 @@ seastar::future<> resource_manager::register_manager(manager& m) {
                 _shard_managers.erase(m);
                 throw;
             }
-        });
-    });
+        }));
+    }));
 }
 
 seastar::future<> resource_manager::prepare_per_device_limits(manager& shard_manager) {
