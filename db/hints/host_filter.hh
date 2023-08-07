@@ -44,7 +44,7 @@ public:
     static host_filter parse_from_config_string(seastar::sstring opt);
     static host_filter parse_from_dc_list(seastar::sstring opt);
 
-    bool can_hint_for(const locator::topology& topo, locator::host_id host_id) const;
+    bool can_hint_for(const locator::topology& topo, const locator::host_id& host_id) const;
     bool is_enabled_for_all() const noexcept {
         return _enabled_kind == enabled_kind::enabled_for_all;
     }

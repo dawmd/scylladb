@@ -294,7 +294,7 @@ private:
         bool store_hint(schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
                 tracing::trace_state_ptr tr_state) noexcept;
         seastar::future<> populate_segments_to_replay();
-        seastar::future<> stop(drain should_drain = drain::no) /* noexcept */;
+        seastar::future<> stop(drain should_drain = drain::no) noexcept;
         void start();
         uint64_t hints_in_progress() const noexcept {
             return _hints_in_progress;
@@ -400,7 +400,7 @@ public:
     seastar::future<> start(seastar::shared_ptr<service::storage_proxy> proxy_ptr, seastar::shared_ptr<gms::gossiper> gossiper_ptr);
     seastar::future<> stop();
     
-    bool store_hint(locator::host_id host_id, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
+    bool store_hint(const locator::host_id& host_id, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
             tracing::trace_state_ptr tr_state) noexcept;
     
     seastar::future<> change_host_filter(host_filter filter);
@@ -408,9 +408,9 @@ public:
         return _host_filter;
     }
 
-    bool can_hint_for(locator::host_id host_id) const noexcept;
+    bool can_hint_for(const locator::host_id& host_id) const noexcept;
     bool too_many_in_flight_hints_for(locator::host_id host_id) const noexcept;
-    bool check_dc_for(locator::host_id host_id) const noexcept;
+    bool check_dc_for(const locator::host_id& host_id) const noexcept;
     bool is_disabled_for_all() const noexcept {
         return _host_filter.is_disabled_for_all();
     }
@@ -467,7 +467,7 @@ private:
     seastar::future<> compute_hints_dir_device_id();
 
     static hints_segment_map get_current_hints_segments(const seastar::sstring& hints_directory);
-    static void rebalance_segments_for(locator::host_id host_id, size_t segments_per_shard,
+    static void rebalance_segments_for(const locator::host_id& host_id, size_t segments_per_shard,
             const seastar::sstring& hints_directory, host_hints_segment_map& host_segments,
             std::list<fs::path>& segments_to_move);
     static void rebalance_segments(const seastar::sstring& hints_directory, hints_segment_map& segment_map);
@@ -485,7 +485,7 @@ private:
     replica::database& local_db() noexcept {
         return _local_db;
     }
-    host_hint_manager& get_host_manager(locator::host_id host_id);
+    host_hint_manager& get_host_manager(const locator::host_id& host_id);
     bool have_host_manager(locator::host_id host_id) const noexcept {
         return _host_managers.contains(host_id);
     }
