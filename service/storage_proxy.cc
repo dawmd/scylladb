@@ -991,11 +991,20 @@ class mutation_holder {
 protected:
     size_t _size = 0;
     schema_ptr _schema;
+
+    // TODO: Ditch this once service::storage_proxy uses locator::host_id instead of gms::inet_address.
+    //       The reference is necessary because the module db::hints's API supports locator::host_id only
+    //       -- we need to be able to convert IPs to host IDs. See the implementations of this interface
+    //       for examples how it's used.
     const storage_proxy& _proxy;
 public:
     mutation_holder(const storage_proxy& proxy) noexcept : _proxy{proxy} {}
     virtual ~mutation_holder() {}
     virtual bool store_hint(db::hints::manager& hm, locator::host_id host_id, tracing::trace_state_ptr tr_state) = 0;
+    
+    // TODO: Ditch this version of store_hint once service::storage_proxy uses locator::host_id
+    //       instead of gms::inet_address. See the comment about the field _proxy in this class
+    //       for more details.
     virtual bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) = 0;
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
