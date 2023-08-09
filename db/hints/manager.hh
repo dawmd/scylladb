@@ -364,7 +364,7 @@ private:
         replay_position _last_written_rp;
     
     public:
-        host_hint_manager(locator::host_id host_id, manager& shard_manager);
+        host_hint_manager(const locator::host_id& host_id, manager& shard_manager);
         host_hint_manager(host_hint_manager&&);
         ~host_hint_manager();
 
@@ -497,11 +497,6 @@ private:
         }
     };
 
-public:
-    static const std::string FILENAME_PREFIX;
-    static std::chrono::seconds hints_flush_period;
-    static const std::chrono::seconds hint_file_write_timeout;
-
 private:
     static constexpr uint64_t max_size_of_hints_in_progress = 10 * 1024 * 1024; // 10 MB
 private:
@@ -569,7 +564,7 @@ public:
     ///
     /// \param ep end point to check
     /// \return TRUE if we are allowed to generate hint to the given end point but there are too many in-flight hints
-    bool too_many_in_flight_hints_for(locator::host_id host_id) const noexcept;
+    bool too_many_in_flight_hints_for(const locator::host_id& host_id) const noexcept;
 
     /// \brief Check if DC \param ep belongs to is "hintable"
     /// \param ep End point identificator
@@ -590,21 +585,21 @@ public:
     /// \brief Get the number of in-flight (to the disk) hints to a given host.
     /// \param host_id Host identifier
     /// \return Number of hints in-flight to \param host_id.
-    uint64_t hints_in_progress_for(locator::host_id host_id) const noexcept {
+    uint64_t hints_in_progress_for(const locator::host_id& host_id) const noexcept {
         auto it = _host_managers.find(host_id);
         return it != _host_managers.end()
                 ? it->second.hints_in_progress()
                 : 0;
     }
 
-    void add_host_with_pending_hints(locator::host_id host_id) {
+    void add_host_with_pending_hints(const locator::host_id& host_id) {
         _hosts_with_pending_hints.insert(host_id);
     }
     void clear_hosts_with_pending_hints() {
         _hosts_with_pending_hints.clear();
         _hosts_with_pending_hints.reserve(_host_managers.size());
     }
-    bool has_host_with_pending_hints(locator::host_id host_id) const {
+    bool has_host_with_pending_hints(const locator::host_id& host_id) const {
         return _hosts_with_pending_hints.contains(host_id);
     }
 
@@ -666,7 +661,7 @@ public:
     /// corresponding end_point_hints_manager objects.
     ///
     /// \param endpoint node that left the cluster
-    void drain_for(locator::host_id host_id);
+    void drain_for(const locator::host_id& host_id);
     void update_backlog(size_t backlog, size_t max_backlog);
 
     bool stopping() const noexcept {
@@ -683,10 +678,10 @@ public:
     }
 
     // TODO: Please, ditch these if possible...
-    auto find_host_manager(locator::host_id host_id) noexcept {
+    auto find_host_manager(const locator::host_id& host_id) noexcept {
         return _host_managers.find(host_id);
     }
-    auto find_host_manager(locator::host_id host_id) const noexcept {
+    auto find_host_manager(const locator::host_id& host_id) const noexcept {
         return _host_managers.find(host_id);
     }
     auto host_managers_end() noexcept {
@@ -701,7 +696,7 @@ private:
 
     host_hint_manager& get_host_manager(const locator::host_id& host_id);
 
-    bool have_host_manager(locator::host_id host_id) const noexcept {
+    bool have_host_manager(const locator::host_id& host_id) const noexcept {
         return _host_managers.contains(host_id);
     }
 

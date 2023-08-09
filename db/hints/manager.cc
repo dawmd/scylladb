@@ -63,14 +63,19 @@
 
 namespace db::hints {
 
-const std::string manager::FILENAME_PREFIX{"HintsLog" + commitlog::descriptor::SEPARATOR};
-const std::chrono::seconds manager::hint_file_write_timeout = std::chrono::seconds(2);
-std::chrono::seconds manager::hints_flush_period = std::chrono::seconds(10);
-
 // Auxiliary stuff.
 namespace {
 
+// Constants.
+// TODO: Change this to constexpr once the minimum supported versions of libc++ and libstdc++
+//       have implemented constexpr std::string.
+const std::string FILENAME_PREFIX{"HintsLog" + commitlog::descriptor::SEPARATOR};
+constexpr std::chrono::seconds HINT_FILE_WRITE_TIMEOUT = std::chrono::seconds{2};
+
+
 logging::logger manager_logger{"hints_manager"};
+
+std::chrono::seconds hints_flush_period = std::chrono::seconds{10};
 
 class no_column_mapping : public std::out_of_range {
 public:
@@ -82,7 +87,7 @@ public:
 // We access the token so often in this file that providing a safe getter brings quite a lot of convenience.
 //
 // The main reason behind this is that some of `manager`'s methods are called even before it starts,
-// and we might be trying to dereference a null pointer. This function is one way to prevent that.
+// and we might be trying to dereference a null pointer. This function is a way to prevent that.
 //
 // For more context, check `service::storage_proxy::cannot_hint`, which is one situation when `manager` may be used
 // even before starting.
@@ -147,8 +152,8 @@ public:
             utils::directories::set dir_set;
             dir_set.add_sharded(_hints_directory);
 
-            co_await _dirs.create_and_verify(std::move(dir_set));
             manager_logger.debug("Creating and validating hint directories: {}", _hints_directory);
+            co_await _dirs.create_and_verify(std::move(dir_set));
             _state = state::created_and_validated;
         }));
     }
@@ -233,7 +238,7 @@ void manager::host_hint_manager::sender::send_one_file_ctx::on_hint_send_failure
 }
 
 replay_position manager::host_hint_manager::sender::send_one_file_ctx::get_replayed_bound() const noexcept {
-    // We are sure that all hints were sent _below_ the position which is the minimum of the following:
+    // We are sure that all hints have been sent _below_ the position which is the minimum of the following:
     // - Position of the first hint that failed to be sent in this replay (first_failed_rp),
     // - Position of the last hint which was successfully sent (last_succeeded_rp, inclusive bound),
     // - Position of the lowest hint which is being currently sent (in_progress_rps.begin()).
@@ -242,9 +247,9 @@ replay_position manager::host_hint_manager::sender::send_one_file_ctx::get_repla
     if (first_failed_rp) {
         rp = *first_failed_rp;
     } else if (last_succeeded_rp) {
-        // It is always true that `first_failed_rp` <= `last_succeeded_rp`, so no need to compare
+        // It is always true that `first_failed_rp` <= `last_succeeded_rp`, so no need to compare.
         rp = *last_succeeded_rp;
-        // We replayed _up to_ `last_attempted_rp`, so the bound is not strict; we can increase `pos` by one
+        // We replayed _up to_ `last_attempted_rp`, so the bound is not strict; we can increase `pos` by one.
         rp.pos++;
     }
 
@@ -310,6 +315,8 @@ void manager::host_hint_manager::sender::start() {
                 flush_maybe().get();
                 send_hints_maybe();
 
+                // If we got here, that means that either there are no more hints to be sent, or we have failed
+                // to send the hints we have. In either case, it makes sense to wait a little before continuing.
                 sleep_abortable(next_sleep_duration(), _stop_as).get();
             } catch (const seastar::sleep_aborted&) {
                 break;
@@ -387,6 +394,7 @@ seastar::future<> manager::host_hint_manager::sender::wait_until_hints_are_repla
     auto it = _replay_waiters.emplace(up_to_rp, ptr);
     auto sub = as.subscribe([this, ptr, it] () noexcept {
         if (!ptr->has_value()) {
+            // The promise has already been resolved by `notify_replay_waiters` and removed from the map.
             return;
         }
         manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): abort requested - stopping", _host_id);
@@ -394,12 +402,15 @@ seastar::future<> manager::host_hint_manager::sender::wait_until_hints_are_repla
         (**ptr).set_exception(abort_requested_exception{});
     });
 
+    // When the future resolves, the host manager is not guaranteed to exist anymore,
+    // so we can't capture `this`.
     return (**ptr).get_future().finally([sub = std::move(sub), host_id = _host_id] {
         manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): returning after the future has been satisfied", host_id);
     });
 }
 
 const seastar::sstring* manager::host_hint_manager::sender::name_of_current_segment() const noexcept {
+    // Foreign segments are replayed first.
     if (!_foreign_segments_to_replay.empty()) {
         return std::addressof(_foreign_segments_to_replay.front());
     }
@@ -442,6 +453,8 @@ bool manager::host_hint_manager::sender::can_send() noexcept {
                 _state.set_if<sender_state::host_left_ring>(
                         !_shard_manager.local_db().get_token_metadata().is_normal_token_owner(ep.value()));
             }
+            // Send out hints if the destination node is part of the ring
+            // -- we will send to all new replicas in this case.
             return _state.contains(sender_state::host_left_ring);
         }
     } catch (...) {
@@ -494,6 +507,9 @@ seastar::future<> manager::host_hint_manager::sender::do_send_one_mutation(froze
 {
     return seastar::futurize_invoke([this, m = std::move(m), &natural_endpoints] () mutable {
         const std::optional<gms::inet_address> ep = _proxy.get_token_metadata_ptr()->get_endpoint_for_host_id(_host_id);
+
+        // The fact that we send with CL::ALL in both cases below ensures that new hints are not going
+        // to be generated as a result of hints sending.
         if (ep && std::ranges::find(natural_endpoints, ep) != natural_endpoints.end()) {
             manager_logger.trace("Sending directly to {}", _host_id);
             return _proxy.send_hint_to_endpoint(std::move(m), ep.value());
@@ -512,13 +528,18 @@ seastar::future<> manager::host_hint_manager::sender::send_one_hint(seastar::lw_
             [this, secs_since_file_mod, &fname, buf = std::move(buf), rp, ctx_ptr] (auto units) mutable {
         ctx_ptr->mark_hint_as_in_progress(rp);
 
+        // The future is waited on indirectly in `send_one_file()` (via `ctx_ptr->file_send_gate`).
         (void) seastar::with_gate(ctx_ptr->file_send_gate,
                 [this, secs_since_file_mod, &fname, buf = std::move(buf), rp, ctx_ptr] () mutable -> seastar::future<> {
             try {
                 auto m = this->get_mutation(ctx_ptr, buf);
                 const typename gc_clock::duration gc_grace_sec = m.s->gc_grace_seconds();
 
-                if (gc_clock::now().time_since_epoch() - secs_since_file_mod > gc_grace_sec - manager::hints_flush_period) {
+                // The hint is too old -- drop it.
+                //
+                // Files are aggregated for at most hints_timer_period, so the oldest
+                // hint there is (last_modification - manager::hints_timer_period) old.
+                if (gc_clock::now().time_since_epoch() - secs_since_file_mod > gc_grace_sec - hints_flush_period) {
                     return seastar::make_ready_future<>();
                 }
 
@@ -528,7 +549,7 @@ seastar::future<> manager::host_hint_manager::sender::send_one_hint(seastar::lw_
                     manager_logger.trace("send_one_hint(): failed to send to {}: {}", _host_id, eptr);
                     return seastar::make_exception_future<>(std::move(eptr));
                 });
-            // ignore these errors and move on - probably this hint is too old and the KS/CF has been deleted...
+            // Ignore these errors and move on -- probably this hint is too old and the KS/CF has been deleted...
             } catch (replica::no_such_column_family& e) {
                 manager_logger.debug("send_hints(): no_such_column_family: {}", e.what());
                 ++this->shard_stats().discarded;
@@ -546,9 +567,14 @@ seastar::future<> manager::host_hint_manager::sender::send_one_hint(seastar::lw_
 
             return seastar::make_ready_future<>();
         }).then_wrapped([this, units = std::move(units), rp, ctx_ptr] (seastar::future<>&& f) {
+            // Information about the error has already already printed somewhere before.
+            // We just need to account in the ctx that sending of this hint has failed.
             if (!f.failed()) {
                 ctx_ptr->on_hint_send_success(rp);
                 auto new_bound = ctx_ptr->get_replayed_bound();
+                // Segments from other shards are replayed first and are considered
+                // to be "before" replay position 0.
+                // Update the sent upper bound only if it is a local segment.
                 if (new_bound.shard_id() == seastar::this_shard_id() && _sent_upper_bound_rp < new_bound) {
                     _sent_upper_bound_rp = new_bound;
                     notify_replay_waiters();
@@ -570,7 +596,7 @@ bool manager::host_hint_manager::sender::send_one_file(const seastar::sstring& f
     seastar::lw_shared_ptr<send_one_file_ctx> ctx_ptr = seastar::make_lw_shared(send_one_file_ctx{_last_schema_ver_to_column_mapping});
 
     try {
-        commitlog::read_log_file(fname, manager::FILENAME_PREFIX,
+        commitlog::read_log_file(fname, FILENAME_PREFIX,
                 [this, secs_since_file_mod, &fname, ctx_ptr] (commitlog::buffer_and_replay_position buf_rp) -> seastar::future<> {
             auto& buf = buf_rp.buffer;
             auto& rp = buf_rp.position;
@@ -582,7 +608,7 @@ bool manager::host_hint_manager::sender::send_one_file(const seastar::sstring& f
                     co_return;
                 }
 
-                // Break early if stop() was called or the destination node went down.
+                // Break early if stop() has been called or the destination node has gone down.
                 if (!can_send()) {
                     ctx_ptr->segment_replay_failed = true;
                     co_return;
@@ -594,13 +620,13 @@ bool manager::host_hint_manager::sender::send_one_file(const seastar::sstring& f
                     // We cannot send the hint because hint replay is paused.
                     // Sleep 100ms and do the whole loop again.
                     //
-                    // Jumping to the beginning of the loop makes sure that
-                    // - We regularly check if we should stop - so that we won't
+                    // Jumping to the beginning of the loop ensures that
+                    // - We regularly check if we should stop -- so that we don't
                     //   get stuck in shutdown.
-                    // - flush_maybe() is called regularly - so that new segments
+                    // - flush_maybe() is called regularly -- so that new segments
                     //   are created and we help enforce the "at most 10s worth of
                     //   hints in a segment".
-                    co_await sleep(std::chrono::milliseconds(100));
+                    co_await seastar::sleep(std::chrono::milliseconds{100});
                     continue;
                 } else {
                     co_await send_one_hint(ctx_ptr, std::move(buf), rp, secs_since_file_mod, fname);
@@ -617,18 +643,18 @@ bool manager::host_hint_manager::sender::send_one_file(const seastar::sstring& f
         ctx_ptr->segment_replay_failed = true;
     }
 
-    // wait till all background hints sending is complete
+    // Wait till all background hints sending is complete.
     ctx_ptr->file_send_gate.close().get();
 
-    // If we are draining ignore failures and drop the segment even if we failed to send it.
+    // If we are draining, ignore failures and drop the segment even if we have failed to send it.
     if (draining() && ctx_ptr->segment_replay_failed) {
         manager_logger.trace("send_one_file(): we are draining so we are going to delete the segment anyway");
         ctx_ptr->segment_replay_failed = false;
     }
 
-    // update the next iteration replay position if needed
+    // Update the next iteration replay position if needed.
     if (ctx_ptr->segment_replay_failed) {
-        // If some hints failed to be sent, first_failed_rp will tell the position of first such hint.
+        // If some hints have failed to be sent, first_failed_rp will tell the position of the first such hint.
         // If there was an error thrown by read_log_file function itself, we will retry sending from
         // the last hint that was successfully sent (last_succeeded_rp).
         _last_not_complete_rp = ctx_ptr->first_failed_rp.value_or(ctx_ptr->last_succeeded_rp.value_or(_last_not_complete_rp));
@@ -636,19 +662,20 @@ bool manager::host_hint_manager::sender::send_one_file(const seastar::sstring& f
         return false;
     }
 
-    // If we got here we are done with the current segment and we can remove it.
+    // If we got here, we are done with the current segment and we can remove it.
     seastar::with_shared(_file_update_mutex, [&fname, this] {
         auto p = _host_manager.get_or_load().get0();
         return p->delete_segments({ fname });
     }).get();
 
-    // clear the replay position - we are going to send the next segment...
+    // Clear the replay position -- we are going to send the next segment...
     _last_not_complete_rp = replay_position();
     _last_schema_ver_to_column_mapping.clear();
     manager_logger.trace("send_one_file(): segment {} was sent in full and deleted", fname);
     return true;
 }
 
+// Runs in the seastar::async context.
 void manager::host_hint_manager::sender::send_hints_maybe() noexcept {
     manager_logger.trace("send_hints(): going to send hints to {}, we have {} segments to replay",
             _host_id, _segments_to_replay.size() + _foreign_segments_to_replay.size());
@@ -669,13 +696,15 @@ void manager::host_hint_manager::sender::send_hints_maybe() noexcept {
 
             notify_replay_waiters();
         }
+    // Ignore exceptions. We will retry sending this file from where we left off next time.
+    // Exceptions are not expected here during the regular operation, so just log them.
     } catch (...) {
         manager_logger.trace("send_hints(): got the exception: {}", std::current_exception());
     }
 
     if (have_segments()) {
         // TODO: come up with something more sophisticated here
-        _next_send_retry_tp = clock_type::now() + std::chrono::seconds(1);
+        _next_send_retry_tp = clock_type::now() + std::chrono::seconds{1};
     } else {
         // if there are no segments to send we want to retry when we maybe have some (after flushing)
         _next_send_retry_tp = _next_flush_tp;
@@ -711,7 +740,7 @@ void manager::host_hint_manager::sender::notify_replay_waiters() noexcept {
                 _host_id, rw_it->first, _sent_upper_bound_rp);
         auto ptr = rw_it->second;
         (**ptr).set_value();
-        (*ptr) = std::nullopt;
+        (*ptr) = std::nullopt; // Prevent it from being resolved by abort source subscription.
         _replay_waiters.erase(rw_it);
     }
 }
@@ -721,7 +750,7 @@ void manager::host_hint_manager::sender::dismiss_replay_waiters() noexcept {
         manager_logger.debug("[{}] dismiss_replay_waiters(): dismissing one", _host_id);
         auto ptr = p.second;
         (**ptr).set_exception(std::runtime_error{seastar::format("Hints manager for {} is stopping", _host_id)});
-        (*ptr) = std::nullopt;
+        (*ptr) = std::nullopt; // Prevent it from being resolved by abort source subscription.
     }
     _replay_waiters.clear();
 }
@@ -733,6 +762,8 @@ typename manager::host_hint_manager::sender::time_duration_type manager::host_hi
 
     const time_duration_type d = std::min(next_flush_tp, next_retry_tp) - current_time;
 
+    // Don't sleep for less than 10 ticks of the "clock" if we are planning to sleep at all
+    // -- the sleep() function is not perfect.
     return time_duration_type{10 * div_ceil(d.count(), 10)};
 }
 
@@ -748,7 +779,7 @@ typename manager::host_hint_manager::sender::time_duration_type manager::host_hi
 
 
 
-manager::host_hint_manager::host_hint_manager(locator::host_id host_id, manager& shard_manager)
+manager::host_hint_manager::host_hint_manager(const locator::host_id& host_id, manager& shard_manager)
     : _host_id{host_id}
     , _file_update_mutex_ptr{seastar::make_lw_shared(seastar::shared_mutex{})}
     , _shard_manager{shard_manager}
@@ -756,6 +787,9 @@ manager::host_hint_manager::host_hint_manager(locator::host_id host_id, manager&
             _shard_manager.local_db(), _shard_manager.local_gossiper()}
     , _state{hint_manager_state_set::of<hint_manager_state::stopped>()}
     , _hints_dir{_shard_manager.hints_dir() / seastar::format("{}", _host_id).c_str()}
+    // Approximate the position of the last written hint by using the same formula
+    // as for segment id calculation in commitlog.
+    // TODO: Should this logic be deduplicated with what is in the commitlog?
     , _last_written_rp{seastar::this_shard_id(),
             std::chrono::duration_cast<std::chrono::milliseconds>(runtime::get_boot_time().time_since_epoch()).count()}
 {}
@@ -789,6 +823,7 @@ seastar::future<> manager::host_hint_manager::stop(drain should_drain) noexcept 
     return seastar::async([this, should_drain] {
         std::exception_ptr eptr;
 
+        // This is going to prevent further storing of new hints and will break all sending in progress.
         set_stopping();
 
         try {
@@ -818,6 +853,7 @@ seastar::future<> manager::host_hint_manager::stop(drain should_drain) noexcept 
 
 seastar::future<hints_store_ptr> manager::host_hint_manager::get_or_load() {
     namespace sc = seastar::coroutine;
+
     if (!_hints_store_anchor) {
         const auto log_ptr = co_await _shard_manager.store_factory().get_or_load(_host_id,
                 sc::lambda([this] (const locator::host_id&) noexcept {
@@ -834,15 +870,16 @@ bool manager::host_hint_manager::store_hint(schema_ptr s, seastar::lw_shared_ptr
         tracing::trace_state_ptr tr_state) noexcept
 {
     try {
+        // Future is waited on indirectly in `stop()` (via `_store_gate`).
         (void) seastar::with_gate(_store_gate, [this, s, fm, tr_state] () mutable {
             ++_hints_in_progress;
             size_t mut_size = fm->representation().size();
             shard_stats().size_of_hints_in_progress += mut_size;
 
             return seastar::with_shared(file_update_mutex(), [this, fm, s, tr_state] () mutable -> seastar::future<> {
-                return get_or_load().then([this, fm, s, tr_state] (hints_store_ptr log_ptr) mutable {
+                return get_or_load().then([fm, s, tr_state] (hints_store_ptr log_ptr) mutable {
                     commitlog_entry_writer cew{s, *fm, commitlog::force_sync::no};
-                    return log_ptr->add_entry(s->id(), cew, timeout_clock::now() + _shard_manager.hint_file_write_timeout);
+                    return log_ptr->add_entry(s->id(), cew, timeout_clock::now() + HINT_FILE_WRITE_TIMEOUT);
                 }).then([this, tr_state] (rp_handle rh) {
                     auto rp = rh.release();
                     if (_last_written_rp < rp) {
@@ -897,7 +934,7 @@ seastar::future<commitlog> manager::host_hint_manager::add_store() noexcept {
         cfg.commit_log_location = _hints_dir.c_str();
         cfg.commitlog_segment_size_in_mb = resource_manager::hint_segment_size_in_mb;
         cfg.commitlog_total_space_in_mb = resource_manager::max_hints_per_host_size_mb;
-        cfg.fname_prefix = manager::FILENAME_PREFIX;
+        cfg.fname_prefix = FILENAME_PREFIX;
         cfg.extensions = &_shard_manager.local_db().extensions();
 
         // HH leaves segments on disk after commitlog shutdown, and later reads
@@ -959,13 +996,13 @@ seastar::future<commitlog> manager::host_hint_manager::add_store() noexcept {
             co_return l;
         }
 
-        std::vector<std::pair<segment_id_type, sstring>> local_segs_vec;
+        std::vector<std::pair<segment_id_type, seastar::sstring>> local_segs_vec;
         local_segs_vec.reserve(segs_vec.size());
 
         // Divide segments into those that were created on this shard
         // and those which were moved to it during rebalancing.
         for (auto& seg : segs_vec) {
-            commitlog::descriptor desc(seg, manager::FILENAME_PREFIX);
+            commitlog::descriptor desc(seg, FILENAME_PREFIX);
             unsigned shard_id = replay_position(desc).shard_id();
             if (shard_id == this_shard_id()) {
                 local_segs_vec.emplace_back(desc.id, std::move(seg));
@@ -978,7 +1015,7 @@ seastar::future<commitlog> manager::host_hint_manager::add_store() noexcept {
         // correspond to the chronological order.
         std::sort(local_segs_vec.begin(), local_segs_vec.end());
 
-        for (auto& [segment_id, seg] : local_segs_vec) {
+        for (auto& [_, seg] : local_segs_vec) {
             _sender.add_segment(std::move(seg));
         }
 
@@ -987,6 +1024,7 @@ seastar::future<commitlog> manager::host_hint_manager::add_store() noexcept {
 }
 
 seastar::future<> manager::host_hint_manager::flush_current_hints() noexcept {
+    // Flush created hints to disk.
     if (_hints_store_anchor) {
         return seastar::futurize_invoke([this] {
             return seastar::with_lock(file_update_mutex(), [this] {
@@ -995,11 +1033,13 @@ seastar::future<> manager::host_hint_manager::flush_current_hints() noexcept {
                         return cptr->release();
                     }).finally([cptr] {});
                 }).then([this] {
-                    // Un-hold the commitlog object. Since we are under the exclusive _file_update_mutex lock there are no
-                    // other hints_store_ptr copies and this would destroy the commitlog shared value.
+                    // Un-hold the commitlog object. Since we are under the exclusive _file_update_mutex
+                    // lock there are no other hints_store_ptr copies and this would destroy
+                    // the commitlog shared value.
                     _hints_store_anchor = nullptr;
 
-                    // Re-create the commitlog instance - this will re-populate the _segments_to_replay if needed.
+                    // Re-create the commitlog instance - this will re-populate the _segments_to_replay
+                    // if needed.
                     return get_or_load().discard_result();
                 });
             });
@@ -1028,7 +1068,7 @@ using host_hints_segment_map = std::unordered_map<shard_id_type, std::list<fs::p
 using hints_segment_map = std::unordered_map<locator::host_id, host_hints_segment_map>;
 
 // TODO: Couldn't this be templated so that we can avoid using std::function and, consequently, allocating memory?
-// Look where exactly this function is called.
+//       Look where exactly this function is called.
 seastar::future<> scan_for_hints_dirs(const seastar::sstring& hints_directory,
         std::function<seastar::future<> (fs::path dir, seastar::directory_entry de, shard_id_type shard_id)> f)
 {
@@ -1057,15 +1097,18 @@ seastar::future<> scan_for_hints_dirs(const seastar::sstring& hints_directory,
 hints_segment_map get_current_hints_segments(const seastar::sstring& hints_directory) {
     hints_segment_map current_hints_segments;
 
+    // Shard level.
     scan_for_hints_dirs(hints_directory,
             [&current_hints_segments] (fs::path dir, seastar::directory_entry de, shard_id_type shard_id) {
         manager_logger.trace("shard_id = {}", shard_id);
 
+        // IP level.
         return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::of<seastar::directory_entry_type::directory>(),
                 [&current_hints_segments, shard_id] (fs::path dir, seastar::directory_entry de) {
             manager_logger.trace("\tHost ID: {}", de.name);
             const auto host_id = locator::host_id{utils::UUID{de.name}};
 
+            // Hint files.
             return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::of<seastar::directory_entry_type::regular>(),
                     [&current_hints_segments, shard_id, host_id] (fs::path dir, seastar::directory_entry de) {
                 manager_logger.trace("\t\tFile: {}", de.name);
@@ -1112,6 +1155,7 @@ void rebalance_segments_for(const locator::host_id& host_id, size_t segments_per
         fs::path shard_path_dir{fs::path{hints_directory.c_str()} / seastar::format("{:d}", i).c_str() / host_id.to_sstring()};
         std::list<fs::path>& current_shard_segments = host_segments[i];
 
+        // Make sure that the shard_path_dir exists. If not -- create it.
         io_check([name = shard_path_dir.c_str()] {
             return seastar::recursive_touch_directory(name);
         }).get();
@@ -1120,6 +1164,7 @@ void rebalance_segments_for(const locator::host_id& host_id, size_t segments_per
             auto seg_path_it = segments_to_move.begin();
             fs::path new_path{shard_path_dir / seg_path_it->filename()};
 
+            // Don't move the file to the same location -- it's pointless.
             if (*seg_path_it != new_path) {
                 manager_logger.trace("going to move: {} -> {}", *seg_path_it, new_path);
                 io_check(rename_file, seg_path_it->native(), new_path.native()).get();
@@ -1143,10 +1188,11 @@ void rebalance_segments_for(const locator::host_id& host_id, size_t segments_per
 ///
 /// \param hints_directory a root hints directory
 /// \param segments_map a map that was built by get_current_hints_segments()
-void rebalance_segments(const seastar::sstring& hints_directory, hints_segment_map& segment_map) {
+void rebalance_segments(const seastar::sstring& hints_directory, hints_segment_map& segments_map) {
+    // Count how many hint segments to each destination we have.
     std::unordered_map<locator::host_id, size_t> hints_per_host;
 
-    for (const auto& [host_id, host_hints_map] : segment_map) {
+    for (const auto& [host_id, host_hints_map] : segments_map) {
         hints_per_host[host_id] = std::transform_reduce(
                 host_hints_map.begin(), host_hints_map.end(),
                 size_t{0}, std::plus<>(),
@@ -1155,12 +1201,17 @@ void rebalance_segments(const seastar::sstring& hints_directory, hints_segment_m
         manager_logger.trace("{}: total files: {}", host_id, hints_per_host[host_id]);
     }
 
+    // Create a map of lists of segments that we will move (for each destination host):
+    // if a shard has segments, then we will NOT move q = int(N/S) segments out of them,
+    // where N is the total number of segments to the current destination
+    // and S is the current number of shards.
     std::unordered_map<locator::host_id, std::list<fs::path>> segments_to_move;
-    for (auto& [host_id, host_segments] : segment_map) {
+    for (auto& [host_id, host_segments] : segments_map) {
         const size_t q = hints_per_host[host_id] / smp::count;
         auto& current_segments_to_move = segments_to_move[host_id];
 
         for (auto& [shard_id, shard_segments] : host_segments) {
+            // Move all segments from the shards that are no longer relevant (re-sharding to the lower number of shards)
             if (shard_id >= smp::count) {
                 current_segments_to_move.splice(current_segments_to_move.end(), shard_segments);
             } else if (shard_segments.size() > q) {
@@ -1173,13 +1224,28 @@ void rebalance_segments(const seastar::sstring& hints_directory, hints_segment_m
         }
     }
 
+    // Since N (the total number of segments to a specific destination) may not be a multiple of S (the current number of
+    // shards), we will distribute files in two passes:
+    //    * if N = S * q + r, then
+    //       * one pass for segments_per_shard = q
+    //       * another one for segments_per_shard = q + 1.
+    //
+    // This way we will get as close to the perfect distribution as possible.
+    //
+    // Right till this point, we haven't moved any segments. However, we have created a logical separation of segments
+    // into two groups:
+    //    * Segments that are not going to be moved: segments in the segments_map.
+    //    * Segments that are going to be moved: segments in the segments_to_move.
+    //
+    // rebalance_segments_for() is going to consume segments from segments_to_move and move them to corresponding
+    // lists in the segments_map AND actually move segments to the corresponding shard's sub-directory until the requested
+    // segments_per_shard level is reached (see more details in the description of rebalance_segments_for()).
     for (const auto& [host_id, N] : hints_per_host) {
         const auto q = N / smp::count;
         const auto r = N - smp::count * q;
         auto& current_segments_to_move = segments_to_move[host_id];
-        auto& current_segments_map = segment_map[host_id];
+        auto& current_segments_map = segments_map[host_id];
 
-        // TODO: Can this be optimized?
         if (q) {
             rebalance_segments_for(host_id, q, hints_directory, current_segments_map, current_segments_to_move);
         }
@@ -1191,22 +1257,23 @@ void rebalance_segments(const seastar::sstring& hints_directory, hints_segment_m
 
 /// \brief Remove sub-directories of shards that are not relevant any more (re-sharding to a lower number of shards case).
 ///
-/// Complexity: O(S*E), where S is a number of shards during the previous boot and
-///                           E is a number of hosts for which hints where ever created.
+/// Runs in seastar::async context.
+///
+/// Complexity: O(S*E), where S is the number of shards during the previous boot and
+///                           E is the number of hosts for which hints where ever created.
 ///
 /// \param hints_directory a root hints directory
 void remove_irrelevant_shards_directories(const seastar::sstring& hints_directory) {
+    // Shard level.
     scan_for_hints_dirs(hints_directory, [] (fs::path dir, directory_entry de, shard_id_type shard_id) {
         if (shard_id >= smp::count) {
-            return lister::scan_dir(
-                    dir / de.name.c_str(),
-                    lister::dir_entry_types::full(),
-                    lister::show_hidden::yes,
+            // IP level
+            return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::full(), lister::show_hidden::yes,
                     [] (fs::path dir, seastar::directory_entry de) {
-                        return io_check(remove_file, (dir / de.name.c_str()).native());
-                    }).then([shard_base_dir = dir, shard_entry = de] {
-                        return io_check(remove_file, (shard_base_dir / shard_entry.name.c_str()).native());
-                    });
+                    return io_check(remove_file, (dir / de.name.c_str()).native());
+            }).then([shard_base_dir = dir, shard_entry = de] {
+                return io_check(remove_file, (shard_base_dir / shard_entry.name.c_str()).native());
+            });
         }
         return seastar::make_ready_future<>();
     }).get();
@@ -1338,11 +1405,15 @@ seastar::future<> manager::change_host_filter(host_filter filter) {
         }
 
         manager_logger.debug("change_host_filter: changing from {} to {}", _host_filter, filter);
+
+        // Change the host_filter now, but save the old one to roll back if a failure occurs.
         std::swap(_host_filter, filter);
 
         const auto& topology = _proxy_anchor->get_token_metadata_ptr()->get_topology();
+        std::exception_ptr eptr = nullptr;
             
         try {
+            // Iterate over existing hint directories and see if we can enable a host manager for some of them.
             co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<seastar::directory_entry_type::directory>(),
                     sc::lambda([this, &topology] (fs::path datadir, seastar::directory_entry de) -> seastar::future<> {
                 const auto host_id = locator::host_id{utils::UUID{de.name}};
@@ -1354,9 +1425,13 @@ seastar::future<> manager::change_host_filter(host_filter filter) {
                 co_await get_host_manager(host_id).populate_segments_to_replay();
             }));
         } catch (...) {
+            // Bring back the old filter. The finally() block will cause us to stop
+            // the additional ep_hint_managers that we started
             _host_filter = std::move(filter);
+            eptr = std::current_exception();
         }
 
+        // Remove host managers which are rejected by the filter.
         co_await sc::parallel_for_each(_host_managers, sc::lambda([this, &topology] (auto& pair) -> seastar::future<> {
             auto& [id, hmanager] = pair;
                 
@@ -1368,6 +1443,10 @@ seastar::future<> manager::change_host_filter(host_filter filter) {
                 _host_managers.erase(id);
             });
         }));
+
+        if (eptr) {
+            std::rethrow_exception(eptr);
+        }
     }));
 }
 
@@ -1388,12 +1467,18 @@ bool manager::can_hint_for(const locator::host_id& host_id) const noexcept {
     }
 
     const auto hipf = hints_in_progress_for(host_id);
+    // Don't allow more than one in-flight (to the store) hint to a specific destination
+    // when the total size of in-flight hints is more than the maximum allowed value.
+    //
+    // In the worst case, there's going to be (_max_size_of_hints_in_progress + N - 1) in-flight hints,
+    // where N is the total number nodes in the cluster.
     if (_stats.size_of_hints_in_progress > max_size_of_hints_in_progress && hipf > 0) {
         manager_logger.trace("size_of_hints_in_progress {} hints_in_progress_for({}) {}",
                 _stats.size_of_hints_in_progress, host_id, hipf);
         return false;
     }
 
+    // Check that the destination DC is "hintable".
     if (!check_dc_for(host_id)) {
         manager_logger.trace("{}'s DC is not hintable", host_id);
         return false;
@@ -1406,6 +1491,7 @@ bool manager::can_hint_for(const locator::host_id& host_id) const noexcept {
     }
 
     const auto ep_downtime = local_gossiper().get_endpoint_downtime(maybe_ep.value());
+    // Check if the host has been down for too long.
     if (ep_downtime > _max_hint_window_us) {
         manager_logger.trace("{} has been down for {}, not hinting", host_id, ep_downtime);
         return false;
@@ -1414,7 +1500,7 @@ bool manager::can_hint_for(const locator::host_id& host_id) const noexcept {
     return true;
 }
 
-bool manager::too_many_in_flight_hints_for(locator::host_id host_id) const noexcept {
+bool manager::too_many_in_flight_hints_for(const locator::host_id& host_id) const noexcept {
     const locator::token_metadata_ptr tm_ptr = get_token_metadata_ptr(_proxy_anchor);
     if (!tm_ptr) [[unlikely]] {
         return false;
@@ -1427,6 +1513,9 @@ bool manager::too_many_in_flight_hints_for(locator::host_id host_id) const noexc
         return false;
     }
 
+    // There is no need to check the DC here because if there is an in-flight hint
+    // for this host, then it means that its DC has already been checked
+    // and found to be ok.
     return _stats.size_of_hints_in_progress > max_size_of_hints_in_progress &&
             host_id != my_host_id &&
             hints_in_progress_for(host_id) > 0 &&
@@ -1436,10 +1525,13 @@ bool manager::too_many_in_flight_hints_for(locator::host_id host_id) const noexc
 bool manager::check_dc_for(const locator::host_id& host_id) const noexcept {
     const auto& topology = _proxy_anchor->get_token_metadata_ptr()->get_topology();
     try {
+        // If the target's DC is not a "hintable" DCs -- don't hint.
+        // If there is a host manager, then DC has already been checked and found to be ok.
         return _host_filter.is_enabled_for_all() ||
                 have_host_manager(host_id) ||
                 _host_filter.can_hint_for(topology, host_id);
     } catch (...) {
+        // Failing to check the DC should block the hint.
         return false;
     }
 }
@@ -1524,32 +1616,31 @@ seastar::future<> manager::wait_for_sync_point(seastar::abort_source& as, const 
     }
 }
 
-directory_initializer manager::make_directory_initializer(utils::directories& dirs, fs::path hints_directory) {
-    // Not implemented, but I don't know if the function should be removed
-    // or if it should simply be implemented.
-    // 
-    // As of now, just make it crash.
-    assert(false);
-    return *(directory_initializer*)0xff;
-}
+// TODO: Decide if the function should be removed from the API or if it should be implemented.
+// directory_initializer manager::make_directory_initializer(utils::directories& dirs, fs::path hints_directory);
 
 seastar::future<> manager::rebalance(seastar::sstring hints_directory) {
     return seastar::async([hints_directory = std::move(hints_directory)] {
+        // Scan the currently present hints segments.
         hints_segment_map current_hints_segments = get_current_hints_segments(hints_directory);
 
+        // Move segments to achieve an even distribution of files among all present shards.
         rebalance_segments(hints_directory, current_hints_segments);
 
+        // Remove the directories of shards that are not present anymore
+        // -- they should not have any segments by now.
         remove_irrelevant_shards_directories(hints_directory);
     });
 }
 
-void manager::drain_for(locator::host_id host_id) {
+void manager::drain_for(const locator::host_id& host_id) {
     if (!started() || stopping() || draining_all()) {
         return;
     }
 
     manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", host_id);
 
+    // The future is waited on indirectly in `stop()` (via `_draining_hosts_gate`).
     (void) seastar::with_gate(_draining_hosts_gate, [this, host_id] {
         return seastar::with_semaphore(drain_lock(), 1, [this, host_id] {
             return seastar::futurize_invoke([this, host_id] {
@@ -1560,8 +1651,8 @@ void manager::drain_for(locator::host_id host_id) {
                     return parallel_for_each(_host_managers, [] (auto& pair) {
                         auto& [_, hmanager] = pair;
                         return hmanager.stop(drain::yes).finally([&hmanager = hmanager] {
-                            return with_file_update_mutex(hmanager, [&hmanager = hmanager] {
-                                return remove_file(hmanager.hints_dir().c_str());
+                            return with_file_update_mutex(hmanager, [&hmanager] {
+                                return seastar::remove_file(hmanager.hints_dir().c_str());
                             });
                         });
                     }).finally([this] {
@@ -1573,7 +1664,7 @@ void manager::drain_for(locator::host_id host_id) {
                         auto& [_, hmanager] = *hmanager_it;
                         return hmanager.stop(drain::yes).finally([this, host_id, &hmanager = hmanager] {
                             return with_file_update_mutex(hmanager, [&hmanager] {
-                                return remove_file(hmanager.hints_dir().c_str());
+                                return seastar::remove_file(hmanager.hints_dir().c_str());
                             }).finally([this, host_id] {
                                 _host_managers.erase(host_id);
                             });
