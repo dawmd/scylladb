@@ -536,7 +536,7 @@ public:
     bool store_hint(const locator::host_id& host_id, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
             tracing::trace_state_ptr tr_state) noexcept;
     
-    /// \brief Changes the host_filter currently used, stopping and starting ep_managers relevant to the new host_filter.
+    /// \brief Changes the host_filter currently used, stopping and starting host_hint_managers relevant to the new host_filter.
     /// \param filter the new host_filter
     /// \return A future that resolves when the operation is complete.
     seastar::future<> change_host_filter(host_filter filter);
@@ -545,9 +545,9 @@ public:
         return _host_filter;
     }
 
-    /// \brief Check if a hint may be generated to the give end point
-    /// \param ep end point to check
-    /// \return true if we should generate the hint to the given end point if it becomes unavailable
+    /// \brief Check if a hint may be generated to a given host.
+    /// \param host_id destination host
+    /// \return true if we should generate the hint to the given host if it becomes unavailable
     bool can_hint_for(const locator::host_id& host_id) const noexcept;
 
     /// \brief Check if there aren't too many in-flight hints
