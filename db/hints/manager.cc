@@ -1641,7 +1641,7 @@ void manager::drain_for(const locator::host_id& host_id) {
     manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", host_id);
 
     // The future is waited on indirectly in `stop()` (via `_draining_hosts_gate`).
-    (void) seastar::with_gate(_draining_hosts_gate, [this, host_id] {
+    (void) seastar::with_gate(_draining_hosts_gate, [this, host_id = host_id] {
         return seastar::with_semaphore(drain_lock(), 1, [this, host_id] {
             return seastar::futurize_invoke([this, host_id] {
                 const auto my_host_id = _proxy_anchor->get_token_metadata_ptr()->get_my_id();
@@ -1677,7 +1677,7 @@ void manager::drain_for(const locator::host_id& host_id) {
                 manager_logger.error("Exception when draining {}: {}", host_id, eptr);
             });
         });
-    }).finally([host_id] {
+    }).finally([host_id = host_id] {
         manager_logger.trace("drain_for: finished draining {}", host_id);
     });
 }

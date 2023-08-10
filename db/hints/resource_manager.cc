@@ -99,7 +99,7 @@ seastar::future<> space_watchdog::stop() noexcept {
 }
 
 // Called under the end_point_hints_manager::file_update_mutex() of the corresponding end_point_hints_manager instance.
-seastar::future<> space_watchdog::scan_one_host_dir(fs::path path, manager& shard_manager, const host_id_type& host_id) {
+seastar::future<> space_watchdog::scan_one_host_dir(fs::path path, manager& shard_manager, host_id_type host_id) {
     // It may happen that we get here and the directory has already been deleted in the context of manager::drain_for().
     // In this case simply bail out.
     if (!co_await seastar::file_exists(path.native())) {

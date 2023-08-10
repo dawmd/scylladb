@@ -113,7 +113,7 @@ private:
     /// \param path directory to scan
     /// \param ep_name end point ID (as a string)
     /// \return future that resolves when scanning is complete
-    future<> scan_one_host_dir(fs::path path, manager& shard_manager, const host_id_type& host_id);
+    future<> scan_one_host_dir(fs::path path, manager& shard_manager, host_id_type host_id);
 };
 
 class resource_manager {
