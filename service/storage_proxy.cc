@@ -1039,9 +1039,12 @@ public:
     }
     virtual bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) override {
         auto m = _mutations[ep];
-        const auto id = _proxy.get_token_metadata_ptr()->get_host_id(ep);
         if (m) {
-            return hm.store_hint(id, _schema, std::move(m), tr_state);
+            const auto maybe_id = _proxy.get_token_metadata_ptr()->get_host_id_if_known(ep);
+            if (!maybe_id) {
+                return false;
+            }
+            return hm.store_hint(*maybe_id, _schema, std::move(m), tr_state);
         } else {
             return false;
         }
@@ -1107,8 +1110,11 @@ public:
         return hm.store_hint(host_id, _schema, _mutation, tr_state);
     }
     virtual bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) override {
-        const auto id = _proxy.get_token_metadata_ptr()->get_host_id(ep);
-        return hm.store_hint(id, _schema, _mutation, tr_state);
+        const auto maybe_id = _proxy.get_token_metadata_ptr()->get_host_id_if_known(ep);
+        if (!maybe_id) {
+            return false;
+        }
+        return hm.store_hint(*maybe_id, _schema, _mutation, tr_state);
     }
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
@@ -6441,7 +6447,11 @@ future<db::hints::sync_point> storage_proxy::create_hint_sync_point(const std::v
     // so it's not THAT important to optimize it.
     auto target_ids = boost::copy_range<std::vector<locator::host_id>>(target_hosts | boost::adaptors::transformed(
             [&] (const gms::inet_address& ep) {
-        return get_token_metadata_ptr()->get_host_id(ep);
+        return get_token_metadata_ptr()->get_host_id_if_known(ep);
+    }) | boost::adaptors::filtered([] (const auto& op) noexcept {
+        return op.has_value();
+    }) | boost::adaptors::transformed([] (const auto& op) noexcept {
+        return op.value();
     }));
     return create_hint_sync_point(std::move(target_ids));
 }
