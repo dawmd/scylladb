@@ -1397,10 +1397,42 @@ seastar::future<> manager::change_host_filter(host_filter filter) {
 
     seastar::gate::holder holder{_draining_hosts_gate};
     
+    // TODO: I feel like this logic is unnecessarily complex and time-consuming. Would this solution work?
+    //       1. Create two sets, each containing host IDs.
+    //       2. Iterate with `lister::scan_dir` over directories, just like now,
+    //          and for each directory's name (=== host ID) do [note: what if the directory's name not a valid host ID?]:
+    //              if !_host_managers.contains(host_id) && new_filter.can_hint_for(topology, host_id):
+    //                  set_start.add(host_id)
+    //              if !new_filter.can_hint_for(topology, host_id):
+    //                  set_stop.add(host_id)
+    //       3. Once that has been done, start running those new host managers (those corresponding to host IDs
+    //          from set_start) by doing
+    //              get_host_manager(host_id).populate_segments_to_replay()
+    //          If during this phase an exception occurs, break the loop and go to exception handling, i.e. step (EH)
+    //       4. Stop the host managers from the stop set by doing
+    //              co_await manager.stop(drain::no).finally([this, id = id] { _host_managers.erase(id); })
+    //       5. Replace the current host filter with the new one.
+    //
+    //          [Note: I don't understand the asynchronous routine of the manager yet, so chances are replacing it
+    //           right away -- like it is now -- is the desired behavior and should not be changed. Keeping this
+    //           order of operations doesn't affect the new solution; it is simply a more natural, in my opinion, order.]
+    //
+    //       (EH). Iterate over `set_start` created in step 2: stop those managers and erase them by doing:
+    //                 manager.stop(drain::no).finally([this, id = id] { _host_managers.erase(id); });
+    //             just like now.
+    //
+    //             [Note: this changes the behavior of this function. Right now, we not only remove managers
+    //              that have been created in this function, but also others that can be hinted. The new logic
+    //              assumes only the newly created managers should be stopped and erased -- so from the perspective
+    //              of the user, "nothing" really happened. The "nothing" is in quotation marks because we've gone
+    //              through segments to replay, so SOMETHING has happened.
+    //
+    //              If the current behavior is the desired one, no changes to this function should be made, I guess.]
     namespace sc = seastar::coroutine;
     co_await seastar::with_semaphore(drain_lock(), 1,
             sc::lambda([this, filter = std::move(filter)] () mutable -> seastar::future<> {
         if (draining_all()) {
+            // TODO: Shouldn't this message say that all hints ARE BEING drained?
             throw std::logic_error{"change_host_filter: cannot change the configuration because all hints have been drained"};
         }
 
@@ -1425,6 +1457,7 @@ seastar::future<> manager::change_host_filter(host_filter filter) {
                 co_await get_host_manager(host_id).populate_segments_to_replay();
             }));
         } catch (...) {
+            // TODO: Perhaps change or remove this comment. We've moved to coroutines, so it makes little sense now.
             // Bring back the old filter. The finally() block will cause us to stop
             // the additional ep_hint_managers that we started
             _host_filter = std::move(filter);
@@ -1574,6 +1607,7 @@ sync_point::shard_rps manager::calculate_current_sync_point(const std::vector<lo
 seastar::future<> manager::wait_for_sync_point(seastar::abort_source& as, const sync_point::shard_rps& rps) {
     seastar::abort_source local_as;
 
+    // TODO: Why is this here?
     auto sub = as.subscribe([&local_as] () noexcept {
         if (!local_as.abort_requested()) {
             local_as.request_abort();
@@ -1585,6 +1619,14 @@ seastar::future<> manager::wait_for_sync_point(seastar::abort_source& as, const 
     }
 
     bool was_aborted = false;
+    // TODO: This could be "optimized" a bit. We could first filter the range to only include host managers
+    //       corresponding to host IDs from rps. For any other host manager, the replayed position used will be
+    //       the default replay position, which, as far as my understanding goes, will be a NO-OP, so creating
+    //       a new fiber for it (because one will be created, right?) makes little sense to me.
+    //
+    //       It's not completely true that it's a NO-OP because some logging IS involved. But still, maybe it's
+    //       unnecessary, especially because the caller didn't specify that host ID anyway, so I assume they're
+    //       not interested in learning anything about it.
     return seastar::parallel_for_each(_host_managers, [&was_aborted, &rps, &local_as] (auto& p) {
         auto& [host_id, host_manager] = p;
         replay_position rp;
@@ -1643,12 +1685,14 @@ void manager::drain_for(const locator::host_id& host_id) {
     // The future is waited on indirectly in `stop()` (via `_draining_hosts_gate`).
     (void) seastar::with_gate(_draining_hosts_gate, [this, host_id = host_id] {
         return seastar::with_semaphore(drain_lock(), 1, [this, host_id] {
+            // TODO: Why futurize_invoke here? I think it's because we want to handle exceptions
+            //       thrown by THIS lambda, but if it happens for e.g. the with_semaphore, then it should throw.
             return seastar::futurize_invoke([this, host_id] {
                 const auto my_host_id = _proxy_anchor->get_token_metadata_ptr()->get_my_id();
 
                 if (host_id == my_host_id) {
                     set_draining_all();
-                    return parallel_for_each(_host_managers, [] (auto& pair) {
+                    return seastar::parallel_for_each(_host_managers, [] (auto& pair) {
                         auto& [_, hmanager] = pair;
                         return hmanager.stop(drain::yes).finally([&hmanager = hmanager] {
                             return with_file_update_mutex(hmanager, [&hmanager] {
