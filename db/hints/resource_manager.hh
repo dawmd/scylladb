@@ -39,7 +39,6 @@ class gossiper;
 namespace db::hints {
 
 seastar::future<dev_t> get_device_id(const fs::path& path);
-seastar::future<bool> is_mountpoint(const fs::path& path);
 
 using timer_clock_type = seastar::lowres_clock;
 
@@ -62,7 +61,6 @@ private:
     };
 
 public:
-
     struct per_device_limits {
         utils::small_vector<std::reference_wrapper<manager>, 2> managers;
         size_t max_shard_disk_space_size;

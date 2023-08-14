@@ -372,10 +372,6 @@ private:
         /// \brief Start the timer.
         void start();
 
-        /// \brief Get the corresponding hints_store object. Create it if needed.
-        /// \note Must be called under the \ref _file_update_mutex.
-        /// \return The corresponding hints_store object.
-
         /// \brief Waits till all writers complete and shuts down the hints store. Drains hints if needed.
         ///
         /// If "draining" is requested - sends all pending hints out.
@@ -388,6 +384,9 @@ private:
         /// \return Ready future when all operations are complete
         seastar::future<> stop(drain should_drain = drain::no) noexcept;
 
+        /// \brief Get the corresponding hints_store object. Create it if needed.
+        /// \note Must be called under the \ref _file_update_mutex.
+        /// \return The corresponding hints_store object.
         seastar::future<hints_store_ptr> get_or_load();
 
         /// \brief Store a single mutation hint.

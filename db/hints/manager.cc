@@ -1322,8 +1322,8 @@ seastar::future<> manager::stop() {
     set_stopping();
 
     return _draining_hosts_gate.close().finally([this] {
-        return seastar::parallel_for_each(_host_managers, [] (auto& pair) {
-            return pair.second.stop();
+        return seastar::parallel_for_each(_host_managers | boost::adaptors::map_values, [] (auto& hmanager) {
+            return hmanager.stop();
         }).finally([this] {
             _host_managers.clear();
             manager_logger.info("Stopped");
@@ -1441,6 +1441,7 @@ seastar::future<> manager::change_host_filter(host_filter filter) {
         // Change the host_filter now, but save the old one to roll back if a failure occurs.
         std::swap(_host_filter, filter);
 
+        // TODO: Does this continue living as long as it should?
         const auto& topology = _proxy_anchor->get_token_metadata_ptr()->get_topology();
         std::exception_ptr eptr = nullptr;
             
@@ -1570,13 +1571,13 @@ bool manager::check_dc_for(const locator::host_id& host_id) const noexcept {
 }
 
 void manager::allow_hints() {
-    for (auto& [_, host_manager] : _host_managers) {
+    for (auto& host_manager : _host_managers | boost::adaptors::map_values) {
         host_manager.allow_hints();
     }
 }
 
 void manager::forbid_hints() {
-    for (auto& [_, host_manager] : _host_managers) {
+    for (auto& host_manager : _host_managers | boost::adaptors::map_values) {
         host_manager.forbid_hints();
     }
 }
@@ -1692,8 +1693,7 @@ void manager::drain_for(const locator::host_id& host_id) {
 
                 if (host_id == my_host_id) {
                     set_draining_all();
-                    return seastar::parallel_for_each(_host_managers, [] (auto& pair) {
-                        auto& [_, hmanager] = pair;
+                    return seastar::parallel_for_each(_host_managers | boost::adaptors::map_values, [] (auto& hmanager) {
                         return hmanager.stop(drain::yes).finally([&hmanager = hmanager] {
                             return with_file_update_mutex(hmanager, [&hmanager] {
                                 return seastar::remove_file(hmanager.hints_dir().c_str());
