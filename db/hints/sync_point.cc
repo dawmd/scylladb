@@ -6,17 +6,19 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#include <algorithm>
 #include <seastar/core/simple-stream.hh>
 #include <seastar/core/smp.hh>
 
+#include <boost/range/adaptor/map.hpp>
+
 #include "db/hints/sync_point.hh"
-#include "sync_point.hh"
 #include "idl/hinted_handoff.dist.hh"
 #include "idl/hinted_handoff.dist.impl.hh"
+#include "sync_point.hh"
 #include "utils/base64.hh"
 #include "utils/xx_hasher.hh"
 
+#include <algorithm>
 #include <exception>
 #include <ranges>
 #include <unordered_set>
@@ -64,7 +66,7 @@ per_manager_sync_point_v1 encode_one_type_v1(unsigned shards, const std::vector<
     // Gather all host_ids, from all shards.
     std::unordered_set<locator::host_id> all_host_ids;
     for (const auto& shard_rps : rps) {
-        for (const auto& [id, _] : shard_rps) {
+        for (const auto& id: shard_rps | boost::adaptors::map_keys) {
             all_host_ids.insert(id);
         }
     }

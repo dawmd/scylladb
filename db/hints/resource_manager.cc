@@ -9,6 +9,7 @@
 #include "resource_manager.hh"
 
 // Seastar features.
+#include <exception>
 #include <seastar/core/sleep.hh>
 #include <seastar/core/seastar.hh>
 
@@ -18,6 +19,7 @@
 
 // Scylla includes.
 #include "seastar/core/loop.hh"
+#include "seastar/core/semaphore.hh"
 #include "utils/UUID.hh"
 #include "utils/disk-error-handler.hh"
 #include "utils/div_ceil.hh"
@@ -28,12 +30,9 @@
 
 namespace db::hints {
 
-static logging::logger resource_manager_logger{"hints_resource_manager"};
+namespace {
 
-seastar::future<dev_t> get_device_id(const fs::path& path) {
-    const auto sd = co_await seastar::file_stat(path.native());
-    co_return sd.device_id;
-}
+logging::logger resource_manager_logger{"hints_resource_manager"};
 
 seastar::future<bool> is_mountpoint(const fs::path& path) {
     // Special case for '/', which is always a mount point
@@ -45,6 +44,13 @@ seastar::future<bool> is_mountpoint(const fs::path& path) {
     const auto id2 = co_await get_device_id(path.parent_path());
 
     co_return id1 != id2;
+}
+
+} // anonymous namespace
+
+seastar::future<dev_t> get_device_id(const fs::path& path) {
+    const auto sd = co_await seastar::file_stat(path.native());
+    co_return sd.device_id;
 }
 
 seastar::future<seastar::semaphore_units<seastar::named_semaphore::exception_factory>> resource_manager::get_send_units_for(size_t buf_size) {
@@ -79,7 +85,7 @@ void space_watchdog::start() {
     _started = seastar::async([this] {
         while (!_as.abort_requested()) {
             try {
-                const auto units = get_units(_update_lock, 1).get();
+                const auto units = seastar::get_units(_update_lock, 1).get();
                 on_timer();
             } catch (...) {
                 resource_manager_logger.trace("space_watchdog: unexpected exception - stop all hints generators");
@@ -107,7 +113,7 @@ seastar::future<> space_watchdog::scan_one_host_dir(fs::path path, manager& shar
     }
 
     namespace sc = seastar::coroutine;
-    co_await lister::scan_dir(path, lister::dir_entry_types::of<directory_entry_type::regular>(),
+    co_await lister::scan_dir(path, lister::dir_entry_types::of<seastar::directory_entry_type::regular>(),
             sc::lambda([this, host_id, &shard_manager] (fs::path dir, seastar::directory_entry de) -> seastar::future<> {
         // Put the current end point ID to state.eps_with_pending_hints when we see the second hints file in its directory
         if (_files_count == 1) {
@@ -142,8 +148,8 @@ void space_watchdog::on_timer() {
         _total_size = 0;
         for (manager& shard_manager : per_device_limits.managers) {
             shard_manager.clear_hosts_with_pending_hints();
-            lister::scan_dir(shard_manager.hints_dir(), lister::dir_entry_types::of<directory_entry_type::directory>(),
-                    [this, &shard_manager] (fs::path dir, directory_entry de) {
+            lister::scan_dir(shard_manager.hints_dir(), lister::dir_entry_types::of<seastar::directory_entry_type::directory>(),
+                    [this, &shard_manager] (fs::path dir, seastar::directory_entry de) {
                 _files_count = 0;
                 // Let's scan per-end-point directories and enumerate hints files...
                 //
@@ -155,7 +161,8 @@ void space_watchdog::on_timer() {
 
                 auto it = shard_manager.find_host_manager(host_id);
                 if (it != shard_manager.host_managers_end()) {
-                    return with_file_update_mutex(it->second, [this, &shard_manager, dir = std::move(dir), ep_name = std::move(de.name), host_id] () mutable {
+                    return with_file_update_mutex(it->second,
+                            [this, &shard_manager, dir = std::move(dir), ep_name = std::move(de.name), host_id] () mutable {
                         return scan_one_host_dir(dir / ep_name, shard_manager, host_id);
                     });
                 } else {
@@ -165,13 +172,12 @@ void space_watchdog::on_timer() {
         }
 
         // Adjust the quota to take into account the space we guarantee to every end point manager
-        size_t adjusted_quota = 0;
-        size_t delta = boost::accumulate(per_device_limits.managers, 0, [] (size_t sum, manager& shard_manager) {
+        const size_t delta = boost::accumulate(per_device_limits.managers, 0, [] (size_t sum, manager& shard_manager) noexcept {
             return sum + shard_manager.host_managers_size() * resource_manager::hint_segment_size_in_mb * 1024 * 1024;
         });
-        if (per_device_limits.max_shard_disk_space_size > delta) {
-            adjusted_quota = per_device_limits.max_shard_disk_space_size - delta;
-        }
+        const size_t adjusted_quota = per_device_limits.max_shard_disk_space_size > delta
+                ? per_device_limits.max_shard_disk_space_size - delta
+                : 0;
 
         resource_manager_logger.trace("space_watchdog: consuming {}/{} bytes", _total_size, adjusted_quota);
         for (manager& shard_manager : per_device_limits.managers) {
@@ -186,19 +192,18 @@ seastar::future<> resource_manager::start(seastar::shared_ptr<service::storage_p
     _proxy_ptr = std::move(proxy_ptr);
     _gossiper_ptr = std::move(gossiper_ptr);
 
-    namespace sc = seastar::coroutine;
-    co_await seastar::with_semaphore(_operation_lock, 1, sc::lambda([this] () -> seastar::future<> {
-        co_await seastar::parallel_for_each(_shard_managers, sc::lambda([this] (manager& m) {
-            return m.start(_proxy_ptr, _gossiper_ptr);
-        }));
+    const auto units = seastar::get_units(_operation_lock, 1);
+
+    co_await seastar::parallel_for_each(_shard_managers, [this] (manager& m) -> seastar::future<> {
+        co_await m.start(_proxy_ptr, _gossiper_ptr);
+    });
+    
+    co_await seastar::do_for_each(_shard_managers, [this] (manager& m) -> seastar::future<> {
+        co_await prepare_per_device_limits(m);
+    });
         
-        co_await seastar::do_for_each(_shard_managers, sc::lambda([this] (manager& m) {
-            return prepare_per_device_limits(m);
-        }));
-        
-        _space_watchdog.start();
-        set_running();
-    }));
+    _space_watchdog.start();
+    set_running();
 }
 
 void resource_manager::allow_replaying() noexcept {
@@ -207,48 +212,56 @@ void resource_manager::allow_replaying() noexcept {
 }
 
 seastar::future<> resource_manager::stop() noexcept {
-    return seastar::with_semaphore(_operation_lock, 1, [this] {
-        return seastar::parallel_for_each(_shard_managers, [] (manager& m) {
+    const auto units = seastar::get_units(_operation_lock, 1);
+    std::exception_ptr eptr = nullptr;
+
+    try {
+        co_await seastar::parallel_for_each(_shard_managers, [] (manager& m) {
             return m.stop();
-        }).finally([this] {
-            return _space_watchdog.stop();
-        }).then([this] {
-            unset_running();
         });
-    });
+    } catch (...) {
+        eptr = std::current_exception();
+    }
+    
+    co_await _space_watchdog.stop();
+    
+    if (eptr) {
+        std::rethrow_exception(eptr);
+    }
+
+    // TODO: Why don't we unset it when an exception happens? If it's to mark that some
+    //       managers might still be running, then why do we stop this space watchdog?
+    //       It looks inconsistent to me.
+    unset_running();
 }
 
 seastar::future<> resource_manager::register_manager(manager& m) {
-    namespace sc = seastar::coroutine;
-    co_await seastar::with_semaphore(_operation_lock, 1,
-            sc::lambda([this, &m] () -> seastar::future<> {
-        co_await seastar::with_semaphore(_space_watchdog.update_lock(), 1,
-                sc::lambda([this, &m] () -> seastar::future<> {
-            const auto [it, inserted] = _shard_managers.insert(m);
-            if (!inserted) {
-                // Already registered
-                co_return;
-            }
-            if (!running()) {
-                // The hints manager will be started later by resource_manager::start()
-                co_return;
-            }
+    const auto op_units = seastar::get_units(_operation_lock, 1);
+    const auto update_units = seastar::get_units(_space_watchdog.update_lock(), 1);
+    
+    const auto [it, inserted] = _shard_managers.insert(m);
+    if (!inserted) {
+        // Already registered
+        co_return;
+    }
+    if (!running()) {
+        // The hints manager will be started later by resource_manager::start()
+        co_return;
+    }
 
-            // If the resource_manager was started, start the hints manager, too.
-            try {
-                co_await m.start(_proxy_ptr, _gossiper_ptr);
-                // Calculate device limits for this manager so that it is accounted for
-                // by the space_watchdog
-                co_await prepare_per_device_limits(m);
-                if (this->replay_allowed()) {
-                    m.allow_replaying();
-                }
-            } catch (...) {
-                _shard_managers.erase(m);
-                throw;
-            }
-        }));
-    }));
+    // If the resource_manager was started, start the hints manager, too.
+    try {
+        co_await m.start(_proxy_ptr, _gossiper_ptr);
+        // Calculate device limits for this manager so that it is accounted for
+        // by the space_watchdog
+        co_await prepare_per_device_limits(m);
+        if (replay_allowed()) {
+            m.allow_replaying();
+        }
+    } catch (...) {
+        _shard_managers.erase(m);
+        throw;
+    }
 }
 
 seastar::future<> resource_manager::prepare_per_device_limits(manager& shard_manager) {
