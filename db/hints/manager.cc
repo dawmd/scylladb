@@ -7,7 +7,9 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#include <algorithm>
+#include "db/hints/manager.hh"
+
+// Seastar features.
 #include <seastar/core/future.hh>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/sleep.hh>
@@ -15,24 +17,31 @@
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
+
+// Boost features.
 #include <boost/range/adaptors.hpp>
-#include "utils/div_ceil.hh"
+
+// Scylla includes.
 #include "db/extensions.hh"
-#include "service/storage_proxy.hh"
-#include "gms/versioned_value.hh"
-#include "gms/gossiper.hh"
-#include "seastarx.hh"
-#include "converting_mutation_partition_applier.hh"
-#include "utils/disk-error-handler.hh"
-#include "utils/lister.hh"
 #include "db/timeout_clock.hh"
-#include "replica/database.hh"
-#include "service_permit.hh"
-#include "utils/directories.hh"
+#include "gms/gossiper.hh"
+#include "gms/versioned_value.hh"
 #include "locator/abstract_replication_strategy.hh"
 #include "mutation/mutation_partition_view.hh"
-#include "utils/runtime.hh"
+#include "replica/database.hh"
+#include "service/storage_proxy.hh"
+#include "utils/directories.hh"
+#include "utils/disk-error-handler.hh"
+#include "utils/div_ceil.hh"
 #include "utils/error_injection.hh"
+#include "utils/lister.hh"
+#include "utils/runtime.hh"
+#include "converting_mutation_partition_applier.hh"
+#include "seastarx.hh"
+#include "service_permit.hh"
+
+// STD.
+#include <algorithm>
 
 using namespace std::literals::chrono_literals;
 
