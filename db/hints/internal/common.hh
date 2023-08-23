@@ -12,8 +12,8 @@
 #include <seastar/util/bool_class.hh>
 
 // Scylla includes.
-#include "db/commitlog/commitlog_entry.hh"
 #include "gms/inet_address.hh"
+#include "log.hh"
 
 // STD.
 #include <cstdint>
@@ -21,11 +21,13 @@
 namespace db::hints {
 namespace internal {
 
+// TODO: Change this name later to something that suits its usage better.
+inline logging::logger manager_logger{"hints_manager"};
+
 // Type identifying host a specific subset of hints should be sent to.
 using host_id_type = gms::inet_address;
 
 // As of now, hints are stored on disk in form of commitlog segments.
-using hint_entry_reader = commitlog_entry_reader;
 
 // Tag specifying if hint sending should enter the so-called "drain mode".
 // If it should, that means that if a failure while sending a hint occurs,
