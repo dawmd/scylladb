@@ -439,19 +439,9 @@ public:
             return _sender.wait_until_hints_are_replayed_up_to(as, up_to_rp);
         }
 
-        /// \brief Safely runs a given functor under the file_update_mutex of \ref ep_man
-        ///
-        /// Runs a given functor under the file_update_mutex of the given end_point_hints_manager instance.
-        /// This function is safe even if \ref ep_man gets destroyed before the future this function returns resolves
-        /// (as long as the \ref func call itself is safe).
-        ///
-        /// \tparam Func Functor type.
-        /// \param ep_man end_point_hints_manager instance which file_update_mutex we want to lock.
-        /// \param func Functor to run under the lock.
-        /// \return Whatever \ref func returns.
-        template <typename Func>
-        friend inline auto with_file_update_mutex(end_point_hints_manager& ep_man, Func&& func) {
-            return with_lock(*ep_man._file_update_mutex_ptr, std::forward<Func>(func)).finally([lock_ptr = ep_man._file_update_mutex_ptr] {});
+        
+        seastar::lw_shared_ptr<seastar::shared_mutex> get_file_update_mutex_ptr() noexcept {
+            return _file_update_mutex_ptr;
         }
 
         const fs::path& hints_dir() const noexcept {
@@ -593,8 +583,8 @@ public:
     /// \param ep End point identificator
     /// \return Number of hints in-flight to \param ep.
     uint64_t hints_in_progress_for(ep_key_type ep) const noexcept {
-        auto it = find_ep_manager(ep);
-        if (it == ep_managers_end()) {
+        auto it = _ep_managers.find(ep);
+        if (it == _ep_managers.end()) {
             return 0;
         }
         return it->second.hints_in_progress();
@@ -664,7 +654,29 @@ public:
     /// \return A future that resolves when the operation is complete.
     static future<> rebalance(sstring hints_directory);
 
+    // TODO: Change this comment to match the current behavior.
+    //
+    /// \brief Safely runs a given functor under the file_update_mutex of \ref ep_man
+    ///
+    /// Runs a given functor under the file_update_mutex of the given end_point_hints_manager instance.
+    /// This function is safe even if \ref ep_man gets destroyed before the future this function returns resolves
+    /// (as long as the \ref func call itself is safe).
+    ///
+    /// \tparam Func Functor type.
+    /// \param ep_man end_point_hints_manager instance which file_update_mutex we want to lock.
+    /// \param func Functor to run under the lock.
+    /// \return Whatever \ref func returns.
+    template<typename Func>
+    decltype(auto) with_file_update_mutex(ep_key_type ep, Func&& func) {
+        auto mutex_ptr = get_file_update_mutex_ptr(ep);
+        return seastar::with_lock(*mutex_ptr, std::forward<Func>(func)).finally([mptr = mutex_ptr] {
+            // Extend the lifetime.
+        });
+    }
+
 private:
+    seastar::lw_shared_ptr<seastar::shared_mutex> get_file_update_mutex_ptr(ep_key_type ep);
+
     future<> compute_hints_dir_device_id();
 
     node_to_hint_store_factory_type& store_factory() noexcept {
@@ -727,23 +739,6 @@ private:
 
     bool draining_all() noexcept {
         return _state.contains(state::draining_all);
-    }
-
-public:
-    ep_managers_map_type::iterator find_ep_manager(ep_key_type ep_key) noexcept {
-        return _ep_managers.find(ep_key);
-    }
-
-    ep_managers_map_type::const_iterator find_ep_manager(ep_key_type ep_key) const noexcept {
-        return _ep_managers.find(ep_key);
-    }
-
-    ep_managers_map_type::iterator ep_managers_end() noexcept {
-        return _ep_managers.end();
-    }
-
-    ep_managers_map_type::const_iterator ep_managers_end() const noexcept {
-        return _ep_managers.end();
     }
 };
 

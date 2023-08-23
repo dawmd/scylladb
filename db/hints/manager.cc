@@ -356,8 +356,8 @@ future<hints_store_ptr> manager::end_point_hints_manager::get_or_load() {
 }
 
 manager::end_point_hints_manager& manager::get_ep_manager(ep_key_type ep) {
-    auto it = find_ep_manager(ep);
-    if (it == ep_managers_end()) {
+    auto it = _ep_managers.find(ep);
+    if (it == _ep_managers.end()) {
         manager_logger.trace("Creating an ep_manager for {}", ep);
         manager::end_point_hints_manager& ep_man = _ep_managers.emplace(ep, end_point_hints_manager(ep, *this)).first->second;
         ep_man.start();
@@ -366,8 +366,8 @@ manager::end_point_hints_manager& manager::get_ep_manager(ep_key_type ep) {
     return it->second;
 }
 
-inline bool manager::have_ep_manager(ep_key_type ep) const noexcept {
-    return find_ep_manager(ep) != ep_managers_end();
+bool manager::have_ep_manager(ep_key_type ep) const noexcept {
+    return _ep_managers.contains(ep);
 }
 
 bool manager::store_hint(ep_key_type ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept {
@@ -620,8 +620,8 @@ bool manager::can_hint_for(ep_key_type ep) const noexcept {
         return false;
     }
 
-    auto it = find_ep_manager(ep);
-    if (it != ep_managers_end() && (it->second.stopping() || !it->second.can_hint())) {
+    auto it = _ep_managers.find(ep);
+    if (it != _ep_managers.end() && (it->second.stopping() || !it->second.can_hint())) {
         return false;
     }
 
@@ -705,6 +705,10 @@ bool manager::check_dc_for(ep_key_type ep) const noexcept {
     }
 }
 
+seastar::lw_shared_ptr<seastar::shared_mutex> manager::get_file_update_mutex_ptr(ep_key_type ep) {
+    return _ep_managers.at(ep).get_file_update_mutex_ptr();
+}
+
 void manager::drain_for(gms::inet_address endpoint) {
     if (!started() || stopping() || draining_all()) {
         return;
@@ -718,9 +722,9 @@ void manager::drain_for(gms::inet_address endpoint) {
             return futurize_invoke([this, endpoint] () {
                 if (utils::fb_utilities::is_me(endpoint)) {
                     set_draining_all();
-                    return parallel_for_each(_ep_managers, [] (auto& pair) {
-                        return pair.second.stop(drain::yes).finally([&pair] {
-                            return with_file_update_mutex(pair.second, [&pair] {
+                    return parallel_for_each(_ep_managers, [this] (auto& pair) {
+                        return pair.second.stop(drain::yes).finally([this, &pair] {
+                            return with_file_update_mutex(pair.first, [&pair] {
                                 return remove_file(pair.second.hints_dir().c_str());
                             });
                         });
@@ -728,10 +732,10 @@ void manager::drain_for(gms::inet_address endpoint) {
                         _ep_managers.clear();
                     });
                 } else {
-                    ep_managers_map_type::iterator ep_manager_it = find_ep_manager(endpoint);
-                    if (ep_manager_it != ep_managers_end()) {
-                        return ep_manager_it->second.stop(drain::yes).finally([this, endpoint, &ep_man = ep_manager_it->second] {
-                            return with_file_update_mutex(ep_man, [&ep_man] {
+                    ep_managers_map_type::iterator ep_manager_it = _ep_managers.find(endpoint);
+                    if (ep_manager_it != _ep_managers.end()) {
+                        return ep_manager_it->second.stop(drain::yes).finally([this, endpoint, &ep = ep_manager_it->first, &ep_man = ep_manager_it->second] {
+                            return with_file_update_mutex(ep, [&ep_man] {
                                 return remove_file(ep_man.hints_dir().c_str());
                             }).finally([this, endpoint] {
                                 _ep_managers.erase(endpoint);
