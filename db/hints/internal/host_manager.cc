@@ -1,0 +1,271 @@
+/*
+ * Modified by ScyllaDB
+ * Copyright (C) 2023-present ScyllaDB
+ */
+
+/*
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+#include "db/hints/internal/host_manager.hh"
+
+// Seastar features.
+#include <seastar/core/do_with.hh>
+#include <seastar/core/seastar.hh>
+#include <seastar/core/smp.hh>
+#include <seastar/core/sstring.hh>
+
+// Scylla includes.
+#include "db/hints/internal/hint_storage.hh"
+
+// STD.
+#include <algorithm>
+#include <utility>
+#include <vector>
+
+namespace db::hints {
+namespace internal {
+
+template <typename SM>
+seastar::future<hint_store_ptr> host_manager<SM>::get_or_load() {
+    if (!_hint_store_anchor) {
+        hint_store_ptr log_ptr = co_await _shard_manager.store_factory().get_or_load(_host_id,
+                [this] (const auto& ignored) noexcept {
+            return add_store();
+        });
+        
+        _hint_store_anchor = log_ptr;
+        co_return log_ptr;
+    }
+
+    co_return _hint_store_anchor;
+}
+
+
+template <typename SM>
+bool host_manager<SM>::store_hint(schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
+        tracing::trace_state_ptr tr_state) noexcept
+{
+    try {
+        // Future is waited on indirectly in `stop()` (via `_store_gate`).
+        (void)with_gate(_store_gate, [this, s = std::move(s), fm = std::move(fm), tr_state] () mutable {
+            ++_hints_in_progress;
+            size_t mut_size = fm->representation().size();
+            shard_stats().size_of_hints_in_progress += mut_size;
+
+            return with_shared(file_update_mutex(), [this, fm, s, tr_state] () mutable -> future<> {
+                return get_or_load().then([this, fm = std::move(fm), s = std::move(s), tr_state] (hint_store_ptr log_ptr) mutable {
+                    commitlog_entry_writer cew(s, *fm, db::commitlog::force_sync::no);
+                    return log_ptr->add_entry(s->id(), cew, db::timeout_clock::now() + _shard_manager.hint_file_write_timeout);
+                }).then([this, tr_state] (db::rp_handle rh) {
+                    auto rp = rh.release();
+                    if (_last_written_rp < rp) {
+                        _last_written_rp = rp;
+                        manager_logger.debug("[{}] Updated last written replay position to {}", _host_id, rp);
+                    }
+                    ++shard_stats().written;
+
+                    manager_logger.trace("Hint to {} was stored", _host_id);
+                    tracing::trace(tr_state, "Hint to {} was stored", _host_id);
+                }).handle_exception([this, tr_state] (std::exception_ptr eptr) {
+                    ++shard_stats().errors;
+
+                    manager_logger.debug("store_hint(): got the exception when storing a hint to {}: {}", _host_id, eptr);
+                    tracing::trace(tr_state, "Failed to store a hint to {}: {}", _host_id, eptr);
+                });
+            }).finally([this, mut_size, fm, s] {
+                --_hints_in_progress;
+                shard_stats().size_of_hints_in_progress -= mut_size;
+            });;
+        });
+    } catch (...) {
+        manager_logger.trace("Failed to store a hint to {}: {}", _host_id, std::current_exception());
+        tracing::trace(tr_state, "Failed to store a hint to {}: {}", _host_id, std::current_exception());
+
+        ++shard_stats().dropped;
+        return false;
+    }
+    return true;
+}
+
+template <typename SM>
+seastar::future<> host_manager<SM>::populate_segments_to_replay() {
+    return seastar::with_lock(file_update_mutex(), [this] {
+        return get_or_load().discard_result();
+    });
+}
+
+template <typename SM>
+seastar::future<> host_manager<SM>::stop(drain should_drain) noexcept {
+    if (stopped()) {
+        return seastar::make_exception_future<>(
+                std::logic_error{seastar::format("ep_manager[{}]: stop() is called twice", _host_id).c_str()});
+    }
+
+    return seastar::async([this, should_drain] {
+        std::exception_ptr eptr;
+
+        // This is going to prevent further storing of new hints and will break all sending in progress.
+        set_stopping();
+
+        _store_gate.close().handle_exception([&eptr] (auto e) { eptr = std::move(e); }).get();
+        _hint_sender.stop(should_drain).handle_exception([&eptr] (auto e) { eptr = std::move(e); }).get();
+
+        seastar::with_lock(file_update_mutex(), [this] {
+            if (_hint_store_anchor) {
+                hints_store_ptr tmp = std::exchange(_hint_store_anchor, nullptr);
+                return tmp->shutdown().finally([tmp] {
+                    return tmp->release();
+                }).finally([tmp] {});
+            }
+            return seastar::make_ready_future<>();
+        }).handle_exception([&eptr] (auto e) { eptr = std::move(e); }).get();
+
+        if (eptr) {
+            manager_logger.error("ep_manager[{}]: exception: {}", _host_id, eptr);
+        }
+
+        set_stopped();
+    });
+}
+
+template <typename SM>
+void host_manager<SM>::start() {
+    clear_stopped();
+    allow_hints();
+    _hint_sender.start();
+}
+
+template <typename SM>
+seastar::future<> host_manager<SM>::wait_until_hints_are_replayed_up_to(seastar::abort_source& as,
+        replay_position up_to_rp)
+{
+    return _hint_sender.wait_until_hints_are_replayed_up_to(as, up_to_rp);
+}
+
+template <typename SM>
+seastar::future<> host_manager<SM>::flush_current_hints() noexcept {
+    // Flush the currently created hints to disk
+    if (_hint_store_anchor) {
+        return seastar::with_lock(file_update_mutex(), [this] {
+            return get_or_load().then([] (hints_store_ptr cptr) {
+                return cptr->shutdown().finally([cptr] {
+                    return cptr->release();
+                }).finally([cptr] {});
+            }).then([this] {
+                // Un-hold the commitlog object. Since we are under the exclusive _file_update_mutex lock there are no
+                // other hints_store_ptr copies and this would destroy the commitlog shared value.
+                _hint_store_anchor = nullptr;
+
+                // Re-create the commitlog instance - this will re-populate the _segments_to_replay if needed.
+                return get_or_load().discard_result();
+            });
+        });
+    }
+
+    return seastar::make_ready_future<>();
+}
+
+template <typename SM>
+seastar::future<commitlog> host_manager<SM>::add_store() noexcept {
+    manager_logger.trace("Going to add a store to {}", _hints_dir.c_str());
+    
+    co_await io_check([name = _hints_dir.c_str()] {
+        return seastar::recursive_touch_directory(name);
+    });
+
+    commitlog::config cfg;
+
+    cfg.commit_log_location = _hints_dir.c_str();
+    cfg.commitlog_segment_size_in_mb = resource_manager::hint_segment_size_in_mb;
+    cfg.commitlog_total_space_in_mb = resource_manager::max_hints_per_ep_size_mb;
+    cfg.fname_prefix = HINT_FILENAME_PREFIX;
+    cfg.extensions = &_shard_manager.local_db().extensions();
+
+    // HH leaves segments on disk after commitlog shutdown, and later reads
+    // them when commitlog is re-created. This is expected to happen regularly
+    // during standard HH workload, so no need to print a warning about it.
+    cfg.warn_about_segments_left_on_disk_after_shutdown = false;
+    // Allow going over the configured size limit of the commitlog
+    // (resource_manager::max_hints_per_ep_size_mb). The commitlog will
+    // be more conservative with its disk usage when going over the limit.
+    // On the other hand, HH counts used space using the space_watchdog
+    // in resource_manager, so its redundant for the commitlog to apply
+    // a hard limit.
+    cfg.allow_going_over_size_limit = true;
+    // The API for waiting for hint replay relies on replay positions
+    // monotonically increasing. When there are no segments on disk,
+    // by default the commitlog will calculate the first segment ID
+    // based on the boot time. This may cause the following sequence
+    // of events to occur:
+    //
+    // 1. Node starts with empty hints queue
+    // 2. Some hints are written and some segments are created
+    // 3. All hints are replayed
+    // 4. Hint sync point is created
+    // 5. Commitlog instance gets re-created and resets it segment ID counter
+    // 6. New hint segment has the first ID as the first (deleted by now) segment
+    // 7. Waiting for the sync point commences but resolves immediately
+    //    before new hints are replayed - since point 5., `_last_written_rp`
+    //    and `_sent_upper_bound_rp` are not updated because RPs of new
+    //    hints are much lower than both of those marks.
+    //
+    // In order to prevent this situation, we override the base segment ID
+    // of the newly created commitlog instance - it should start with an ID
+    // which is larger than the segment ID of the RP of the last written hint.
+    cfg.base_segment_id = _last_written_rp.base_id();
+
+    commitlog l = co_await commitlog::create_commitlog(std::move(cfg));
+    // add_store() is triggered every time hint files are forcefully flushed to I/O (every hints_flush_period).
+    // When this happens we want to refill _sender's segments only if it has finished with the segments he had before.
+    if (_hint_sender.have_segments()) {
+        co_return l;
+    }
+
+    std::vector<sstring> segs_vec = co_await l.get_segments_to_replay();
+
+    if (segs_vec.empty()) {
+        // If the segs_vec is empty, this means that there are no more
+        // hints to be replayed. We can safely skip to the position of the
+        // last written hint.
+        //
+        // This is necessary: remember that we artificially set
+        // the last replayed position based on the creation time
+        // of the endpoint manager. If we replay all segments from
+        // previous runtimes but won't write any new hints during
+        // this runtime, then without the logic below the hint replay
+        // tracker won't reach the hint written tracker.
+        auto rp = _last_written_rp;
+        rp.pos++;
+        _hint_sender.rewind_sent_replay_position_to(rp);
+        co_return l;
+    }
+
+    std::vector<std::pair<segment_id_type, seastar::sstring>> local_segs_vec;
+    local_segs_vec.reserve(segs_vec.size());
+
+    // Divide segments into those that were created on this shard
+    // and those which were moved to it during rebalancing.
+    for (auto& seg : segs_vec) {
+        commitlog::descriptor desc(seg, HINT_FILENAME_PREFIX);
+        seastar::shard_id shard_id = replay_position(desc).shard_id();
+        if (shard_id == seastar::this_shard_id()) {
+            local_segs_vec.emplace_back(desc.id, std::move(seg));
+        } else {
+            _hint_sender.add_foreign_segment(std::move(seg));
+        }
+    }
+
+    // Sort local segments by their segment ids, which should
+    // correspond to the chronological order.
+    std::sort(local_segs_vec.begin(), local_segs_vec.end());
+
+    for (auto& [_, seg] : local_segs_vec) {
+        _hint_sender.add_segment(std::move(seg));
+    }
+
+    co_return l;
+}
+
+
+} // namespace internal
+} // namespace db::hints
