@@ -112,7 +112,7 @@ seastar::future<> host_manager<SM>::stop(drain should_drain) noexcept {
 
         seastar::with_lock(file_update_mutex(), [this] {
             if (_hint_store_anchor) {
-                hints_store_ptr tmp = std::exchange(_hint_store_anchor, nullptr);
+                hint_store_ptr tmp = std::exchange(_hint_store_anchor, nullptr);
                 return tmp->shutdown().finally([tmp] {
                     return tmp->release();
                 }).finally([tmp] {});
@@ -147,7 +147,7 @@ seastar::future<> host_manager<SM>::flush_current_hints() noexcept {
     // Flush the currently created hints to disk
     if (_hint_store_anchor) {
         return seastar::with_lock(file_update_mutex(), [this] {
-            return get_or_load().then([] (hints_store_ptr cptr) {
+            return get_or_load().then([] (hint_store_ptr cptr) {
                 return cptr->shutdown().finally([cptr] {
                     return cptr->release();
                 }).finally([cptr] {});
