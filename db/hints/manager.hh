@@ -633,12 +633,6 @@ public:
     /// \brief Waits until hint replay reach replay positions described in `rps`.
     future<> wait_for_sync_point(abort_source& as, const sync_point::shard_rps& rps);
 
-    /// \brief Creates an object which aids in hints directory initialization.
-    /// This object can saafely be copied and used from any shard.
-    /// \arg dirs The utils::directories object, used to create and lock hints directories
-    /// \arg hints_directory The directory with hints which should be initialized
-    directory_initializer make_directory_initializer(utils::directories& dirs, fs::path hints_directory);
-
     /// \brief Rebalance hints segments among all present shards.
     ///
     /// The difference between the number of segments on every two shard will be not greater than 1 after the
