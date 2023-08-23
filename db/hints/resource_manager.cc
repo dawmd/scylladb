@@ -6,17 +6,23 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#include "resource_manager.hh"
-#include "manager.hh"
-#include "log.hh"
-#include <boost/range/algorithm/for_each.hpp>
-#include <boost/range/adaptor/map.hpp>
-#include "utils/disk-error-handler.hh"
-#include "seastarx.hh"
-#include <seastar/core/sleep.hh>
+#include "db/hints/resource_manager.hh"
+
+// Seastar features.
 #include <seastar/core/seastar.hh>
+#include <seastar/core/sleep.hh>
+
+// Boost features.
+#include <boost/range/adaptor/map.hpp>
+#include <boost/range/algorithm/for_each.hpp>
+
+// Scylla includes.
+#include "db/hints/manager.hh"
+#include "utils/disk-error-handler.hh"
 #include "utils/div_ceil.hh"
 #include "utils/lister.hh"
+#include "log.hh"
+#include "seastarx.hh"
 
 namespace db {
 namespace hints {
