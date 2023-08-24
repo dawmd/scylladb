@@ -6,7 +6,6 @@
 /*
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
-#pragma once
 
 #include "db/hints/internal/hint_sender.hh"
 
@@ -47,7 +46,9 @@ namespace {
 
 class no_column_mapping : public std::out_of_range {
 public:
-    no_column_mapping(const table_schema_version& id) : std::out_of_range(format("column mapping for CF schema_version {} is missing", id)) {}
+    no_column_mapping(const table_schema_version& id)
+        : std::out_of_range{seastar::format("column mapping for CF schema_version {} is missing", id)}
+    {}
 };
 
 } // anonymous namespace
@@ -56,41 +57,42 @@ bool hint_sender::replay_allowed() const noexcept {
     return _ep_manager.replay_allowed();
 }
 
-future<> hint_sender::flush_maybe() noexcept {
+seastar::future<> hint_sender::flush_maybe() noexcept {
     auto current_time = clock::now();
     if (current_time >= _next_flush_tp) {
         return _ep_manager.flush_current_hints().then([this, current_time] {
             _next_flush_tp = current_time + manager::hints_flush_period;
         }).handle_exception([] (auto eptr) {
             manager_logger.trace("flush_maybe() failed: {}", eptr);
-            return make_ready_future<>();
+            return seastar::make_ready_future<>();
         });
     }
-    return make_ready_future<>();
+    return seastar::make_ready_future<>();
 }
 
-future<timespec> hint_sender::get_last_file_modification(const sstring& fname) {
-    return open_file_dma(fname, open_flags::ro).then([] (file f) {
-        return do_with(std::move(f), [] (file& f) {
+seastar::future<::timespec> hint_sender::get_last_file_modification(const sstring& fname) {
+    return seastar::open_file_dma(fname, open_flags::ro).then([] (file f) {
+        return seastar::do_with(std::move(f), [] (file& f) {
             return f.stat();
         });
     }).then([] (struct stat st) {
-        return make_ready_future<timespec>(st.st_mtim);
+        return seastar::make_ready_future<timespec>(st.st_mtim);
     });
 }
 
-future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m, const inet_address_vector_replica_set& natural_endpoints) noexcept {
-    return futurize_invoke([this, m = std::move(m), &natural_endpoints] () mutable -> future<> {
-        // The fact that we send with CL::ALL in both cases below ensures that new hints are not going
-        // to be generated as a result of hints sending.
-        if (boost::range::find(natural_endpoints, end_point_key()) != natural_endpoints.end()) {
-            manager_logger.trace("Sending directly to {}", end_point_key());
-            return _proxy.send_hint_to_endpoint(std::move(m), end_point_key());
-        } else {
-            manager_logger.trace("Endpoints set has changed and {} is no longer a replica. Mutating from scratch...", end_point_key());
-            return _proxy.send_hint_to_all_replicas(std::move(m));
-        }
-    });
+seastar::future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m,
+        const inet_address_vector_replica_set& natural_endpoints) noexcept
+{
+    // The fact that we send with CL::ALL in both cases below ensures that new hints are not going
+    // to be generated as a result of hints sending.
+    if (boost::range::find(natural_endpoints, end_point_key()) != natural_endpoints.end()) {
+        manager_logger.trace("Sending directly to {}", end_point_key());
+        return _proxy.send_hint_to_endpoint(std::move(m), end_point_key());
+    } else {
+        manager_logger.trace("Endpoints set has changed and {} is no longer a replica. Mutating from scratch...",
+                end_point_key());
+        return _proxy.send_hint_to_all_replicas(std::move(m));
+    }
 }
 
 bool hint_sender::can_send() noexcept {
@@ -104,7 +106,8 @@ bool hint_sender::can_send() noexcept {
             return true;
         } else {
             if (!_state.contains(state::ep_state_left_the_ring)) {
-                _state.set_if<state::ep_state_left_the_ring>(!_shard_manager.local_db().get_token_metadata().is_normal_token_owner(end_point_key()));
+                _state.set_if<state::ep_state_left_the_ring>(
+                        !_shard_manager.local_db().get_token_metadata().is_normal_token_owner(end_point_key()));
             }
             // send the hints out if the destination Node is part of the ring - we will send to all new replicas in this case
             return _state.contains(state::ep_state_left_the_ring);
@@ -114,22 +117,26 @@ bool hint_sender::can_send() noexcept {
     }
 }
 
-frozen_mutation_and_schema hint_sender::get_mutation(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fragmented_temporary_buffer& buf) {
-    hint_entry_reader hr(buf);
+frozen_mutation_and_schema hint_sender::get_mutation(seastar::lw_shared_ptr<send_one_file_ctx> ctx_ptr,
+        fragmented_temporary_buffer& buf)
+{
+    hint_entry_reader hr{buf};
     auto& fm = hr.mutation();
     auto& cm = get_column_mapping(std::move(ctx_ptr), fm, hr);
     auto schema = _db.find_schema(fm.column_family_id());
 
     if (schema->version() != fm.schema_version()) {
         mutation m(schema, fm.decorated_key(*schema));
-        converting_mutation_partition_applier v(cm, *schema, m.partition());
+        converting_mutation_partition_applier v{cm, *schema, m.partition()};
         fm.partition().accept(cm, v);
         return {freeze(m), std::move(schema)};
     }
     return {std::move(hr).mutation(), std::move(schema)};
 }
 
-const column_mapping& hint_sender::get_column_mapping(lw_shared_ptr<send_one_file_ctx> ctx_ptr, const frozen_mutation& fm, const hint_entry_reader& hr) {
+const column_mapping& hint_sender::get_column_mapping(seastar::lw_shared_ptr<send_one_file_ctx> ctx_ptr,
+        const frozen_mutation& fm, const hint_entry_reader& hr)
+{
     auto cm_it = ctx_ptr->schema_ver_to_column_mapping.find(fm.schema_version());
     if (cm_it == ctx_ptr->schema_ver_to_column_mapping.end()) {
         if (!hr.get_column_mapping()) {
@@ -143,8 +150,9 @@ const column_mapping& hint_sender::get_column_mapping(lw_shared_ptr<send_one_fil
     return cm_it->second;
 }
 
-hint_sender::hint_sender(end_point_hints_manager& parent, service::storage_proxy& local_storage_proxy,replica::database& local_db, gms::gossiper& local_gossiper) noexcept
-    : _stopped(make_ready_future<>())
+hint_sender::hint_sender(end_point_hints_manager& parent, service::storage_proxy& local_storage_proxy,
+        replica::database& local_db, gms::gossiper& local_gossiper) noexcept
+    : _stopped(seastar::make_ready_future<>())
     , _ep_key(parent.end_point_key())
     , _ep_manager(parent)
     , _shard_manager(_ep_manager._shard_manager)
@@ -157,7 +165,7 @@ hint_sender::hint_sender(end_point_hints_manager& parent, service::storage_proxy
 {}
 
 hint_sender::hint_sender(const hint_sender& other, end_point_hints_manager& parent) noexcept
-    : _stopped(make_ready_future<>())
+    : _stopped(seastar::make_ready_future<>())
     , _ep_key(parent.end_point_key())
     , _ep_manager(parent)
     , _shard_manager(_ep_manager._shard_manager)
@@ -174,7 +182,7 @@ hint_sender::~hint_sender() {
 }
 
 
-future<> hint_sender::stop(drain should_drain) noexcept {
+seastar::future<> hint_sender::stop(drain should_drain) noexcept {
     return seastar::async([this, should_drain] {
         set_stopping();
         _stop_as.request_abort();
@@ -252,7 +260,7 @@ void hint_sender::start() {
     });
 }
 
-future<> hint_sender::send_one_mutation(frozen_mutation_and_schema m) {
+seastar::future<> hint_sender::send_one_mutation(frozen_mutation_and_schema m) {
     auto erm = _db.find_column_family(m.s).get_effective_replication_map();
     auto token = dht::get_token(*m.s, m.fm.key());
     inet_address_vector_replica_set natural_endpoints = erm->get_natural_endpoints(std::move(token));
@@ -260,13 +268,16 @@ future<> hint_sender::send_one_mutation(frozen_mutation_and_schema m) {
     return do_send_one_mutation(std::move(m), natural_endpoints);
 }
 
-future<> hint_sender::send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fragmented_temporary_buffer buf, db::replay_position rp, gc_clock::duration secs_since_file_mod, const sstring& fname) {
+seastar::future<> hint_sender::send_one_hint(seastar::lw_shared_ptr<send_one_file_ctx> ctx_ptr,
+        fragmented_temporary_buffer buf, replay_position rp, gc_clock::duration secs_since_file_mod,
+        const seastar::sstring& fname)
+{
     return _resource_manager.get_send_units_for(buf.size_bytes()).then([this, secs_since_file_mod, &fname, buf = std::move(buf), rp, ctx_ptr] (auto units) mutable {
         ctx_ptr->mark_hint_as_in_progress(rp);
 
         // Future is waited on indirectly in `send_one_file()` (via `ctx_ptr->file_send_gate`).
         auto h = ctx_ptr->file_send_gate.hold();
-        (void)std::invoke([this, secs_since_file_mod, &fname, buf = std::move(buf), rp, ctx_ptr] () mutable {
+        (void) std::invoke([this, secs_since_file_mod, &fname, buf = std::move(buf), rp, ctx_ptr] () mutable {
             try {
                 auto m = this->get_mutation(ctx_ptr, buf);
                 gc_clock::duration gc_grace_sec = m.s->gc_grace_seconds();
@@ -279,7 +290,7 @@ future<> hint_sender::send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fr
                     manager_logger.debug("send_hints(): the hint is too old, skipping it, "
                         "secs since file last modification {}, gc_grace_sec {}, hints_flush_period {}",
                         now - secs_since_file_mod, gc_grace_sec, manager::hints_flush_period);
-                    return make_ready_future<>();
+                    return seastar::make_ready_future<>();
                 }
 
                 return this->send_one_mutation(std::move(m)).then([this, ctx_ptr] {
@@ -287,7 +298,7 @@ future<> hint_sender::send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fr
                 }).handle_exception([this, ctx_ptr] (auto eptr) {
                     manager_logger.trace("send_one_hint(): failed to send to {}: {}", end_point_key(), eptr);
                     ++this->shard_stats().send_errors;
-                    return make_exception_future<>(std::move(eptr));
+                    return seastar::make_exception_future<>(std::move(eptr));
                 });
 
             // ignore these errors and move on - probably this hint is too old and the KS/CF has been deleted...
@@ -304,9 +315,9 @@ future<> hint_sender::send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fr
                 auto eptr = std::current_exception();
                 manager_logger.debug("send_hints(): unexpected error in file {} at {}: {}", fname, rp, eptr);
                 ++this->shard_stats().send_errors;
-                return make_exception_future<>(std::move(eptr));
+                return seastar::make_exception_future<>(std::move(eptr));
             }
-            return make_ready_future<>();
+            return seastar::make_ready_future<>();
         }).then_wrapped([this, units = std::move(units), rp, ctx_ptr, h = std::move(h)] (future<>&& f) {
             // Information about the error was already printed somewhere higher.
             // We just need to account in the ctx that sending of this hint has failed.
@@ -356,19 +367,23 @@ void hint_sender::dismiss_replay_waiters() noexcept {
     _replay_waiters.clear();
 }
 
-future<> hint_sender::wait_until_hints_are_replayed_up_to(abort_source& as, db::replay_position up_to_rp) {
-    manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): entering with target {}", end_point_key(), up_to_rp);
+seastar::future<> hint_sender::wait_until_hints_are_replayed_up_to(seastar::abort_source& as,
+        replay_position up_to_rp)
+{
+    manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): entering with target {}",
+            end_point_key(), up_to_rp);
     if (_foreign_segments_to_replay.empty() && up_to_rp < _sent_upper_bound_rp) {
-        manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): hints were already replayed above the point ({} < {})", end_point_key(), up_to_rp, _sent_upper_bound_rp);
-        return make_ready_future<>();
+        manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): hints were already replayed above the point ({} < {})",
+                end_point_key(), up_to_rp, _sent_upper_bound_rp);
+        return seastar::make_ready_future<>();
     }
 
     if (as.abort_requested()) {
         manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): already aborted - stopping", end_point_key());
-        return make_exception_future<>(abort_requested_exception());
+        return seastar::make_exception_future<>(seastar::abort_requested_exception());
     }
 
-    auto ptr = make_lw_shared<std::optional<promise<>>>(promise<>());
+    auto ptr = seastar::make_lw_shared<std::optional<promise<>>>(promise<>());
     auto it = _replay_waiters.emplace(up_to_rp, ptr);
     auto sub = as.subscribe([this, ptr, it] () noexcept {
         if (!ptr->has_value()) {
@@ -377,7 +392,7 @@ future<> hint_sender::wait_until_hints_are_replayed_up_to(abort_source& as, db::
         }
         manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): abort requested - stopping", end_point_key());
         _replay_waiters.erase(it);
-        (**ptr).set_exception(abort_requested_exception());
+        (**ptr).set_exception(seastar::abort_requested_exception());
     });
 
     // When the future resolves, the endpoint manager is not guaranteed to exist anymore
@@ -388,18 +403,18 @@ future<> hint_sender::wait_until_hints_are_replayed_up_to(abort_source& as, db::
     });
 }
 
-void hint_sender::send_one_file_ctx::mark_hint_as_in_progress(db::replay_position rp) {
+void hint_sender::send_one_file_ctx::mark_hint_as_in_progress(replay_position rp) {
     in_progress_rps.insert(rp);
 }
 
-void hint_sender::send_one_file_ctx::on_hint_send_success(db::replay_position rp) noexcept {
+void hint_sender::send_one_file_ctx::on_hint_send_success(replay_position rp) noexcept {
     in_progress_rps.erase(rp);
     if (!last_succeeded_rp || *last_succeeded_rp < rp) {
         last_succeeded_rp = rp;
     }
 }
 
-void hint_sender::send_one_file_ctx::on_hint_send_failure(db::replay_position rp) noexcept {
+void hint_sender::send_one_file_ctx::on_hint_send_failure(replay_position rp) noexcept {
     in_progress_rps.erase(rp);
     segment_replay_failed = true;
     if (!first_failed_rp || rp < *first_failed_rp) {
@@ -407,13 +422,13 @@ void hint_sender::send_one_file_ctx::on_hint_send_failure(db::replay_position rp
     }
 }
 
-db::replay_position hint_sender::send_one_file_ctx::get_replayed_bound() const noexcept {
+replay_position hint_sender::send_one_file_ctx::get_replayed_bound() const noexcept {
     // We are sure that all hints were sent _below_ the position which is the minimum of the following:
     // - Position of the first hint that failed to be sent in this replay (first_failed_rp),
     // - Position of the last hint which was successfully sent (last_succeeded_rp, inclusive bound),
     // - Position of the lowest hint which is being currently sent (in_progress_rps.begin()).
 
-    db::replay_position rp;
+    replay_position rp;
     if (first_failed_rp) {
         rp = *first_failed_rp;
     } else if (last_succeeded_rp) {
@@ -430,7 +445,7 @@ db::replay_position hint_sender::send_one_file_ctx::get_replayed_bound() const n
     return rp;
 }
 
-void hint_sender::rewind_sent_replay_position_to(db::replay_position rp) {
+void hint_sender::rewind_sent_replay_position_to(replay_position rp) {
     _sent_upper_bound_rp = rp;
     notify_replay_waiters();
 }
@@ -442,7 +457,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
     lw_shared_ptr<send_one_file_ctx> ctx_ptr = make_lw_shared<send_one_file_ctx>(_last_schema_ver_to_column_mapping);
 
     try {
-        commitlog::read_log_file(fname, HINT_FILENAME_PREFIX, [this, secs_since_file_mod, &fname, ctx_ptr] (commitlog::buffer_and_replay_position buf_rp) -> future<> {
+        commitlog::read_log_file(fname, HINT_FILENAME_PREFIX, [this, secs_since_file_mod, &fname, ctx_ptr] (typename commitlog::buffer_and_replay_position buf_rp) -> seastar::future<> {
             auto& buf = buf_rp.buffer;
             auto& rp = buf_rp.position;
 
@@ -471,7 +486,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
                     // - flush_maybe() is called regularly - so that new segments
                     //   are created and we help enforce the "at most 10s worth of
                     //   hints in a segment".
-                    co_await sleep(std::chrono::milliseconds(100));
+                    co_await seastar::sleep(std::chrono::milliseconds(100));
                     continue;
                 } else {
                     co_await send_one_hint(ctx_ptr, std::move(buf), rp, secs_since_file_mod, fname);
@@ -479,7 +494,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
                 }
             };
         }, _last_not_complete_rp.pos, &_db.extensions()).get();
-    } catch (db::commitlog::segment_error& ex) {
+    } catch (commitlog::segment_error& ex) {
         manager_logger.error("{}: {}. Dropping...", fname, ex.what());
         ctx_ptr->segment_replay_failed = false;
         ++this->shard_stats().corrupted_files;
@@ -508,7 +523,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
     }
 
     // If we got here we are done with the current segment and we can remove it.
-    with_shared(_file_update_mutex, [&fname, this] {
+    seastar::with_shared(_file_update_mutex, [&fname, this] {
         auto p = _ep_manager.get_or_load().get0();
         return p->delete_segments({ fname });
     }).get();
@@ -520,7 +535,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
     return true;
 }
 
-const sstring* hint_sender::name_of_current_segment() const {
+const seastar::sstring* hint_sender::name_of_current_segment() const {
     // Foreign segments are replayed first
     if (!_foreign_segments_to_replay.empty()) {
         return &_foreign_segments_to_replay.front();
@@ -541,14 +556,14 @@ void hint_sender::pop_current_segment() {
 
 // Runs in the seastar::async context
 void hint_sender::send_hints_maybe() noexcept {
-    using namespace std::literals::chrono_literals;
-    manager_logger.trace("send_hints(): going to send hints to {}, we have {} segment to replay", end_point_key(), _segments_to_replay.size() + _foreign_segments_to_replay.size());
+    manager_logger.trace("send_hints(): going to send hints to {}, we have {} segment to replay",
+            end_point_key(), _segments_to_replay.size() + _foreign_segments_to_replay.size());
 
     int replayed_segments_count = 0;
 
     try {
         while (true) {
-            const sstring* seg_name = name_of_current_segment();
+            const seastar::sstring* seg_name = name_of_current_segment();
             if (!seg_name || !replay_allowed() || !can_send()) {
                 break;
             }
@@ -569,7 +584,7 @@ void hint_sender::send_hints_maybe() noexcept {
 
     if (have_segments()) {
         // TODO: come up with something more sophisticated here
-        _next_send_retry_tp = clock::now() + 1s;
+        _next_send_retry_tp = clock::now() + std::chrono::seconds(1);
     } else {
         // if there are no segments to send we want to retry when we maybe have some (after flushing)
         _next_send_retry_tp = _next_flush_tp;
