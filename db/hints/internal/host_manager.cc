@@ -17,6 +17,7 @@
 // Scylla includes.
 #include "db/hints/internal/hint_logger.hh"
 #include "db/hints/internal/hint_storage.hh"
+#include "db/hints/manager.hh"
 
 // STD.
 #include <algorithm>
@@ -26,8 +27,32 @@
 namespace db::hints {
 namespace internal {
 
-template <typename SM>
-seastar::future<hint_store_ptr> host_manager<SM>::get_or_load() {
+host_manager::host_manager(const host_id_type& key, manager& shard_manager)
+    : _host_id{key}
+    , _shard_manager{shard_manager}
+    , _file_update_mutex_ptr{seastar::make_lw_shared<seastar::shared_mutex>()}
+    , _hints_dir{_shard_manager.hints_dir() / seastar::format("{}", _host_id).c_str()}
+    , _last_written_rp{seastar::this_shard_id(),
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                runtime::get_boot_time().time_since_epoch()
+            ).count()}
+    , _hint_sender{*this}
+{}
+
+host_manager::host_manager(host_manager&& other)
+    : _host_id{other._host_id}
+    , _state{other._state}
+    , _shard_manager{other._shard_manager}
+    , _hint_store_anchor{std::move(other._hint_store_anchor)}
+    , _store_gate{std::move(other._store_gate)}
+    , _file_update_mutex_ptr{std::move(other._file_update_mutex_ptr)}
+    , _hints_dir{std::move(other._hints_dir)}
+    , _hints_in_progress{other._hints_in_progress}
+    , _last_written_rp{std::move(other._last_written_rp)}
+    , _hint_sender{std::move(other._hint_sender), *this}
+{}
+
+seastar::future<hint_store_ptr> host_manager::get_or_load() {
     if (!_hint_store_anchor) {
         hint_store_ptr log_ptr = co_await _shard_manager.store_factory().get_or_load(_host_id,
                 [this] (const auto& ignored) noexcept {
@@ -41,9 +66,7 @@ seastar::future<hint_store_ptr> host_manager<SM>::get_or_load() {
     co_return _hint_store_anchor;
 }
 
-
-template <typename SM>
-bool host_manager<SM>::store_hint(schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
+bool host_manager::store_hint(schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
         tracing::trace_state_ptr tr_state) noexcept
 {
     try {
@@ -88,15 +111,13 @@ bool host_manager<SM>::store_hint(schema_ptr s, seastar::lw_shared_ptr<const fro
     return true;
 }
 
-template <typename SM>
-seastar::future<> host_manager<SM>::populate_segments_to_replay() {
+seastar::future<> host_manager::populate_segments_to_replay() {
     return seastar::with_lock(file_update_mutex(), [this] {
         return get_or_load().discard_result();
     });
 }
 
-template <typename SM>
-seastar::future<> host_manager<SM>::stop(drain should_drain) noexcept {
+seastar::future<> host_manager::stop(drain should_drain) noexcept {
     if (stopped()) {
         return seastar::make_exception_future<>(
                 std::logic_error{seastar::format("ep_manager[{}]: stop() is called twice", _host_id).c_str()});
@@ -129,22 +150,19 @@ seastar::future<> host_manager<SM>::stop(drain should_drain) noexcept {
     });
 }
 
-template <typename SM>
-void host_manager<SM>::start() {
+void host_manager::start() {
     clear_stopped();
     allow_hints();
     _hint_sender.start();
 }
 
-template <typename SM>
-seastar::future<> host_manager<SM>::wait_until_hints_are_replayed_up_to(seastar::abort_source& as,
+seastar::future<> host_manager::wait_until_hints_are_replayed_up_to(seastar::abort_source& as,
         replay_position up_to_rp)
 {
     return _hint_sender.wait_until_hints_are_replayed_up_to(as, up_to_rp);
 }
 
-template <typename SM>
-seastar::future<> host_manager<SM>::flush_current_hints() noexcept {
+seastar::future<> host_manager::flush_current_hints() noexcept {
     // Flush the currently created hints to disk
     if (_hint_store_anchor) {
         return seastar::with_lock(file_update_mutex(), [this] {
@@ -166,8 +184,7 @@ seastar::future<> host_manager<SM>::flush_current_hints() noexcept {
     return seastar::make_ready_future<>();
 }
 
-template <typename SM>
-seastar::future<commitlog> host_manager<SM>::add_store() noexcept {
+seastar::future<commitlog> host_manager::add_store() noexcept {
     manager_logger.trace("Going to add a store to {}", _hints_dir.c_str());
     
     co_await io_check([name = _hints_dir.c_str()] {

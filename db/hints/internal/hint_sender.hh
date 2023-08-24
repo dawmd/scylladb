@@ -57,14 +57,11 @@ namespace internal {
 class send_one_file_ctx;
 
 // Data structure responsible for managing hints for a specific host.
-template <typename ShardManager>
 class host_manager;
 
 class hint_sender {
 // Local type declarations.
 private:
-    using host_manager = host_manager<manager>;
-
     using clock_type = seastar::lowres_clock;
     static_assert(noexcept(clock_type::now()), "clock_type::now() must be noexcept");
 

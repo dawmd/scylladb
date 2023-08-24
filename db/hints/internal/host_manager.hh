@@ -37,10 +37,11 @@
 #include <unordered_map>
 
 namespace db::hints {
+
+class manager;
+
 namespace internal {
 
-// For the time being, make this class a template to simplify development.
-template <typename ShardManager>
 class host_manager {
 // Public declarations.
 public:
@@ -68,7 +69,7 @@ private:
     host_id_type _host_id;
     state_set _state{};
 
-    ShardManager& _shard_manager;
+    manager& _shard_manager;
 
     // This anchor is created in `get_or_load`.
     hint_store_ptr _hint_store_anchor = nullptr;
@@ -83,30 +84,8 @@ private:
     hint_sender _hint_sender;
 
 public:
-    host_manager(const host_id_type& key, ShardManager& shard_manager)
-        : _host_id{key}
-        , _shard_manager{shard_manager}
-        , _file_update_mutex_ptr{seastar::make_lw_shared<seastar::shared_mutex>()}
-        , _hints_dir{_shard_manager.hints_dir() / seastar::format("{}", _host_id).c_str()}
-        , _last_written_rp{seastar::this_shard_id(),
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    runtime::get_boot_time().time_since_epoch()
-                ).count()}
-        , _hint_sender{*this}
-    {}
-
-    host_manager(host_manager&& other)
-        : _host_id{other._host_id}
-        , _state{other._state}
-        , _shard_manager{other._shard_manager}
-        , _hint_store_anchor{std::move(other._hint_store_anchor)}
-        , _store_gate{std::move(other._store_gate)}
-        , _file_update_mutex_ptr{std::move(other._file_update_mutex_ptr)}
-        , _hints_dir{std::move(other._hints_dir)}
-        , _hints_in_progress{other._hints_in_progress}
-        , _last_written_rp{std::move(other._last_written_rp)}
-        , _hint_sender{std::move(other._hint_sender), *this}
-    {}
+    host_manager(const host_id_type& key, manager& shard_manager);
+    host_manager(host_manager&& other);
 
     ~host_manager() noexcept {
         assert(stopped());
