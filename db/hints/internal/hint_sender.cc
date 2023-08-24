@@ -19,6 +19,7 @@
 #include <seastar/core/seastar.hh>
 
 // Scylla includes.
+#include "db/hints/internal/hint_logger.hh"
 #include "schema/schema_fwd.hh"
 #include "utils/div_ceil.hh"
 #include "utils/error_injection.hh"

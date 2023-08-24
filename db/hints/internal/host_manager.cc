@@ -15,6 +15,7 @@
 #include <seastar/core/sstring.hh>
 
 // Scylla includes.
+#include "db/hints/internal/hint_logger.hh"
 #include "db/hints/internal/hint_storage.hh"
 
 // STD.
