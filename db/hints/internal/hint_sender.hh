@@ -82,9 +82,9 @@ private:
     };
 
     using state_set = enum_set<super_enum<state,
-            state::stopping,
-            state::host_left_ring,
-            state::draining>>;
+        state::stopping,
+        state::host_left_ring,
+        state::draining>>;
 
     struct send_one_file_ctx {
         send_one_file_ctx(std::unordered_map<table_schema_version, column_mapping>& last_schema_ver_to_column_mapping)
@@ -92,17 +92,17 @@ private:
         {}
         std::unordered_map<table_schema_version, column_mapping>& schema_ver_to_column_mapping;
         seastar::gate file_send_gate;
-        std::optional<db::replay_position> first_failed_rp;
-        std::optional<db::replay_position> last_succeeded_rp;
-        std::set<db::replay_position> in_progress_rps;
+        std::optional<replay_position> first_failed_rp;
+        std::optional<replay_position> last_succeeded_rp;
+        std::set<replay_position> in_progress_rps;
         bool segment_replay_failed = false;
 
-        void mark_hint_as_in_progress(db::replay_position rp);
-        void on_hint_send_success(db::replay_position rp) noexcept;
-        void on_hint_send_failure(db::replay_position rp) noexcept;
+        void mark_hint_as_in_progress(replay_position rp);
+        void on_hint_send_success(replay_position rp) noexcept;
+        void on_hint_send_failure(replay_position rp) noexcept;
 
         // Returns a position below which hints were successfully replayed.
-        db::replay_position get_replayed_bound() const noexcept;
+        replay_position get_replayed_bound() const noexcept;
     };
 
 private:
@@ -113,7 +113,7 @@ private:
     replay_position _sent_upper_bound_rp;
     std::unordered_map<table_schema_version, column_mapping> _last_schema_ver_to_column_mapping;
     state_set _state;
-    future<> _stopped;
+    seastar::future<> _stopped;
     abort_source _stop_as;
     time_point_type _next_flush_tp;
     time_point_type _next_send_retry_tp;
@@ -127,7 +127,7 @@ private:
     gms::gossiper& _gossiper;
     seastar::shared_mutex& _file_update_mutex;
 
-    std::multimap<db::replay_position, lw_shared_ptr<std::optional<promise<>>>> _replay_waiters;
+    std::multimap<replay_position, seastar::lw_shared_ptr<std::optional<seastar::promise<>>>> _replay_waiters;
 
 public:
     hint_sender(end_point_hints_manager& parent, service::storage_proxy& local_storage_proxy,
@@ -156,7 +156,7 @@ public:
 
     /// \brief Stop the sender - make sure all background sending is complete.
     /// \param should_drain if is drain::yes - drain all pending hints
-    future<> stop(drain should_drain) noexcept;
+    seastar::future<> stop(drain should_drain) noexcept;
 
     /// \brief Add a new segment ready for sending.
     void add_segment(seastar::sstring seg_name) {
@@ -175,16 +175,17 @@ public:
     };
 
     /// \brief Sets the sent_upper_bound_rp marker to indicate that the hints were replayed _up to_ given position.
-    void rewind_sent_replay_position_to(db::replay_position rp);
+    void rewind_sent_replay_position_to(replay_position rp);
 
     /// \brief Waits until hints are replayed up to a given replay position, or given abort source is triggered.
-    future<> wait_until_hints_are_replayed_up_to(abort_source& as, db::replay_position up_to_rp);
+    seastar::future<> wait_until_hints_are_replayed_up_to(seastar::abort_source& as,
+            replay_position up_to_rp);
 
 private:
     /// \brief Gets the name of the current segment that should be sent.
     ///
     /// If there are no segments to be sent, nullptr will be returned.
-    const sstring* name_of_current_segment() const;
+    const seastar::sstring* name_of_current_segment() const;
 
     /// \brief Removes the current segment from the queue.
     void pop_current_segment();
@@ -219,7 +220,8 @@ private:
     bool replay_allowed() const noexcept;
 
     /// \brief Try to send one hint read from the file.
-    ///  - Limit the maximum memory size of hints "in the air" and the maximum total number of hints "in the air".
+    ///  - Limit the maximum memory size of hints "in the air" and the maximum
+    ///    total number of hints "in the air".
     ///  - Discard the hints that are older than the grace seconds value of the corresponding table.
     ///
     /// If sending fails we are going to set the state::segment_replay_failed in the _state
@@ -231,7 +233,7 @@ private:
     /// \param secs_since_file_mod last modification time stamp (in seconds since Epoch) of the current hints file
     /// \param fname name of the hints file this hint was read from
     /// \return future that resolves when next hint may be sent
-    future<> send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fragmented_temporary_buffer buf,
+    seastar::future<> send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fragmented_temporary_buffer buf,
             db::replay_position rp, gc_clock::duration secs_since_file_mod,
             const seastar::sstring& fname);
 
@@ -241,7 +243,7 @@ private:
     ///
     /// \param fname file to send
     /// \return TRUE if file has been successfully sent
-    bool send_one_file(const sstring& fname);
+    bool send_one_file(const seastar::sstring& fname);
 
     /// \brief Checks if we can still send hints.
     /// \return TRUE if the destination Node is either ALIVE or has left the ring (e.g. after decommission or removenode).
@@ -251,7 +253,7 @@ private:
     /// \param ctx_ptr pointer to the send context
     /// \param buf hints file entry
     /// \return The mutation object representing the original mutation stored in the hints file.
-    frozen_mutation_and_schema get_mutation(lw_shared_ptr<send_one_file_ctx> ctx_ptr,
+    frozen_mutation_and_schema get_mutation(seastar::lw_shared_ptr<send_one_file_ctx> ctx_ptr,
             fragmented_temporary_buffer& buf);
 
     /// \brief Get a reference to the column_mapping object for a given frozen mutation.
@@ -259,7 +261,7 @@ private:
     /// \param fm Frozen mutation object
     /// \param hr hint entry reader object
     /// \return
-    const column_mapping& get_column_mapping(lw_shared_ptr<send_one_file_ctx> ctx_ptr,
+    const column_mapping& get_column_mapping(seastar::lw_shared_ptr<send_one_file_ctx> ctx_ptr,
             const frozen_mutation& fm, const hint_entry_reader& hr);
 
     /// \brief Perform a single mutation send atempt.
@@ -270,26 +272,26 @@ private:
     /// \param m mutation to send
     /// \param natural_endpoints current replicas for the given mutation
     /// \return future that resolves when the operation is complete
-    future<> do_send_one_mutation(frozen_mutation_and_schema m,
+    seastar::future<> do_send_one_mutation(frozen_mutation_and_schema m,
             const inet_address_vector_replica_set& natural_endpoints) noexcept;
 
     /// \brief Send one mutation out.
     ///
     /// \param m mutation to send
     /// \return future that resolves when the mutation sending processing is complete.
-    future<> send_one_mutation(frozen_mutation_and_schema m);
+    seastar::future<> send_one_mutation(frozen_mutation_and_schema m);
 
     /// \brief Notifies replay waiters for which the target replay position was reached.
     void notify_replay_waiters() noexcept;
 
     /// \brief Dismisses ALL current replay waiters with an exception.
     void dismiss_replay_waiters() noexcept;
-    
+
     hint_stats& shard_stats() noexcept;
 
     /// \brief Flush all pending hints to storage if hints_flush_period passed since the last flush event.
     /// \return Ready, never exceptional, future when operation is complete.
-    future<> flush_maybe() noexcept;
+    seastar::future<> flush_maybe() noexcept;
 
     const host_id_type& end_point_key() const noexcept {
         return _ep_key;
