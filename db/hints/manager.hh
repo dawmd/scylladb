@@ -50,7 +50,7 @@ class hint_sender;
 } // namespace internal
 
 using node_to_hint_store_factory_type = internal::node_to_hint_store_factory_type;
-using hints_store_ptr = internal::hint_store_ptr;
+using hint_store_ptr = internal::hint_store_ptr;
 using hint_entry_reader = internal::hint_entry_reader;
 
 /// A helper class which tracks hints directory creation
