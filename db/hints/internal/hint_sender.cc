@@ -51,6 +51,15 @@ public:
     {}
 };
 
+/// \brief Get the last modification time stamp for a given file.
+/// \param fname File name
+/// \return The last modification time stamp for \param fname.
+seastar::future<::timespec> hint_sender::get_last_file_modification(const std::string_view fname) {
+    seastar::file f = co_await seastar::open_file_dma(fname, open_flags::ro);
+    const auto st = co_await f.stat();
+    co_return st.st_mtim;
+}
+
 } // anonymous namespace
 
 bool hint_sender::replay_allowed() const noexcept {
@@ -67,12 +76,6 @@ seastar::future<> hint_sender::flush_maybe() noexcept {
             manager_logger.trace("flush_maybe() failed: {}", std::current_exception());
         };
     }
-}
-
-seastar::future<::timespec> hint_sender::get_last_file_modification(const std::string_view fname) {
-    seastar::file f = co_await seastar::open_file_dma(fname, open_flags::ro);
-    const auto st = co_await f.stat();
-    co_return st.st_mtim;
 }
 
 seastar::future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m,
