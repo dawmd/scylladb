@@ -8,11 +8,6 @@
  */
 #pragma once
 
-/// For now, this file is supposed to provide a "template header", i.e. it should
-/// make refactoring of the module easier. As moving things around takes time
-/// and `manager::end_point_hints_manager` is a pretty big data structure,
-/// let's just paste its API here. The implementation will follow in the future.
-
 // Seastar features.
 #include <seastar/core/future.hh>
 #include <seastar/core/gate.hh>
@@ -136,9 +131,7 @@ public:
         return _hints_in_progress;
     }
 
-    bool replay_allowed() const noexcept {
-        return _shard_manager.replay_allowed();
-    }
+    bool replay_allowed() const noexcept;
 
     bool can_hint() const noexcept {
         return _state.contains(state::can_hint);
@@ -212,13 +205,9 @@ private:
     /// \return A new hints store object.
     seastar::future<commitlog> add_store() noexcept;
 
-    hint_stats& shard_stats() {
-        return _shard_manager._stats;
-    }
+    hint_stats& shard_stats();
 
-    resource_manager& shard_resource_manager() {
-        return _shard_manager._resource_manager;
-    }
+    resource_manager& shard_resource_manager();
 };
 
 } // namespace internal

@@ -39,7 +39,8 @@ host_manager::host_manager(const host_id_type& key, manager& shard_manager)
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 runtime::get_boot_time().time_since_epoch()
             ).count()}
-    , _hint_sender{*this}
+    , _hint_sender{*this, shard_manager.local_storage_proxy(), shard_manager._resource_manager,
+            shard_manager.local_db(), shard_manager.local_gossiper(), shard_manager._stats}
 {}
 
 host_manager::host_manager(host_manager&& other)
@@ -287,6 +288,17 @@ seastar::future<commitlog> host_manager::add_store() noexcept {
     co_return l;
 }
 
+bool host_manager::replay_allowed() const noexcept {
+    return _shard_manager.replay_allowed();
+}
+
+hint_stats& host_manager::shard_stats() {
+    return _shard_manager._stats;
+}
+
+resource_manager& host_manager::shard_resource_manager() {
+    return _shard_manager._resource_manager;
+}
 
 } // namespace internal
 } // namespace db::hints
