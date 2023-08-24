@@ -27,6 +27,8 @@
 #include "db/hints/resource_manager.hh"
 #include "db/hints/host_filter.hh"
 #include "db/hints/sync_point.hh"
+#include "db/hints/internal/common.hh"
+#include "db/hints/internal/hint_storage.hh"
 
 class fragmented_temporary_buffer;
 
@@ -41,9 +43,9 @@ class gossiper;
 namespace db {
 namespace hints {
 
-using node_to_hint_store_factory_type = utils::loading_shared_values<gms::inet_address, db::commitlog>;
-using hints_store_ptr = node_to_hint_store_factory_type::entry_ptr;
-using hint_entry_reader = commitlog_entry_reader;
+using node_to_hint_store_factory_type = internal::node_to_hint_store_factory_type;
+using hints_store_ptr = internal::hint_store_ptr;
+using hint_entry_reader = internal::hint_entry_reader;
 using timer_clock_type = seastar::lowres_clock;
 
 /// A helper class which tracks hints directory creation
@@ -67,24 +69,13 @@ public:
 
 class manager {
 private:
-    struct stats {
-        uint64_t size_of_hints_in_progress = 0;
-        uint64_t written = 0;
-        uint64_t errors = 0;
-        uint64_t dropped = 0;
-        uint64_t sent = 0;
-        uint64_t discarded = 0;
-        uint64_t send_errors = 0;
-        uint64_t corrupted_files = 0;
-    };
+    using stats = internal::hint_stats;
+    using drain = internal::drain;
 
     // map: shard -> segments
     using hints_ep_segments_map = std::unordered_map<unsigned, std::list<fs::path>>;
     // map: IP -> map: shard -> segments
     using hints_segments_map = std::unordered_map<sstring, hints_ep_segments_map>;
-
-    class drain_tag {};
-    using drain = seastar::bool_class<drain_tag>;
 
     friend class space_watchdog;
 
@@ -297,7 +288,7 @@ public:
             /// \return The last modification time stamp for \param fname.
             static future<timespec> get_last_file_modification(const sstring& fname);
 
-            struct stats& shard_stats() {
+            stats& shard_stats() {
                 return _shard_manager._stats;
             }
 
@@ -474,7 +465,7 @@ public:
         /// \return Ready future when the procedure above completes.
         future<> flush_current_hints() noexcept;
 
-        struct stats& shard_stats() {
+        stats& shard_stats() {
             return _shard_manager._stats;
         }
 
