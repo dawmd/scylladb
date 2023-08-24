@@ -48,17 +48,17 @@ bool host_manager::store_hint(schema_ptr s, lw_shared_ptr<const frozen_mutation>
                     auto rp = rh.release();
                     if (_last_written_rp < rp) {
                         _last_written_rp = rp;
-                        manager_logger.debug("[{}] Updated last written replay position to {}", end_point_key(), rp);
+                        manager_logger.debug("[{}] Updated last written replay position to {}", host_id(), rp);
                     }
                     ++shard_stats().written;
 
-                    manager_logger.trace("Hint to {} was stored", end_point_key());
-                    tracing::trace(tr_state, "Hint to {} was stored", end_point_key());
+                    manager_logger.trace("Hint to {} was stored", host_id());
+                    tracing::trace(tr_state, "Hint to {} was stored", host_id());
                 }).handle_exception([this, tr_state] (std::exception_ptr eptr) {
                     ++shard_stats().errors;
 
-                    manager_logger.debug("store_hint(): got the exception when storing a hint to {}: {}", end_point_key(), eptr);
-                    tracing::trace(tr_state, "Failed to store a hint to {}: {}", end_point_key(), eptr);
+                    manager_logger.debug("store_hint(): got the exception when storing a hint to {}: {}", host_id(), eptr);
+                    tracing::trace(tr_state, "Failed to store a hint to {}: {}", host_id(), eptr);
                 });
             }).finally([this, mut_size, fm, s] {
                 --_hints_in_progress;
@@ -66,8 +66,8 @@ bool host_manager::store_hint(schema_ptr s, lw_shared_ptr<const frozen_mutation>
             });;
         });
     } catch (...) {
-        manager_logger.trace("Failed to store a hint to {}: {}", end_point_key(), std::current_exception());
-        tracing::trace(tr_state, "Failed to store a hint to {}: {}", end_point_key(), std::current_exception());
+        manager_logger.trace("Failed to store a hint to {}: {}", host_id(), std::current_exception());
+        tracing::trace(tr_state, "Failed to store a hint to {}: {}", host_id(), std::current_exception());
 
         ++shard_stats().dropped;
         return false;
@@ -89,7 +89,7 @@ void host_manager::start() {
 
 future<> host_manager::stop(drain should_drain) noexcept {
     if(stopped()) {
-        return make_exception_future<>(std::logic_error(format("host_manager[{}]: stop() is called twice", _key).c_str()));
+        return make_exception_future<>(std::logic_error(format("host_manager[{}]: stop() is called twice", _host_id).c_str()));
     }
 
     return seastar::async([this, should_drain] {
@@ -112,36 +112,34 @@ future<> host_manager::stop(drain should_drain) noexcept {
         }).handle_exception([&eptr] (auto e) { eptr = std::move(e); }).get();
 
         if (eptr) {
-            manager_logger.error("host_manager[{}]: exception: {}", _key, eptr);
+            manager_logger.error("host_manager[{}]: exception: {}", _host_id, eptr);
         }
 
         set_stopped();
     });
 }
 
-host_manager::host_manager(const key_type& key, manager& shard_manager)
-    : _key(key)
-    , _shard_manager(shard_manager)
-    , _file_update_mutex_ptr(make_lw_shared<seastar::shared_mutex>())
-    , _file_update_mutex(*_file_update_mutex_ptr)
+host_manager::host_manager(const host_id_type& key, manager& shard_manager)
+    : _host_id(key)
     , _state(state_set::of<state::stopped>())
-    , _hints_dir(_shard_manager.hints_dir() / format("{}", _key).c_str())
+    , _file_update_mutex_ptr(make_lw_shared<seastar::shared_mutex>())
     // Approximate the position of the last written hint by using the same formula as for segment id calculation in commitlog
     // TODO: Should this logic be deduplicated with what is in the commitlog?
     , _last_written_rp(this_shard_id(), std::chrono::duration_cast<std::chrono::milliseconds>(runtime::get_boot_time().time_since_epoch()).count())
+    , _shard_manager(shard_manager)
     , _sender(*this, _shard_manager._resource_manager, _shard_manager.local_storage_proxy(),
             _shard_manager.local_db(), _shard_manager.local_gossiper(), _shard_manager._stats)
+    , _hints_dir(_shard_manager.hints_dir() / format("{}", _host_id).c_str())
 {}
 
 host_manager::host_manager(host_manager&& other)
-    : _key(other._key)
-    , _shard_manager(other._shard_manager)
-    , _file_update_mutex_ptr(std::move(other._file_update_mutex_ptr))
-    , _file_update_mutex(*_file_update_mutex_ptr)
+    : _host_id(other._host_id)
     , _state(other._state)
-    , _hints_dir(std::move(other._hints_dir))
+    , _file_update_mutex_ptr(std::move(other._file_update_mutex_ptr))
     , _last_written_rp(other._last_written_rp)
+    , _shard_manager(other._shard_manager)
     , _sender(std::move(other._sender), *this)
+    , _hints_dir(std::move(other._hints_dir))
 {}
 
 host_manager::~host_manager() {
@@ -150,7 +148,7 @@ host_manager::~host_manager() {
 
 future<hints_store_ptr> host_manager::get_or_load() {
     if (!_hints_store_anchor) {
-        return _shard_manager.store_factory().get_or_load(_key, [this] (const key_type&) noexcept {
+        return _shard_manager.store_factory().get_or_load(_host_id, [this] (const host_id_type&) noexcept {
             return add_store();
         }).then([this] (hints_store_ptr log_ptr) {
             _hints_store_anchor = log_ptr;

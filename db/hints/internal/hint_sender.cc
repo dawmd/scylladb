@@ -204,7 +204,7 @@ const column_mapping& hint_sender::get_column_mapping(seastar::lw_shared_ptr<sen
 hint_sender::hint_sender(host_manager& parent, resource_manager& rm,
         service::storage_proxy& local_storage_proxy, replica::database& local_db,
         gms::gossiper& local_gossiper, hint_stats& shard_stats) noexcept
-    : _host_id{parent.end_point_key()}
+    : _host_id{parent.host_id()}
     , _host_manager{parent}
     , _resource_manager{rm}
     , _proxy{local_storage_proxy}
@@ -226,7 +226,7 @@ hint_sender::hint_sender(hint_sender&& other, host_manager& new_parent) noexcept
     , _next_flush_tp{std::move(other._next_flush_tp)}
     , _next_send_retry_tp{std::move(other._next_send_retry_tp)}
     // The only non-trivial parts of the constructor.
-    , _host_id{new_parent.end_point_key()}
+    , _host_id{new_parent.host_id()}
     , _host_manager{new_parent}
     , _resource_manager{other._resource_manager}
     , _proxy{other._proxy}

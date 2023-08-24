@@ -57,7 +57,7 @@ manager::manager(sstring hints_directory, host_filter filter, int64_t max_hint_w
 }
 
 manager::~manager() {
-    assert(_ep_managers.empty());
+    assert(_host_managers.empty());
 }
 
 void manager::register_metrics(const sstring& group_name) {
@@ -102,11 +102,11 @@ future<> manager::start(shared_ptr<service::storage_proxy> proxy_ptr, shared_ptr
     _proxy_anchor = std::move(proxy_ptr);
     _gossiper_anchor = std::move(gossiper_ptr);
     return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(), [this] (fs::path datadir, directory_entry de) {
-        ep_key_type ep = ep_key_type(de.name);
+        host_id_type ep = host_id_type(de.name);
         if (!check_dc_for(ep)) {
             return make_ready_future<>();
         }
-        return get_ep_manager(ep).populate_segments_to_replay();
+        return get_host_manager(ep).populate_segments_to_replay();
     }).then([this] {
         return compute_hints_dir_device_id();
     }).then([this] {
@@ -122,11 +122,11 @@ future<> manager::stop() {
   return f.finally([this] {
     set_stopping();
 
-    return _draining_eps_gate.close().finally([this] {
-        return parallel_for_each(_ep_managers, [] (auto& pair) {
+    return _draining_hosts_gate.close().finally([this] {
+        return parallel_for_each(_host_managers, [] (auto& pair) {
             return pair.second.stop();
         }).finally([this] {
-            _ep_managers.clear();
+            _host_managers.clear();
             manager_logger.info("Stopped");
         }).discard_result();
     });
@@ -143,18 +143,18 @@ future<> manager::compute_hints_dir_device_id() {
 }
 
 void manager::allow_hints() {
-    boost::for_each(_ep_managers, [] (auto& pair) { pair.second.allow_hints(); });
+    boost::for_each(_host_managers, [] (auto& pair) { pair.second.allow_hints(); });
 }
 
 void manager::forbid_hints() {
-    boost::for_each(_ep_managers, [] (auto& pair) { pair.second.forbid_hints(); });
+    boost::for_each(_host_managers, [] (auto& pair) { pair.second.forbid_hints(); });
 }
 
-void manager::forbid_hints_for_eps_with_pending_hints() {
-    manager_logger.trace("space_watchdog: Going to block hints to: {}", _eps_with_pending_hints);
-    boost::for_each(_ep_managers, [this] (auto& pair) {
+void manager::forbid_hints_for_hosts_with_pending_hints() {
+    manager_logger.trace("space_watchdog: Going to block hints to: {}", _hosts_with_pending_hints);
+    boost::for_each(_host_managers, [this] (auto& pair) {
         host_manager& ep_man = pair.second;
-        if (has_ep_with_pending_hints(ep_man.end_point_key())) {
+        if (has_host_with_pending_hints(ep_man.host_id())) {
             ep_man.forbid_hints();
         } else {
             ep_man.allow_hints();
@@ -165,10 +165,10 @@ void manager::forbid_hints_for_eps_with_pending_hints() {
 sync_point::shard_rps manager::calculate_current_sync_point(const std::vector<gms::inet_address>& target_hosts) const {
     sync_point::shard_rps rps;
     for (auto addr : target_hosts) {
-        auto it = _ep_managers.find(addr);
-        if (it != _ep_managers.end()) {
+        auto it = _host_managers.find(addr);
+        if (it != _host_managers.end()) {
             const host_manager& ep_man = it->second;
-            rps[ep_man.end_point_key()] = ep_man.last_written_replay_position();
+            rps[ep_man.host_id()] = ep_man.last_written_replay_position();
         }
     }
     return rps;
@@ -188,7 +188,7 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
     }
 
     bool was_aborted = false;
-    co_await coroutine::parallel_for_each(_ep_managers, [&was_aborted, &rps, &local_as] (auto& p) {
+    co_await coroutine::parallel_for_each(_host_managers, [&was_aborted, &rps, &local_as] (auto& p) {
         const auto addr = p.first;
         auto& ep_man = p.second;
 
@@ -220,22 +220,22 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
     co_return;
 }
 
-manager::host_manager& manager::get_ep_manager(ep_key_type ep) {
-    auto it = find_ep_manager(ep);
-    if (it == ep_managers_end()) {
+manager::host_manager& manager::get_host_manager(host_id_type ep) {
+    auto it = find_host_manager(ep);
+    if (it == host_managers_end()) {
         manager_logger.trace("Creating an ep_manager for {}", ep);
-        manager::host_manager& ep_man = _ep_managers.emplace(ep, host_manager(ep, *this)).first->second;
+        manager::host_manager& ep_man = _host_managers.emplace(ep, host_manager(ep, *this)).first->second;
         ep_man.start();
         return ep_man;
     }
     return it->second;
 }
 
-inline bool manager::have_ep_manager(ep_key_type ep) const noexcept {
-    return find_ep_manager(ep) != ep_managers_end();
+inline bool manager::have_host_manager(host_id_type ep) const noexcept {
+    return find_host_manager(ep) != host_managers_end();
 }
 
-bool manager::store_hint(ep_key_type ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept {
+bool manager::store_hint(host_id_type ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept {
     if (stopping() || draining_all() || !started() || !can_hint_for(ep)) {
         manager_logger.trace("Can't store a hint to {}", ep);
         ++_stats.dropped;
@@ -246,7 +246,7 @@ bool manager::store_hint(ep_key_type ep, schema_ptr s, lw_shared_ptr<const froze
         manager_logger.trace("Going to store a hint to {}", ep);
         tracing::trace(tr_state, "Going to store a hint to {}", ep);
 
-        return get_ep_manager(ep).store_hint(std::move(s), std::move(fm), tr_state);
+        return get_host_manager(ep).store_hint(std::move(s), std::move(fm), tr_state);
     } catch (...) {
         manager_logger.trace("Failed to store a hint to {}: {}", ep, std::current_exception());
         tracing::trace(tr_state, "Failed to store a hint to {}: {}", ep, std::current_exception());
@@ -257,19 +257,19 @@ bool manager::store_hint(ep_key_type ep, schema_ptr s, lw_shared_ptr<const froze
 }
 
 
-bool manager::too_many_in_flight_hints_for(ep_key_type ep) const noexcept {
+bool manager::too_many_in_flight_hints_for(host_id_type ep) const noexcept {
     // There is no need to check the DC here because if there is an in-flight hint for this end point then this means that
     // its DC has already been checked and found to be ok.
     return _stats.size_of_hints_in_progress > max_size_of_hints_in_progress && !utils::fb_utilities::is_me(ep) && hints_in_progress_for(ep) > 0 && local_gossiper().get_endpoint_downtime(ep) <= _max_hint_window_us;
 }
 
-bool manager::can_hint_for(ep_key_type ep) const noexcept {
+bool manager::can_hint_for(host_id_type ep) const noexcept {
     if (utils::fb_utilities::is_me(ep)) {
         return false;
     }
 
-    auto it = find_ep_manager(ep);
-    if (it != ep_managers_end() && (it->second.stopping() || !it->second.can_hint())) {
+    auto it = find_host_manager(ep);
+    if (it != host_managers_end() && (it->second.stopping() || !it->second.can_hint())) {
         return false;
     }
 
@@ -302,7 +302,7 @@ future<> manager::change_host_filter(host_filter filter) {
         return make_exception_future<>(std::logic_error("change_host_filter: called before the hints_manager was started"));
     }
 
-    return with_gate(_draining_eps_gate, [this, filter = std::move(filter)] () mutable {
+    return with_gate(_draining_hosts_gate, [this, filter = std::move(filter)] () mutable {
         return with_semaphore(drain_lock(), 1, [this, filter = std::move(filter)] () mutable {
             if (draining_all()) {
                 return make_exception_future<>(std::logic_error("change_host_filter: cannot change the configuration because hints all hints were drained"));
@@ -317,23 +317,23 @@ future<> manager::change_host_filter(host_filter filter) {
             // Iterate over existing hint directories and see if we can enable an endpoint manager
             // for some of them
             return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(), [this] (fs::path datadir, directory_entry de) {
-                const ep_key_type ep = ep_key_type(de.name);
-                if (_ep_managers.contains(ep) || !_host_filter.can_hint_for(_proxy_anchor->get_token_metadata_ptr()->get_topology(), ep)) {
+                const host_id_type ep = host_id_type(de.name);
+                if (_host_managers.contains(ep) || !_host_filter.can_hint_for(_proxy_anchor->get_token_metadata_ptr()->get_topology(), ep)) {
                     return make_ready_future<>();
                 }
-                return get_ep_manager(ep).populate_segments_to_replay();
+                return get_host_manager(ep).populate_segments_to_replay();
             }).handle_exception([this, filter = std::move(filter)] (auto ep) mutable {
                 // Bring back the old filter. The finally() block will cause us to stop
                 // the additional ep_hint_managers that we started
                 _host_filter = std::move(filter);
             }).finally([this] {
                 // Remove endpoint managers which are rejected by the filter
-                return parallel_for_each(_ep_managers, [this] (auto& pair) {
+                return parallel_for_each(_host_managers, [this] (auto& pair) {
                     if (_host_filter.can_hint_for(_proxy_anchor->get_token_metadata_ptr()->get_topology(), pair.first)) {
                         return make_ready_future<>();
                     }
                     return pair.second.stop(drain::no).finally([this, ep = pair.first] {
-                        _ep_managers.erase(ep);
+                        _host_managers.erase(ep);
                     });
                 });
             });
@@ -341,11 +341,11 @@ future<> manager::change_host_filter(host_filter filter) {
     });
 }
 
-bool manager::check_dc_for(ep_key_type ep) const noexcept {
+bool manager::check_dc_for(host_id_type ep) const noexcept {
     try {
         // If target's DC is not a "hintable" DCs - don't hint.
         // If there is an end point manager then DC has already been checked and found to be ok.
-        return _host_filter.is_enabled_for_all() || have_ep_manager(ep) ||
+        return _host_filter.is_enabled_for_all() || have_host_manager(ep) ||
                _host_filter.can_hint_for(_proxy_anchor->get_token_metadata_ptr()->get_topology(), ep);
     } catch (...) {
         // if we failed to check the DC - block this hint
@@ -360,29 +360,29 @@ void manager::drain_for(gms::inet_address endpoint) {
 
     manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", endpoint);
 
-    // Future is waited on indirectly in `stop()` (via `_draining_eps_gate`).
-    (void)with_gate(_draining_eps_gate, [this, endpoint] {
+    // Future is waited on indirectly in `stop()` (via `_draining_hosts_gate`).
+    (void)with_gate(_draining_hosts_gate, [this, endpoint] {
         return with_semaphore(drain_lock(), 1, [this, endpoint] {
             return futurize_invoke([this, endpoint] () {
                 if (utils::fb_utilities::is_me(endpoint)) {
                     set_draining_all();
-                    return parallel_for_each(_ep_managers, [] (auto& pair) {
+                    return parallel_for_each(_host_managers, [] (auto& pair) {
                         return pair.second.stop(drain::yes).finally([&pair] {
                             return with_file_update_mutex(pair.second, [&pair] {
                                 return remove_file(pair.second.hints_dir().c_str());
                             });
                         });
                     }).finally([this] {
-                        _ep_managers.clear();
+                        _host_managers.clear();
                     });
                 } else {
-                    ep_managers_map_type::iterator ep_manager_it = find_ep_manager(endpoint);
-                    if (ep_manager_it != ep_managers_end()) {
+                    host_managers_map_type::iterator ep_manager_it = find_host_manager(endpoint);
+                    if (ep_manager_it != host_managers_end()) {
                         return ep_manager_it->second.stop(drain::yes).finally([this, endpoint, &ep_man = ep_manager_it->second] {
                             return with_file_update_mutex(ep_man, [&ep_man] {
                                 return remove_file(ep_man.hints_dir().c_str());
                             }).finally([this, endpoint] {
-                                _ep_managers.erase(endpoint);
+                                _host_managers.erase(endpoint);
                             });
                         });
                     }
@@ -497,7 +497,7 @@ void manager::rebalance_segments_for(
         const sstring& ep,
         size_t segments_per_shard,
         const sstring& hints_directory,
-        hints_ep_segments_map& ep_segments,
+        hints_host_segments_map& ep_segments,
         std::list<fs::path>& segments_to_move)
 {
     manager_logger.trace("{}: segments_per_shard: {}, total number of segments to move: {}", ep, segments_per_shard, segments_to_move.size());
@@ -563,7 +563,7 @@ void manager::update_backlog(size_t backlog, size_t max_backlog) {
     if (backlog < max_backlog) {
         allow_hints();
     } else {
-        forbid_hints_for_eps_with_pending_hints();
+        forbid_hints_for_hosts_with_pending_hints();
     }
 }
 

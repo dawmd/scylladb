@@ -60,43 +60,41 @@ namespace internal {
 
 class host_manager {
 private:
-    friend class hint_sender;
-
-public:
-    using key_type = host_id_type;
-
-private:
-    key_type _key;
-    manager& _shard_manager;
-    hint_store_ptr _hints_store_anchor;
-    seastar::gate _store_gate;
-    lw_shared_ptr<seastar::shared_mutex> _file_update_mutex_ptr;
-    seastar::shared_mutex& _file_update_mutex;
-
     enum class state {
-        can_hint,               // hinting is currently allowed (used by the space_watchdog)
-        stopping,               // stopping is in progress (stop() method has been called)
-        stopped                 // stop() has completed
+        can_hint,   // hinting is currently allowed (used by the space_watchdog)
+        stopping,   // stopping is in progress (stop() method has been called)
+        stopped     // stop() has completed
     };
 
     using state_set = enum_set<super_enum<state,
         state::can_hint,
         state::stopping,
         state::stopped>>;
-    
+
+    friend class hint_sender;
+
+private:
+    host_id_type _host_id;
     state_set _state;
+    
+    seastar::gate _store_gate{};
+    hint_store_ptr _hints_store_anchor;
+    seastar::lw_shared_ptr<seastar::shared_mutex> _file_update_mutex_ptr;
+    replay_position _last_written_rp;
+    
+    manager& _shard_manager;
+    hint_sender _sender;
+    
     const fs::path _hints_dir;
     uint64_t _hints_in_progress = 0;
-    db::replay_position _last_written_rp;
-    hint_sender _sender;
 
 public:
-    host_manager(const key_type& key, manager& shard_manager);
+    host_manager(const host_id_type& key, manager& shard_manager);
     host_manager(host_manager&&);
     ~host_manager();
 
-    const key_type& end_point_key() const noexcept {
-        return _key;
+    const host_id_type& host_id() const noexcept {
+        return _host_id;
     }
 
     /// \brief Get the corresponding hints_store object. Create it if needed.
@@ -205,7 +203,7 @@ public:
 
 private:
     seastar::shared_mutex& file_update_mutex() noexcept {
-        return _file_update_mutex;
+        return *_file_update_mutex_ptr;
     }
 
     /// \brief Creates a new hints store object.

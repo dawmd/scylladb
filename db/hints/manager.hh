@@ -76,11 +76,12 @@ class manager {
 private:
     using stats = internal::hint_stats;
     using drain = internal::drain;
+    using host_id_type = internal::host_id_type;
 
     // map: shard -> segments
-    using hints_ep_segments_map = std::unordered_map<unsigned, std::list<fs::path>>;
+    using hints_host_segments_map = std::unordered_map<unsigned, std::list<fs::path>>;
     // map: IP -> map: shard -> segments
-    using hints_segments_map = std::unordered_map<sstring, hints_ep_segments_map>;
+    using hints_segments_map = std::unordered_map<sstring, hints_host_segments_map>;
 
     friend class space_watchdog;
     friend class internal::host_manager;
@@ -103,8 +104,7 @@ public:
         state::stopping>>;
 
 private:
-    using ep_key_type = typename host_manager::key_type;
-    using ep_managers_map_type = std::unordered_map<ep_key_type, host_manager>;
+    using host_managers_map_type = std::unordered_map<host_id_type, host_manager>;
 
 public:
     // Non-const - can be modified with an error injection.
@@ -123,14 +123,14 @@ private:
     int64_t _max_hint_window_us = 0;
     replica::database& _local_db;
 
-    seastar::gate _draining_eps_gate; // gate used to control the progress of ep_managers stopping not in the context of manager::stop() call
+    seastar::gate _draining_hosts_gate; // gate used to control the progress of host_managers stopping not in the context of manager::stop() call
 
     resource_manager& _resource_manager;
 
-    ep_managers_map_type _ep_managers;
+    host_managers_map_type _host_managers;
     stats _stats;
     seastar::metrics::metric_groups _metrics;
-    std::unordered_set<ep_key_type> _eps_with_pending_hints;
+    std::unordered_set<host_id_type> _hosts_with_pending_hints;
     seastar::named_semaphore _drain_lock = {1, named_semaphore_exception_factory{"drain lock"}};
 
 public:
@@ -143,7 +143,7 @@ public:
     future<> stop();
     bool store_hint(gms::inet_address ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept;
 
-    /// \brief Changes the host_filter currently used, stopping and starting ep_managers relevant to the new host_filter.
+    /// \brief Changes the host_filter currently used, stopping and starting host_managers relevant to the new host_filter.
     /// \param filter the new host_filter
     /// \return A future that resolves when the operation is complete.
     future<> change_host_filter(host_filter filter);
@@ -155,7 +155,7 @@ public:
     /// \brief Check if a hint may be generated to the give end point
     /// \param ep end point to check
     /// \return true if we should generate the hint to the given end point if it becomes unavailable
-    bool can_hint_for(ep_key_type ep) const noexcept;
+    bool can_hint_for(host_id_type ep) const noexcept;
 
     /// \brief Check if there aren't too many in-flight hints
     ///
@@ -171,12 +171,12 @@ public:
     ///
     /// \param ep end point to check
     /// \return TRUE if we are allowed to generate hint to the given end point but there are too many in-flight hints
-    bool too_many_in_flight_hints_for(ep_key_type ep) const noexcept;
+    bool too_many_in_flight_hints_for(host_id_type ep) const noexcept;
 
     /// \brief Check if DC \param ep belongs to is "hintable"
     /// \param ep End point identificator
     /// \return TRUE if hints are allowed to be generated to \param ep.
-    bool check_dc_for(ep_key_type ep) const noexcept;
+    bool check_dc_for(host_id_type ep) const noexcept;
 
     /// \brief Checks if hints are disabled for all endpoints
     /// \return TRUE if hints are disabled.
@@ -192,29 +192,29 @@ public:
     /// \brief Get the number of in-flight (to the disk) hints to a given end point.
     /// \param ep End point identificator
     /// \return Number of hints in-flight to \param ep.
-    uint64_t hints_in_progress_for(ep_key_type ep) const noexcept {
-        auto it = find_ep_manager(ep);
-        if (it == ep_managers_end()) {
+    uint64_t hints_in_progress_for(host_id_type ep) const noexcept {
+        auto it = find_host_manager(ep);
+        if (it == host_managers_end()) {
             return 0;
         }
         return it->second.hints_in_progress();
     }
 
-    void add_ep_with_pending_hints(ep_key_type key) {
-        _eps_with_pending_hints.insert(key);
+    void add_host_with_pending_hints(host_id_type key) {
+        _hosts_with_pending_hints.insert(key);
     }
 
-    void clear_eps_with_pending_hints() {
-        _eps_with_pending_hints.clear();
-        _eps_with_pending_hints.reserve(_ep_managers.size());
+    void clear_hosts_with_pending_hints() {
+        _hosts_with_pending_hints.clear();
+        _hosts_with_pending_hints.reserve(_host_managers.size());
     }
 
-    bool has_ep_with_pending_hints(ep_key_type key) const {
-        return _eps_with_pending_hints.contains(key);
+    bool has_host_with_pending_hints(host_id_type key) const {
+        return _hosts_with_pending_hints.contains(key);
     }
 
-    size_t ep_managers_size() const {
-        return _ep_managers.size();
+    size_t host_managers_size() const {
+        return _host_managers.size();
     }
 
     const fs::path& hints_dir() const {
@@ -231,7 +231,7 @@ public:
 
     void allow_hints();
     void forbid_hints();
-    void forbid_hints_for_eps_with_pending_hints();
+    void forbid_hints_for_hosts_with_pending_hints();
 
     void allow_replaying() noexcept {
         _state.set(state::replay_allowed);
@@ -281,11 +281,11 @@ private:
     /// \brief Rebalance hints segments for a given (destination) end point
     ///
     /// This method is going to consume files from the \ref segments_to_move and distribute them between the present
-    /// shards (taking into an account the \ref ep_segments state - there may be zero or more segments that belong to a
+    /// shards (taking into an account the \ref host_segments state - there may be zero or more segments that belong to a
     /// particular shard in it) until we either achieve the requested \ref segments_per_shard level on each shard
     /// or until we are out of files to move.
     ///
-    /// As a result (in addition to the actual state on the disk) both \ref ep_segments and \ref segments_to_move are going
+    /// As a result (in addition to the actual state on the disk) both \ref host_segments and \ref segments_to_move are going
     /// to be modified.
     ///
     /// Complexity: O(N), where N is a total number of present hints' segments for the \ref ep end point (as a destination).
@@ -295,13 +295,13 @@ private:
     /// \param ep destination end point ID (a string with its IP address)
     /// \param segments_per_shard number of hints segments per-shard we want to achieve
     /// \param hints_directory a root hints directory
-    /// \param ep_segments a map that was originally built by get_current_hints_segments() for this end point
+    /// \param host_segments a map that was originally built by get_current_hints_segments() for this end point
     /// \param segments_to_move a list of segments we are allowed to move
     static void rebalance_segments_for(
             const sstring& ep,
             size_t segments_per_shard,
             const sstring& hints_directory,
-            hints_ep_segments_map& ep_segments,
+            hints_host_segments_map& host_segments,
             std::list<fs::path>& segments_to_move);
 
     /// \brief Rebalance all present hints segments.
@@ -341,8 +341,8 @@ private:
         return _local_db;
     }
 
-    host_manager& get_ep_manager(ep_key_type ep);
-    bool have_ep_manager(ep_key_type ep) const noexcept;
+    host_manager& get_host_manager(host_id_type ep);
+    bool have_host_manager(host_id_type ep) const noexcept;
 
 public:
     /// \brief Initiate the draining when we detect that the node has left the cluster.
@@ -388,20 +388,20 @@ private:
     }
 
 public:
-    ep_managers_map_type::iterator find_ep_manager(ep_key_type ep_key) noexcept {
-        return _ep_managers.find(ep_key);
+    host_managers_map_type::iterator find_host_manager(host_id_type host_id) noexcept {
+        return _host_managers.find(host_id);
     }
 
-    ep_managers_map_type::const_iterator find_ep_manager(ep_key_type ep_key) const noexcept {
-        return _ep_managers.find(ep_key);
+    host_managers_map_type::const_iterator find_host_manager(host_id_type host_id) const noexcept {
+        return _host_managers.find(host_id);
     }
 
-    ep_managers_map_type::iterator ep_managers_end() noexcept {
-        return _ep_managers.end();
+    host_managers_map_type::iterator host_managers_end() noexcept {
+        return _host_managers.end();
     }
 
-    ep_managers_map_type::const_iterator ep_managers_end() const noexcept {
-        return _ep_managers.end();
+    host_managers_map_type::const_iterator host_managers_end() const noexcept {
+        return _host_managers.end();
     }
 };
 
