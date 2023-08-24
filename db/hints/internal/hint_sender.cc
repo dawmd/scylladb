@@ -191,7 +191,7 @@ const column_mapping& hint_sender::get_column_mapping(seastar::lw_shared_ptr<sen
     auto cm_it = ctx_ptr->schema_ver_to_column_mapping.find(fm.schema_version());
     if (cm_it == ctx_ptr->schema_ver_to_column_mapping.end()) {
         if (!hr.get_column_mapping()) {
-            throw no_column_mapping(fm.schema_version());
+            throw no_column_mapping{fm.schema_version()};
         }
 
         manager_logger.debug("new schema version {}", fm.schema_version());
@@ -296,7 +296,7 @@ void hint_sender::start() {
 
                 // If we got here means that either there are no more hints to send or we failed to send hints we have.
                 // In both cases it makes sense to wait a little before continuing.
-                sleep_abortable(next_sleep_duration(), _stop_as).get();
+                seastar::sleep_abortable(next_sleep_duration(), _stop_as).get();
             } catch (seastar::sleep_aborted&) {
                 break;
             } catch (...) {
@@ -373,7 +373,7 @@ seastar::future<> hint_sender::send_one_hint(seastar::lw_shared_ptr<send_one_fil
                 auto new_bound = ctx_ptr->get_replayed_bound();
                 // Segments from other shards are replayed first and are considered to be "before" replay position 0.
                 // Update the sent upper bound only if it is a local segment.
-                if (new_bound.shard_id() == this_shard_id() && _sent_upper_bound_rp < new_bound) {
+                if (new_bound.shard_id() == seastar::this_shard_id() && _sent_upper_bound_rp < new_bound) {
                     _sent_upper_bound_rp = new_bound;
                     notify_replay_waiters();
                 }
