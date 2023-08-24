@@ -20,7 +20,10 @@
 
 // Scylla includes.
 #include "db/hints/internal/hint_logger.hh"
+#include "db/hints/internal/host_manager.hh"
+#include "replica/database.hh"
 #include "schema/schema_fwd.hh"
+#include "service/storage_proxy.hh"
 #include "utils/div_ceil.hh"
 #include "utils/error_injection.hh"
 #include "converting_mutation_partition_applier.hh"
@@ -126,26 +129,52 @@ public:
 
 /////////////////////////////////////////////
 
-template <typename HM>
-seastar::future<> hint_sender<HM>::flush_maybe() noexcept {
+hint_sender::hint_sender(host_manager& parent, seastar::scheduling_group sched_group, hint_stats& shard_stats)
+    : _host_id{parent.host_id()}
+    , _host_manager{parent}
+    , _proxy{parent.get_storage_proxy()}
+    , _shard_stats{shard_stats}
+    , _hints_cpu_sched_group{sched_group}
+{}
+
+hint_sender::hint_sender(hint_sender&& other, host_manager& new_parent) noexcept
+    : _segments_to_replay{std::move(other._segments_to_replay)}
+    , _foreign_segments_to_replay{std::move(other._foreign_segments_to_replay)}
+    , _last_not_complete_rp{std::move(other._last_not_complete_rp)}
+    , _sent_upper_bound_rp{std::move(other._sent_upper_bound_rp)}
+    , _last_schema_ver_to_column_mapping{std::move(other._last_schema_ver_to_column_mapping)}
+    , _state{std::move(other._state)}
+    , _stopped{std::move(other._stopped)}
+    , _stop_as{std::move(other._stop_as)}
+    , _next_flush_tp{std::move(other._next_flush_tp)}
+    , _next_send_retry_tp{std::move(other._next_send_retry_tp)}
+    // The only non-trivial parts of the constructor.
+    , _host_id{new_parent.host_id()}
+    , _host_manager{new_parent}
+    , _proxy{_host_manager.get_storage_proxy()}
+    , _shard_stats{other._shard_stats}
+    , _hints_cpu_sched_group{std::move(other._hints_cpu_sched_group)}
+    , _replay_waiters{std::move(other._replay_waiters)}
+{}
+
+seastar::future<> hint_sender::flush_maybe() noexcept {
     auto current_time = clock_type::now();
     if (current_time >= _next_flush_tp) {
         try {
             co_await _host_manager.flush_current_hints();
-            _next_flush_tp = current_time + manager::hints_flush_period;
+            _next_flush_tp = current_time + hints_flush_period;
         } catch (...) {
             manager_logger.trace("flush_maybe() failed: {}", std::current_exception());
         }
     }
 }
 
-template <typename HM>
-seastar::future<> hint_sender<HM>::do_send_one_mutation(frozen_mutation_and_schema m,
+seastar::future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m,
         const inet_address_vector_replica_set& natural_endpoints) noexcept
 {
     // The fact that we send with CL::ALL in both cases below ensures that new hints are not going
     // to be generated as a result of hints sending.
-    if (boost::range::find(natural_endpoints, _host_id) != natural_endpoints.end()) {
+    if (std::ranges::find(natural_endpoints, _host_id) != natural_endpoints.end()) {
         manager_logger.trace("Sending directly to {}", _host_id);
         co_await _proxy.send_hint_to_endpoint(std::move(m), _host_id);
     } else {
@@ -155,8 +184,7 @@ seastar::future<> hint_sender<HM>::do_send_one_mutation(frozen_mutation_and_sche
     }
 }
 
-template <typename HM>
-bool hint_sender<HM>::can_send() noexcept {
+bool hint_sender::can_send() noexcept {
     if (stopping() && !draining()) {
         return false;
     }
@@ -179,8 +207,7 @@ bool hint_sender<HM>::can_send() noexcept {
     }
 }
 
-template <typename HM>
-frozen_mutation_and_schema hint_sender<HM>::get_mutation(seastar::lw_shared_ptr<send_one_file_ctx> ctx_ptr,
+frozen_mutation_and_schema hint_sender::get_mutation(seastar::lw_shared_ptr<send_one_file_ctx> ctx_ptr,
         fragmented_temporary_buffer& buf)
 {
     hint_entry_reader hr{buf};
@@ -197,8 +224,7 @@ frozen_mutation_and_schema hint_sender<HM>::get_mutation(seastar::lw_shared_ptr<
     return {std::move(hr).mutation(), std::move(schema)};
 }
 
-template <typename HM>
-const column_mapping& hint_sender<HM>::get_column_mapping(seastar::lw_shared_ptr<send_one_file_ctx> ctx_ptr,
+const column_mapping& hint_sender::get_column_mapping(seastar::lw_shared_ptr<send_one_file_ctx> ctx_ptr,
         const frozen_mutation& fm, const hint_entry_reader& hr)
 {
     auto cm_it = ctx_ptr->schema_ver_to_column_mapping.find(fm.schema_version());
@@ -214,8 +240,7 @@ const column_mapping& hint_sender<HM>::get_column_mapping(seastar::lw_shared_ptr
     return cm_it->second;
 }
 
-template <typename HM>
-seastar::future<> hint_sender<HM>::stop(drain should_drain) noexcept {
+seastar::future<> hint_sender::stop(drain should_drain) noexcept {
     return seastar::async([this, should_drain] {
         set_stopping();
         _stop_as.request_abort();
@@ -250,8 +275,7 @@ seastar::future<> hint_sender<HM>::stop(drain should_drain) noexcept {
     });
 }
 
-template <typename HM>
-typename hint_sender<HM>::duration_type hint_sender<HM>::next_sleep_duration() const {
+typename hint_sender::duration_type hint_sender::next_sleep_duration() const {
     time_point_type current_time = clock_type::now();
     time_point_type next_flush_tp = std::max(_next_flush_tp, current_time);
     time_point_type next_retry_tp = std::max(_next_send_retry_tp, current_time);
@@ -262,8 +286,7 @@ typename hint_sender<HM>::duration_type hint_sender<HM>::next_sleep_duration() c
     return duration_type{10 * div_ceil(d.count(), 10)};
 }
 
-template <typename HM>
-void hint_sender<HM>::start() {
+void hint_sender::start() {
     seastar::thread_attributes attr{.sched_group = _hints_cpu_sched_group};
 
     _stopped = seastar::async(std::move(attr), [this] {
@@ -286,8 +309,7 @@ void hint_sender<HM>::start() {
     });
 }
 
-template <typename HM>
-seastar::future<> hint_sender<HM>::send_one_mutation(frozen_mutation_and_schema m) {
+seastar::future<> hint_sender::send_one_mutation(frozen_mutation_and_schema m) {
     auto erm = _host_manager.get_database().find_column_family(m.s).get_effective_replication_map();
     auto token = dht::get_token(*m.s, m.fm.key());
     inet_address_vector_replica_set natural_endpoints = erm->get_natural_endpoints(std::move(token));
@@ -295,8 +317,7 @@ seastar::future<> hint_sender<HM>::send_one_mutation(frozen_mutation_and_schema 
     return do_send_one_mutation(std::move(m), natural_endpoints);
 }
 
-template <typename HM>
-seastar::future<> hint_sender<HM>::send_one_hint(seastar::lw_shared_ptr<send_one_file_ctx> ctx_ptr,
+seastar::future<> hint_sender::send_one_hint(seastar::lw_shared_ptr<send_one_file_ctx> ctx_ptr,
         fragmented_temporary_buffer buf, replay_position rp, gc_clock::duration secs_since_file_mod,
         const std::string_view fname)
 {
@@ -313,7 +334,7 @@ seastar::future<> hint_sender<HM>::send_one_hint(seastar::lw_shared_ptr<send_one
                 //
                 // Files are aggregated for at most manager::hints_timer_period therefore the oldest hint there is
                 // (last_modification - manager::hints_timer_period) old.
-                if (gc_clock::now().time_since_epoch() - secs_since_file_mod > gc_grace_sec - manager::hints_flush_period) {
+                if (gc_clock::now().time_since_epoch() - secs_since_file_mod > gc_grace_sec - hints_flush_period) {
                     return make_ready_future<>();
                 }
 
@@ -363,8 +384,7 @@ seastar::future<> hint_sender<HM>::send_one_hint(seastar::lw_shared_ptr<send_one
     });
 }
 
-template <typename HM>
-void hint_sender<HM>::notify_replay_waiters() noexcept {
+void hint_sender::notify_replay_waiters() noexcept {
     if (!_foreign_segments_to_replay.empty()) {
         manager_logger.trace("[{}] notify_replay_waiters(): not notifying because there are still {} foreign segments to replay",
                 _host_id, _foreign_segments_to_replay.size());
@@ -383,8 +403,7 @@ void hint_sender<HM>::notify_replay_waiters() noexcept {
     }
 }
 
-template <typename HM>
-void hint_sender<HM>::dismiss_replay_waiters() noexcept {
+void hint_sender::dismiss_replay_waiters() noexcept {
     for (auto& p : _replay_waiters) {
         manager_logger.debug("[{}] dismiss_replay_waiters(): dismissing one", _host_id);
         auto ptr = p.second;
@@ -394,8 +413,7 @@ void hint_sender<HM>::dismiss_replay_waiters() noexcept {
     _replay_waiters.clear();
 }
 
-template <typename HM>
-future<> hint_sender<HM>::wait_until_hints_are_replayed_up_to(seastar::abort_source& as, replay_position up_to_rp) {
+future<> hint_sender::wait_until_hints_are_replayed_up_to(seastar::abort_source& as, replay_position up_to_rp) {
     manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): entering with target {}", _host_id, up_to_rp);
     if (_foreign_segments_to_replay.empty() && up_to_rp < _sent_upper_bound_rp) {
         manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): hints were already replayed above the point ({} < {})",
@@ -428,21 +446,20 @@ future<> hint_sender<HM>::wait_until_hints_are_replayed_up_to(seastar::abort_sou
     });
 }
 
-template <typename HM>
-void hint_sender<HM>::rewind_sent_replay_position_to(db::replay_position rp) {
+void hint_sender::rewind_sent_replay_position_to(db::replay_position rp) {
     _sent_upper_bound_rp = rp;
     notify_replay_waiters();
 }
 
 // runs in a seastar::async context
-template <typename HM>
-bool hint_sender<HM>::send_one_file(const seastar::sstring& fname) {
+
+bool hint_sender::send_one_file(const seastar::sstring& fname) {
     timespec last_mod = get_last_file_modification(fname).get0();
     gc_clock::duration secs_since_file_mod = std::chrono::seconds(last_mod.tv_sec);
     lw_shared_ptr<send_one_file_ctx> ctx_ptr = make_lw_shared<send_one_file_ctx>(_last_schema_ver_to_column_mapping);
 
     try {
-        commitlog::read_log_file(fname, manager::FILENAME_PREFIX, [this, secs_since_file_mod, &fname, ctx_ptr] (commitlog::buffer_and_replay_position buf_rp) -> future<> {
+        commitlog::read_log_file(fname, HINT_FILENAME_PREFIX, [this, secs_since_file_mod, &fname, ctx_ptr] (commitlog::buffer_and_replay_position buf_rp) -> future<> {
             auto& buf = buf_rp.buffer;
             auto& rp = buf_rp.position;
 
@@ -520,8 +537,7 @@ bool hint_sender<HM>::send_one_file(const seastar::sstring& fname) {
     return true;
 }
 
-template <typename HM>
-const sstring* hint_sender<HM>::name_of_current_segment() const {
+const seastar::sstring* hint_sender::name_of_current_segment() const {
     // Foreign segments are replayed first
     if (!_foreign_segments_to_replay.empty()) {
         return &_foreign_segments_to_replay.front();
@@ -532,8 +548,7 @@ const sstring* hint_sender<HM>::name_of_current_segment() const {
     return nullptr;
 }
 
-template <typename HM>
-void hint_sender<HM>::pop_current_segment() {
+void hint_sender::pop_current_segment() {
     if (!_foreign_segments_to_replay.empty()) {
         _foreign_segments_to_replay.pop_front();
     } else if (!_segments_to_replay.empty()) {
@@ -542,8 +557,7 @@ void hint_sender<HM>::pop_current_segment() {
 }
 
 // Runs in the seastar::async context
-template <typename HM>
-void hint_sender<HM>::send_hints_maybe() noexcept {
+void hint_sender::send_hints_maybe() noexcept {
     using namespace std::literals::chrono_literals;
     manager_logger.trace("send_hints(): going to send hints to {}, we have {} segment to replay",
             _host_id, _segments_to_replay.size() + _foreign_segments_to_replay.size());
@@ -582,8 +596,7 @@ void hint_sender<HM>::send_hints_maybe() noexcept {
     manager_logger.trace("send_hints(): we handled {} segments", replayed_segments_count);
 }
 
-template <typename HM>
-bool hint_sender<HM>::replay_allowed() const noexcept {
+bool hint_sender::replay_allowed() const noexcept {
     return _host_manager.replay_allowed();
 }
 

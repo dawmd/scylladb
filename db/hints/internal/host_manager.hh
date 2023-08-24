@@ -61,10 +61,6 @@ private:
             state::can_hint,
             state::stopping,
             state::stopped>>;
-    
-    // This is fine. `hint_sender` stores `host_manager` as a reference,
-    // so it being an incomplete type at this point is not an issue.
-    using sender = hint_sender<host_manager>;
 
 // Fields.
 private:
@@ -84,7 +80,7 @@ private:
     uint64_t _hints_in_progress = 0;
     // TODO: Explain what exactly it means that it's the last written replay position.
     replay_position _last_written_rp;
-    sender _hint_sender;
+    hint_sender _hint_sender;
 
 public:
     host_manager(const host_id_type& key, ShardManager& shard_manager)

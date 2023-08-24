@@ -20,9 +20,9 @@
 // Scylla includes.
 #include "db/commitlog/replay_position.hh"
 #include "db/hints/internal/common.hh"
+#include "db/hints/internal/hint_storage.hh"
 #include "mutation/frozen_mutation.hh"
 #include "schema/schema.hh"
-#include "service/storage_proxy.hh"
 #include "utils/fragmented_temporary_buffer.hh"
 #include "enum_set.hh"
 #include "gc_clock.hh"
@@ -35,18 +35,35 @@
 #include <set>
 #include <unordered_map>
 
+namespace service {
+
+// This needs to be forward-declared because "service/storage_proxy.hh"
+// is the owner of hinted-handoff data structures: THAT file will include
+// files from this module, not the other way round.
+//
+// It being an incomplete type is not an issue because we only store
+// a reference to it.
+class storage_proxy;
+
+} // namespace service
+
 namespace db::hints {
+
+class manager;
+
 namespace internal {
 
 // Class specifying context for sending one file with hints.
 class send_one_file_ctx;
 
-// TODO: For the time being, make this a template to simplify coding.
-template <typename HostManager>
+// Data structure responsible for managing hints for a specific host.
+template <typename ShardManager>
+class host_manager;
+
 class hint_sender {
 // Local type declarations.
 private:
-    using host_manager = HostManager;
+    using host_manager = host_manager<manager>;
 
     using clock_type = seastar::lowres_clock;
     static_assert(noexcept(clock_type::now()), "clock_type::now() must be noexcept");
@@ -67,7 +84,7 @@ private:
             state::draining>>;
     
     template <typename Key, typename Value>
-    using map_type = typename host_manager::template map_type<Key, Value>;
+    using map_type = std::unordered_map<Key, Value>;
 
     // There shouldn't be many segments stored at the same time.
     // `std::list` provides good semantics in that case
@@ -112,36 +129,12 @@ private:
     multimap_type<replay_position, replay_waiter> _replay_waiters{};
 
 public:
-    hint_sender(host_manager& parent, seastar::scheduling_group sched_group, hint_stats& shard_stats)
-        : _host_id{parent.end_point_key()}
-        , _host_manager{parent}
-        , _proxy{parent.get_storage_proxy()}
-        , _shard_stats{shard_stats}
-        , _hints_cpu_sched_group{sched_group}
-    {}
+    hint_sender(host_manager& parent, seastar::scheduling_group sched_group, hint_stats& shard_stats);
 
     hint_sender(hint_sender&&) = default;
     hint_sender(const hint_sender&) = delete;
 
-    hint_sender(hint_sender&& other, host_manager& new_parent) noexcept
-        : _segments_to_replay{std::move(other._segments_to_replay)}
-        , _foreign_segments_to_replay{std::move(other._foreign_segments_to_replay)}
-        , _last_not_complete_rp{std::move(other._last_not_complete_rp)}
-        , _sent_upper_bound_rp{std::move(other._sent_upper_bound_rp)}
-        , _last_schema_ver_to_column_mapping{std::move(other._last_schema_ver_to_column_mapping)}
-        , _state{std::move(other._state)}
-        , _stopped{std::move(other._stopped)}
-        , _stop_as{std::move(other._stop_as)}
-        , _next_flush_tp{std::move(other._next_flush_tp)}
-        , _next_send_retry_tp{std::move(other._next_send_retry_tp)}
-        // The only non-trivial parts of the constructor.
-        , _host_id{new_parent.end_point_key()}
-        , _host_manager{new_parent}
-        , _proxy{_host_manager.get_storage_proxy()}
-        , _shard_stats{other._shard_stats}
-        , _hints_cpu_sched_group{std::move(other._hints_cpu_sched_group)}
-        , _replay_waiters{std::move(other._replay_waiters)}
-    {}
+    hint_sender(hint_sender&& other, host_manager& new_parent) noexcept;
 
     ~hint_sender() noexcept {
         dismiss_replay_waiters();
