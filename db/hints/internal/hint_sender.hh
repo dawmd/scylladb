@@ -89,42 +89,60 @@ private:
         state::stopping,
         state::host_left_ring,
         state::draining>>;
+    
+    // There shouldn't be many segments stored at the same time.
+    // `std::list` provides good semantics in that case
+    // -- it doesn't allocate overly much memory.
+    using segment_list = std::list<seastar::sstring>;
+
+    template <typename Key, typename Value>
+    using multimap_type = std::multimap<Key, Value>;
+
+    // TODO: Add a comment here explaining what this type "means".
+    using replay_waiter = seastar::lw_shared_ptr<std::optional<seastar::promise<>>>;
 
 private:
-    std::list<seastar::sstring> _segments_to_replay;
+    segment_list _segments_to_replay{};
     // Segments to replay which were not created on this shard but were moved during rebalancing
-    std::list<seastar::sstring> _foreign_segments_to_replay;
-    replay_position _last_not_complete_rp;
-    replay_position _sent_upper_bound_rp;
+    segment_list _foreign_segments_to_replay{};
+    
+    replay_position _last_not_complete_rp{};
+    replay_position _sent_upper_bound_rp{};
+
     std::unordered_map<table_schema_version, column_mapping> _last_schema_ver_to_column_mapping;
-    state_set _state;
-    seastar::future<> _stopped;
-    abort_source _stop_as;
-    time_point_type _next_flush_tp;
-    time_point_type _next_send_retry_tp;
+    
+    // State of the endpoint that this hint_sender sends hints to.
+    state_set _state{};
+    seastar::future<> _stopped = seastar::make_ready_future<>();
+    abort_source _stop_as{};
+
+    time_point_type _next_flush_tp{};
+    time_point_type _next_send_retry_tp{};
+
     host_id_type _ep_key;
     end_point_hints_manager& _ep_manager;
-    manager& _shard_manager;
     resource_manager& _resource_manager;
     service::storage_proxy& _proxy;
     replica::database& _db;
-    seastar::scheduling_group _hints_cpu_sched_group;
     gms::gossiper& _gossiper;
-    seastar::shared_mutex& _file_update_mutex;
+    hint_stats& _shard_stats;
 
-    std::multimap<replay_position, seastar::lw_shared_ptr<std::optional<seastar::promise<>>>> _replay_waiters;
+    seastar::scheduling_group _hints_cpu_sched_group;
+
+    std::multimap<replay_position, replay_waiter> _replay_waiters{};
 
 public:
-    hint_sender(end_point_hints_manager& parent, service::storage_proxy& local_storage_proxy,
-            replica::database& local_db, gms::gossiper& local_gossiper) noexcept;
+    hint_sender(end_point_hints_manager& parent, resource_manager& rm,
+            service::storage_proxy& local_storage_proxy, replica::database& local_db,
+            gms::gossiper& local_gossiper, hint_stats& shard_stats) noexcept;
 
-    /// \brief A constructor that should be called from the copy/move-constructor of end_point_hints_manager.
+    /// \brief A constructor that should be called from the move-constructor of end_point_hints_manager.
     ///
     /// Make sure to properly reassign the references - especially to the \param parent and its internals.
     ///
-    /// \param other the "sender" instance to copy from
-    /// \param parent the parent object for this "sender" instance
-    hint_sender(const hint_sender& other, end_point_hints_manager& parent) noexcept;
+    /// \param other the "sender" instance to move
+    /// \param new_parent the parent object for this "sender" instance
+    hint_sender(hint_sender&& other, end_point_hints_manager& new_parent) noexcept;
 
     ~hint_sender() noexcept {
         dismiss_replay_waiters();
@@ -218,9 +236,9 @@ private:
     /// \param secs_since_file_mod last modification time stamp (in seconds since Epoch) of the current hints file
     /// \param fname name of the hints file this hint was read from
     /// \return future that resolves when next hint may be sent
-    seastar::future<> send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fragmented_temporary_buffer buf,
-            db::replay_position rp, gc_clock::duration secs_since_file_mod,
-            const seastar::sstring& fname);
+    seastar::future<> send_one_hint(seastar::lw_shared_ptr<send_one_file_ctx> ctx_ptr,
+            fragmented_temporary_buffer buf, replay_position rp,
+            gc_clock::duration secs_since_file_mod, const seastar::sstring& fname);
 
     /// \brief Send all hint from a single file and delete it after it has been successfully sent.
     /// Send all hints from the given file. If we failed to send the current segment we will pick up in the next
@@ -271,8 +289,6 @@ private:
 
     /// \brief Dismisses ALL current replay waiters with an exception.
     void dismiss_replay_waiters() noexcept;
-
-    hint_stats& shard_stats() noexcept;
 
     /// \brief Flush all pending hints to storage if hints_flush_period passed since the last flush event.
     /// \return Ready, never exceptional, future when operation is complete.

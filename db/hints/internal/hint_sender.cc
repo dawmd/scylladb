@@ -54,7 +54,7 @@ public:
 /// \brief Get the last modification time stamp for a given file.
 /// \param fname File name
 /// \return The last modification time stamp for \param fname.
-seastar::future<::timespec> hint_sender::get_last_file_modification(const std::string_view fname) {
+seastar::future<::timespec> get_last_file_modification(const std::string_view fname) {
     seastar::file f = co_await seastar::open_file_dma(fname, open_flags::ro);
     const auto st = co_await f.stat();
     co_return st.st_mtim;
@@ -158,7 +158,7 @@ bool hint_sender::can_send() noexcept {
         } else {
             if (!_state.contains(state::host_left_ring)) {
                 _state.set_if<state::host_left_ring>(
-                        !_shard_manager.local_db().get_token_metadata().is_normal_token_owner(end_point_key()));
+                        !_db.get_token_metadata().is_normal_token_owner(end_point_key()));
             }
             // send the hints out if the destination Node is part of the ring - we will send to all new replicas in this case
             return _state.contains(state::host_left_ring);
@@ -201,31 +201,40 @@ const column_mapping& hint_sender::get_column_mapping(seastar::lw_shared_ptr<sen
     return cm_it->second;
 }
 
-hint_sender::hint_sender(end_point_hints_manager& parent, service::storage_proxy& local_storage_proxy,
-        replica::database& local_db, gms::gossiper& local_gossiper) noexcept
-    : _stopped(seastar::make_ready_future<>())
-    , _ep_key(parent.end_point_key())
-    , _ep_manager(parent)
-    , _shard_manager(_ep_manager._shard_manager)
-    , _resource_manager(_shard_manager._resource_manager)
-    , _proxy(local_storage_proxy)
-    , _db(local_db)
-    , _hints_cpu_sched_group(_db.get_streaming_scheduling_group())
-    , _gossiper(local_gossiper)
-    , _file_update_mutex(_ep_manager.file_update_mutex())
+hint_sender::hint_sender(end_point_hints_manager& parent, resource_manager& rm,
+        service::storage_proxy& local_storage_proxy, replica::database& local_db,
+        gms::gossiper& local_gossiper, hint_stats& shard_stats) noexcept
+    : _ep_key{parent.end_point_key()}
+    , _ep_manager{parent}
+    , _resource_manager{rm}
+    , _proxy{local_storage_proxy}
+    , _db{local_db}
+    , _gossiper{local_gossiper}
+    , _shard_stats{shard_stats}
+    , _hints_cpu_sched_group{_db.get_streaming_scheduling_group()}
 {}
 
-hint_sender::hint_sender(const hint_sender& other, end_point_hints_manager& parent) noexcept
-    : _stopped(seastar::make_ready_future<>())
-    , _ep_key(parent.end_point_key())
-    , _ep_manager(parent)
-    , _shard_manager(_ep_manager._shard_manager)
-    , _resource_manager(_shard_manager._resource_manager)
-    , _proxy(other._proxy)
-    , _db(other._db)
-    , _hints_cpu_sched_group(other._hints_cpu_sched_group)
-    , _gossiper(other._gossiper)
-    , _file_update_mutex(_ep_manager.file_update_mutex())
+hint_sender::hint_sender(hint_sender&& other, end_point_hints_manager& new_parent) noexcept
+    : _segments_to_replay{std::move(other._segments_to_replay)}
+    , _foreign_segments_to_replay{std::move(other._foreign_segments_to_replay)}
+    , _last_not_complete_rp{std::move(other._last_not_complete_rp)}
+    , _sent_upper_bound_rp{std::move(other._sent_upper_bound_rp)}
+    , _last_schema_ver_to_column_mapping{std::move(other._last_schema_ver_to_column_mapping)}
+    , _state{std::move(other._state)}
+    , _stopped{std::move(other._stopped)}
+    , _stop_as{std::move(other._stop_as)}
+    , _next_flush_tp{std::move(other._next_flush_tp)}
+    , _next_send_retry_tp{std::move(other._next_send_retry_tp)}
+    // The only non-trivial parts of the constructor.
+    , _ep_key{new_parent.end_point_key()}
+    , _ep_manager{new_parent}
+    , _resource_manager{other._resource_manager}
+    , _proxy{other._proxy}
+    , _db{other._db}
+    , _gossiper{other._gossiper}
+    , _shard_stats{other._shard_stats}
+    , _hints_cpu_sched_group{std::move(other._hints_cpu_sched_group)}
+    , _replay_waiters{std::move(other._replay_waiters)}
 {}
 
 seastar::future<> hint_sender::stop(drain should_drain) noexcept {
@@ -332,27 +341,27 @@ seastar::future<> hint_sender::send_one_hint(seastar::lw_shared_ptr<send_one_fil
                 }
 
                 return this->send_one_mutation(std::move(m)).then([this, ctx_ptr] {
-                    ++this->shard_stats().sent;
+                    ++this->_shard_stats.sent;
                 }).handle_exception([this, ctx_ptr] (auto eptr) {
                     manager_logger.trace("send_one_hint(): failed to send to {}: {}", end_point_key(), eptr);
-                    ++this->shard_stats().send_errors;
+                    ++this->_shard_stats.send_errors;
                     return seastar::make_exception_future<>(std::move(eptr));
                 });
 
             // ignore these errors and move on - probably this hint is too old and the KS/CF has been deleted...
             } catch (replica::no_such_column_family& e) {
                 manager_logger.debug("send_hints(): no_such_column_family: {}", e.what());
-                ++this->shard_stats().discarded;
+                ++this->_shard_stats.discarded;
             } catch (replica::no_such_keyspace& e) {
                 manager_logger.debug("send_hints(): no_such_keyspace: {}", e.what());
-                ++this->shard_stats().discarded;
+                ++this->_shard_stats.discarded;
             } catch (no_column_mapping& e) {
                 manager_logger.debug("send_hints(): {} at {}: {}", fname, rp, e.what());
-                ++this->shard_stats().discarded;
+                ++this->_shard_stats.discarded;
             } catch (...) {
                 auto eptr = std::current_exception();
                 manager_logger.debug("send_hints(): unexpected error in file {} at {}: {}", fname, rp, eptr);
-                ++this->shard_stats().send_errors;
+                ++this->_shard_stats.send_errors;
                 return seastar::make_exception_future<>(std::move(eptr));
             }
             return seastar::make_ready_future<>();
@@ -493,7 +502,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
     } catch (commitlog::segment_error& ex) {
         manager_logger.error("{}: {}. Dropping...", fname, ex.what());
         ctx_ptr->segment_replay_failed = false;
-        ++this->shard_stats().corrupted_files;
+        ++this->_shard_stats.corrupted_files;
     } catch (...) {
         manager_logger.trace("sending of {} failed: {}", fname, std::current_exception());
         ctx_ptr->segment_replay_failed = true;
@@ -519,7 +528,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
     }
 
     // If we got here we are done with the current segment and we can remove it.
-    seastar::with_shared(_file_update_mutex, [&fname, this] {
+    with_file_update_mutex(_ep_manager, [&fname, this] {
         auto p = _ep_manager.get_or_load().get0();
         return p->delete_segments({ fname });
     }).get();
@@ -587,10 +596,6 @@ void hint_sender::send_hints_maybe() noexcept {
     }
 
     manager_logger.trace("send_hints(): we handled {} segments", replayed_segments_count);
-}
-
-hint_stats& hint_sender::shard_stats() noexcept {
-    return _shard_manager._stats;
 }
 
 } // namespace internal

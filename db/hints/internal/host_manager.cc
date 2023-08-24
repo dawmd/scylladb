@@ -18,6 +18,7 @@
 // Scylla includes.
 #include "db/hints/internal/common.hh"
 #include "db/hints/internal/hint_logger.hh"
+#include "db/hints/internal/hint_sender.hh"
 #include "db/hints/internal/hint_storage.hh"
 #include "db/hints/manager.hh"
 #include "replica/database.hh"
@@ -128,7 +129,8 @@ end_point_hints_manager::end_point_hints_manager(const key_type& key, manager& s
     // Approximate the position of the last written hint by using the same formula as for segment id calculation in commitlog
     // TODO: Should this logic be deduplicated with what is in the commitlog?
     , _last_written_rp(this_shard_id(), std::chrono::duration_cast<std::chrono::milliseconds>(runtime::get_boot_time().time_since_epoch()).count())
-    , _sender(*this, _shard_manager.local_storage_proxy(), _shard_manager.local_db(), _shard_manager.local_gossiper())
+    , _sender(*this, _shard_manager._resource_manager, _shard_manager.local_storage_proxy(),
+            _shard_manager.local_db(), _shard_manager.local_gossiper(), _shard_manager._stats)
 {}
 
 end_point_hints_manager::end_point_hints_manager(end_point_hints_manager&& other)
@@ -139,7 +141,7 @@ end_point_hints_manager::end_point_hints_manager(end_point_hints_manager&& other
     , _state(other._state)
     , _hints_dir(std::move(other._hints_dir))
     , _last_written_rp(other._last_written_rp)
-    , _sender(other._sender, *this)
+    , _sender(std::move(other._sender), *this)
 {}
 
 end_point_hints_manager::~end_point_hints_manager() {
