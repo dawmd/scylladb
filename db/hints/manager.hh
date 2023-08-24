@@ -46,7 +46,6 @@ namespace hints {
 using node_to_hint_store_factory_type = internal::node_to_hint_store_factory_type;
 using hints_store_ptr = internal::hint_store_ptr;
 using hint_entry_reader = internal::hint_entry_reader;
-using timer_clock_type = seastar::lowres_clock;
 
 /// A helper class which tracks hints directory creation
 /// and allows to perform hints directory initialization lazily.
