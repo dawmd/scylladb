@@ -45,6 +45,7 @@ namespace db {
 namespace hints {
 
 namespace internal {
+class end_point_hints_manager;
 class hint_sender;
 } // namespace internal
 
@@ -83,6 +84,7 @@ private:
 
     friend class space_watchdog;
     friend class internal::end_point_hints_manager;
+    friend class internal::hint_sender;
 
 public:
     using end_point_hints_manager = internal::end_point_hints_manager;
