@@ -15,9 +15,12 @@
 #include <seastar/core/sstring.hh>
 
 // Scylla includes.
+#include "db/hints/internal/common.hh"
 #include "db/hints/internal/hint_logger.hh"
 #include "db/hints/internal/hint_storage.hh"
 #include "db/hints/manager.hh"
+#include "replica/database.hh"
+#include "utils/disk-error-handler.hh"
 
 // STD.
 #include <algorithm>
@@ -77,9 +80,9 @@ bool host_manager::store_hint(schema_ptr s, seastar::lw_shared_ptr<const frozen_
             shard_stats().size_of_hints_in_progress += mut_size;
 
             return with_shared(file_update_mutex(), [this, fm, s, tr_state] () mutable -> future<> {
-                return get_or_load().then([this, fm = std::move(fm), s = std::move(s), tr_state] (hint_store_ptr log_ptr) mutable {
-                    commitlog_entry_writer cew(s, *fm, db::commitlog::force_sync::no);
-                    return log_ptr->add_entry(s->id(), cew, db::timeout_clock::now() + _shard_manager.hint_file_write_timeout);
+                return get_or_load().then([fm = std::move(fm), s = std::move(s), tr_state] (hint_store_ptr log_ptr) mutable {
+                    commitlog_entry_writer cew{s, *fm, commitlog::force_sync::no};
+                    return log_ptr->add_entry(s->id(), cew, db::timeout_clock::now() + HINT_FILE_WRITE_TIMEOUT);
                 }).then([this, tr_state] (db::rp_handle rh) {
                     auto rp = rh.release();
                     if (_last_written_rp < rp) {
