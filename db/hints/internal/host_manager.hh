@@ -85,7 +85,7 @@ private:
     manager& _shard_manager;
     hint_sender _sender;
     
-    const fs::path _hints_dir;
+    std::filesystem::path _hints_dir;
     uint64_t _hints_in_progress = 0;
 
 public:
@@ -100,21 +100,22 @@ public:
     /// \brief Get the corresponding hints_store object. Create it if needed.
     /// \note Must be called under the \ref _file_update_mutex.
     /// \return The corresponding hints_store object.
-    future<hint_store_ptr> get_or_load();
+    seastar::future<hint_store_ptr> get_or_load();
 
     /// \brief Store a single mutation hint.
     /// \param s column family descriptor
     /// \param fm frozen mutation object
     /// \param tr_state trace_state handle
     /// \return FALSE if hint is definitely not going to be stored
-    bool store_hint(schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept;
+    bool store_hint(schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
+            tracing::trace_state_ptr tr_state) noexcept;
 
     /// \brief Populates the _segments_to_replay list.
     ///  Populates the _segments_to_replay list with the names of the files in the <manager hints files directory> directory
     ///  in the order they should be sent out.
     ///
     /// \return Ready future when end point hints manager is initialized.
-    future<> populate_segments_to_replay();
+    seastar::future<> populate_segments_to_replay();
 
     /// \brief Waits till all writers complete and shuts down the hints store. Drains hints if needed.
     ///
@@ -126,7 +127,7 @@ public:
     ///
     /// \param should_drain is drain::yes - drain all pending hints
     /// \return Ready future when all operations are complete
-    future<> stop(drain should_drain = drain::no) noexcept;
+    seastar::future<> stop(drain should_drain = drain::no) noexcept;
 
     /// \brief Start the timer.
     void start();
@@ -173,12 +174,14 @@ public:
     /// \brief Returns replay position of the most recently written hint.
     ///
     /// If there weren't any hints written during this endpoint manager's lifetime, a zero replay_position is returned.
-    db::replay_position last_written_replay_position() const {
+    replay_position last_written_replay_position() const {
         return _last_written_rp;
     }
 
     /// \brief Waits until hints are replayed up to a given replay position, or given abort source is triggered.
-    future<> wait_until_hints_are_replayed_up_to(abort_source& as, db::replay_position up_to_rp) {
+    seastar::future<> wait_until_hints_are_replayed_up_to(seastar::abort_source& as,
+            replay_position up_to_rp)
+    {
         return _sender.wait_until_hints_are_replayed_up_to(as, up_to_rp);
     }
 
@@ -194,10 +197,11 @@ public:
     /// \return Whatever \ref func returns.
     template <typename Func>
     friend inline auto with_file_update_mutex(host_manager& host_man, Func&& func) {
-        return with_lock(*host_man._file_update_mutex_ptr, std::forward<Func>(func)).finally([lock_ptr = host_man._file_update_mutex_ptr] {});
+        return seastar::with_lock(*host_man._file_update_mutex_ptr, std::forward<Func>(func))
+                .finally([lock_ptr = host_man._file_update_mutex_ptr] {});
     }
 
-    const fs::path& hints_dir() const noexcept {
+    const std::filesystem::path& hints_dir() const noexcept {
         return _hints_dir;
     }
 
@@ -213,13 +217,13 @@ private:
     /// - Populate _segments_to_replay if it's empty.
     ///
     /// \return A new hints store object.
-    future<commitlog> add_store() noexcept;
+    seastar::future<commitlog> add_store() noexcept;
 
     /// \brief Flushes all hints written so far to the disk.
     ///  - Repopulates the _segments_to_replay list if needed.
     ///
     /// \return Ready future when the procedure above completes.
-    future<> flush_current_hints() noexcept;
+    seastar::future<> flush_current_hints() noexcept;
 
     hint_stats& shard_stats() noexcept;
 

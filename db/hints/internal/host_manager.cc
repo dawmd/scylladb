@@ -32,19 +32,22 @@
 namespace db::hints {
 namespace internal {
 
-bool host_manager::store_hint(schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept {
+bool host_manager::store_hint(schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
+        tracing::trace_state_ptr tr_state) noexcept
+{
     try {
         // Future is waited on indirectly in `stop()` (via `_store_gate`).
-        (void)with_gate(_store_gate, [this, s = std::move(s), fm = std::move(fm), tr_state] () mutable {
+        (void) seastar::with_gate(_store_gate,
+                [this, s = std::move(s), fm = std::move(fm), tr_state] () mutable {
             ++_hints_in_progress;
             size_t mut_size = fm->representation().size();
             shard_stats().size_of_hints_in_progress += mut_size;
 
-            return with_shared(file_update_mutex(), [this, fm, s, tr_state] () mutable -> future<> {
+            return seastar::with_shared(file_update_mutex(), [this, fm, s, tr_state] () mutable -> future<> {
                 return get_or_load().then([fm = std::move(fm), s = std::move(s), tr_state] (hints_store_ptr log_ptr) mutable {
-                    commitlog_entry_writer cew(s, *fm, db::commitlog::force_sync::no);
-                    return log_ptr->add_entry(s->id(), cew, db::timeout_clock::now() + HINT_FILE_WRITE_TIMEOUT);
-                }).then([this, tr_state] (db::rp_handle rh) {
+                    commitlog_entry_writer cew{s, *fm, commitlog::force_sync::no};
+                    return log_ptr->add_entry(s->id(), cew, timeout_clock::now() + HINT_FILE_WRITE_TIMEOUT);
+                }).then([this, tr_state] (rp_handle rh) {
                     auto rp = rh.release();
                     if (_last_written_rp < rp) {
                         _last_written_rp = rp;
@@ -75,8 +78,8 @@ bool host_manager::store_hint(schema_ptr s, lw_shared_ptr<const frozen_mutation>
     return true;
 }
 
-future<> host_manager::populate_segments_to_replay() {
-    return with_lock(file_update_mutex(), [this] {
+seastar::future<> host_manager::populate_segments_to_replay() {
+    return seastar::with_lock(file_update_mutex(), [this] {
         return get_or_load().discard_result();
     });
 }
@@ -87,9 +90,10 @@ void host_manager::start() {
     _sender.start();
 }
 
-future<> host_manager::stop(drain should_drain) noexcept {
+seastar::future<> host_manager::stop(drain should_drain) noexcept {
     if(stopped()) {
-        return make_exception_future<>(std::logic_error(format("host_manager[{}]: stop() is called twice", _host_id).c_str()));
+        return seastar::make_exception_future<>(
+                std::logic_error{seastar::format("host_manager[{}]: stop() is called twice", _host_id).c_str()});
     }
 
     return seastar::async([this, should_drain] {
@@ -101,14 +105,14 @@ future<> host_manager::stop(drain should_drain) noexcept {
         _store_gate.close().handle_exception([&eptr] (auto e) { eptr = std::move(e); }).get();
         _sender.stop(should_drain).handle_exception([&eptr] (auto e) { eptr = std::move(e); }).get();
 
-        with_lock(file_update_mutex(), [this] {
+        seastar::with_lock(file_update_mutex(), [this] {
             if (_hints_store_anchor) {
                 hints_store_ptr tmp = std::exchange(_hints_store_anchor, nullptr);
                 return tmp->shutdown().finally([tmp] {
                     return tmp->release();
                 }).finally([tmp] {});
             }
-            return make_ready_future<>();
+            return seastar::make_ready_future<>();
         }).handle_exception([&eptr] (auto e) { eptr = std::move(e); }).get();
 
         if (eptr) {
@@ -120,50 +124,52 @@ future<> host_manager::stop(drain should_drain) noexcept {
 }
 
 host_manager::host_manager(const host_id_type& key, manager& shard_manager)
-    : _host_id(key)
-    , _state(state_set::of<state::stopped>())
-    , _file_update_mutex_ptr(make_lw_shared<seastar::shared_mutex>())
+    : _host_id{key}
+    , _state{state_set::of<state::stopped>()}
+    , _file_update_mutex_ptr{seastar::make_lw_shared<seastar::shared_mutex>()}
     // Approximate the position of the last written hint by using the same formula as for segment id calculation in commitlog
     // TODO: Should this logic be deduplicated with what is in the commitlog?
-    , _last_written_rp(this_shard_id(), std::chrono::duration_cast<std::chrono::milliseconds>(runtime::get_boot_time().time_since_epoch()).count())
-    , _shard_manager(shard_manager)
-    , _sender(*this, _shard_manager._resource_manager, _shard_manager.local_storage_proxy(),
-            _shard_manager.local_db(), _shard_manager.local_gossiper(), _shard_manager._stats)
-    , _hints_dir(_shard_manager.hints_dir() / format("{}", _host_id).c_str())
+    , _last_written_rp{seastar::this_shard_id(),
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                    runtime::get_boot_time().time_since_epoch()).count()}
+    , _shard_manager{shard_manager}
+    , _sender{*this, _shard_manager._resource_manager, _shard_manager.local_storage_proxy(),
+            _shard_manager.local_db(), _shard_manager.local_gossiper(), _shard_manager._stats}
+    , _hints_dir{_shard_manager.hints_dir() / format("{}", _host_id).c_str()}
 {}
 
 host_manager::host_manager(host_manager&& other)
-    : _host_id(other._host_id)
-    , _state(other._state)
-    , _file_update_mutex_ptr(std::move(other._file_update_mutex_ptr))
-    , _last_written_rp(other._last_written_rp)
-    , _shard_manager(other._shard_manager)
-    , _sender(std::move(other._sender), *this)
-    , _hints_dir(std::move(other._hints_dir))
+    : _host_id{other._host_id}
+    , _state{other._state}
+    , _file_update_mutex_ptr{std::move(other._file_update_mutex_ptr)}
+    , _last_written_rp{other._last_written_rp}
+    , _shard_manager{other._shard_manager}
+    , _sender{std::move(other._sender), *this}
+    , _hints_dir{std::move(other._hints_dir)}
 {}
 
 host_manager::~host_manager() {
     assert(stopped());
 }
 
-future<hints_store_ptr> host_manager::get_or_load() {
+seastar::future<hints_store_ptr> host_manager::get_or_load() {
     if (!_hints_store_anchor) {
         return _shard_manager.store_factory().get_or_load(_host_id, [this] (const host_id_type&) noexcept {
             return add_store();
         }).then([this] (hints_store_ptr log_ptr) {
             _hints_store_anchor = log_ptr;
-            return make_ready_future<hints_store_ptr>(std::move(log_ptr));
+            return seastar::make_ready_future<hints_store_ptr>(std::move(log_ptr));
         });
     }
 
-    return make_ready_future<hints_store_ptr>(_hints_store_anchor);
+    return seastar::make_ready_future<hints_store_ptr>(_hints_store_anchor);
 }
 
-future<db::commitlog> host_manager::add_store() noexcept {
+seastar::future<commitlog> host_manager::add_store() noexcept {
     manager_logger.trace("Going to add a store to {}", _hints_dir.c_str());
 
     return futurize_invoke([this] {
-        return io_check([name = _hints_dir.c_str()] { return recursive_touch_directory(name); }).then([this] () {
+        return io_check([name = _hints_dir.c_str()] { return seastar::recursive_touch_directory(name); }).then([this] () {
             commitlog::config cfg;
 
             cfg.commit_log_location = _hints_dir.c_str();
@@ -205,14 +211,14 @@ future<db::commitlog> host_manager::add_store() noexcept {
             // which is larger than the segment ID of the RP of the last written hint.
             cfg.base_segment_id = _last_written_rp.base_id();
 
-            return commitlog::create_commitlog(std::move(cfg)).then([this] (commitlog l) -> future<commitlog> {
+            return commitlog::create_commitlog(std::move(cfg)).then([this] (commitlog l) -> seastar::future<commitlog> {
                 // add_store() is triggered every time hint files are forcefully flushed to I/O (every hints_flush_period).
                 // When this happens we want to refill _sender's segments only if it has finished with the segments he had before.
                 if (_sender.have_segments()) {
                     co_return l;
                 }
 
-                std::vector<sstring> segs_vec = co_await l.get_segments_to_replay();
+                std::vector<seastar::sstring> segs_vec = co_await l.get_segments_to_replay();
 
                 if (segs_vec.empty()) {
                     // If the segs_vec is empty, this means that there are no more
@@ -231,14 +237,14 @@ future<db::commitlog> host_manager::add_store() noexcept {
                     co_return l;
                 }
 
-                std::vector<std::pair<db::segment_id_type, sstring>> local_segs_vec;
+                std::vector<std::pair<segment_id_type, seastar::sstring>> local_segs_vec;
                 local_segs_vec.reserve(segs_vec.size());
 
                 // Divide segments into those that were created on this shard
                 // and those which were moved to it during rebalancing.
                 for (auto& seg : segs_vec) {
-                    db::commitlog::descriptor desc(seg, HINT_FILENAME_PREFIX);
-                    unsigned shard_id = db::replay_position(desc).shard_id();
+                    commitlog::descriptor desc(seg, HINT_FILENAME_PREFIX);
+                    seastar::shard_id shard_id = replay_position(desc).shard_id();
                     if (shard_id == this_shard_id()) {
                         local_segs_vec.emplace_back(desc.id, std::move(seg));
                     } else {
@@ -250,7 +256,7 @@ future<db::commitlog> host_manager::add_store() noexcept {
                 // correspond to the chronological order.
                 std::sort(local_segs_vec.begin(), local_segs_vec.end());
 
-                for (auto& [segment_id, seg] : local_segs_vec) {
+                for (auto& [_, seg] : local_segs_vec) {
                     _sender.add_segment(std::move(seg));
                 }
 
@@ -263,25 +269,23 @@ future<db::commitlog> host_manager::add_store() noexcept {
 future<> host_manager::flush_current_hints() noexcept {
     // flush the currently created hints to disk
     if (_hints_store_anchor) {
-        return futurize_invoke([this] {
-            return with_lock(file_update_mutex(), [this]() -> future<> {
-                return get_or_load().then([] (hints_store_ptr cptr) {
-                    return cptr->shutdown().finally([cptr] {
-                        return cptr->release();
-                    }).finally([cptr] {});
-                }).then([this] {
-                    // Un-hold the commitlog object. Since we are under the exclusive _file_update_mutex lock there are no
-                    // other hints_store_ptr copies and this would destroy the commitlog shared value.
-                    _hints_store_anchor = nullptr;
+        return seastar::with_lock(file_update_mutex(), [this] {
+            return get_or_load().then([] (hints_store_ptr cptr) {
+                return cptr->shutdown().finally([cptr] {
+                    return cptr->release();
+                }).finally([cptr] {});
+            }).then([this] {
+                // Un-hold the commitlog object. Since we are under the exclusive _file_update_mutex lock there are no
+                // other hints_store_ptr copies and this would destroy the commitlog shared value.
+                _hints_store_anchor = nullptr;
 
-                    // Re-create the commitlog instance - this will re-populate the _segments_to_replay if needed.
-                    return get_or_load().discard_result();
-                });
+                // Re-create the commitlog instance - this will re-populate the _segments_to_replay if needed.
+                return get_or_load().discard_result();
             });
         });
     }
 
-    return make_ready_future<>();
+    return seastar::make_ready_future<>();
 }
 
 bool host_manager::replay_allowed() const noexcept {
