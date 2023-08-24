@@ -66,6 +66,8 @@ namespace internal {
 
 class end_point_hints_manager;
 
+struct send_one_file_ctx;
+
 class hint_sender {
 private:
     using clock_type = seastar::lowres_clock;
@@ -86,29 +88,10 @@ private:
         state::host_left_ring,
         state::draining>>;
 
-    struct send_one_file_ctx {
-        send_one_file_ctx(std::unordered_map<table_schema_version, column_mapping>& last_schema_ver_to_column_mapping)
-            : schema_ver_to_column_mapping(last_schema_ver_to_column_mapping)
-        {}
-        std::unordered_map<table_schema_version, column_mapping>& schema_ver_to_column_mapping;
-        seastar::gate file_send_gate;
-        std::optional<replay_position> first_failed_rp;
-        std::optional<replay_position> last_succeeded_rp;
-        std::set<replay_position> in_progress_rps;
-        bool segment_replay_failed = false;
-
-        void mark_hint_as_in_progress(replay_position rp);
-        void on_hint_send_success(replay_position rp) noexcept;
-        void on_hint_send_failure(replay_position rp) noexcept;
-
-        // Returns a position below which hints were successfully replayed.
-        replay_position get_replayed_bound() const noexcept;
-    };
-
 private:
-    std::list<sstring> _segments_to_replay;
+    std::list<seastar::sstring> _segments_to_replay;
     // Segments to replay which were not created on this shard but were moved during rebalancing
-    std::list<sstring> _foreign_segments_to_replay;
+    std::list<seastar::sstring> _foreign_segments_to_replay;
     replay_position _last_not_complete_rp;
     replay_position _sent_upper_bound_rp;
     std::unordered_map<table_schema_version, column_mapping> _last_schema_ver_to_column_mapping;
