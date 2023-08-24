@@ -31,5 +31,9 @@ using node_to_hint_store_factory_type = utils::loading_shared_values<host_id_typ
 using hint_store_ptr = typename node_to_hint_store_factory_type::entry_ptr;
 using hint_entry_reader = commitlog_entry_reader;
 
+// TODO: Changet his to `constexpr std::string` once std::string supports constexpr constructors.
+inline const std::string HINT_FILENAME_PREFIX{"HintsLog" + commitlog::descriptor::SEPARATOR};
+constexpr inline std::chrono::seconds HINT_FILE_WRITE_TIMEOUT = std::chrono::seconds(2);
+
 } // namespace internal
 } // namespace db::hints

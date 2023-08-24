@@ -491,10 +491,8 @@ private:
     using ep_managers_map_type = std::unordered_map<ep_key_type, end_point_hints_manager>;
 
 public:
-    static const std::string FILENAME_PREFIX;
     // Non-const - can be modified with an error injection.
     static std::chrono::seconds hints_flush_period;
-    static const std::chrono::seconds hint_file_write_timeout;
 
 private:
     static constexpr uint64_t max_size_of_hints_in_progress = 10 * 1024 * 1024; // 10MB
