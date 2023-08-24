@@ -21,6 +21,8 @@
 // Scylla includes.
 #include "db/hints/internal/hint_logger.hh"
 #include "db/hints/internal/host_manager.hh"
+#include "db/hints/resource_manager.hh"
+#include "gms/gossiper.hh"
 #include "replica/database.hh"
 #include "schema/schema_fwd.hh"
 #include "service/storage_proxy.hh"
@@ -129,12 +131,16 @@ public:
 
 /////////////////////////////////////////////
 
-hint_sender::hint_sender(host_manager& parent, seastar::scheduling_group sched_group, hint_stats& shard_stats)
+hint_sender::hint_sender(host_manager& parent, service::storage_proxy& proxy, resource_manager& rm,
+        replica::database& db, gms::gossiper& gossiper, hint_stats& shard_stats)
     : _host_id{parent.host_id()}
     , _host_manager{parent}
-    , _proxy{parent.get_storage_proxy()}
+    , _proxy{proxy}
+    , _resource_manager{rm}
+    , _db{db}
+    , _gossiper{gossiper}
     , _shard_stats{shard_stats}
-    , _hints_cpu_sched_group{sched_group}
+    , _hints_cpu_sched_group{_db.get_streaming_scheduling_group()}
 {}
 
 hint_sender::hint_sender(hint_sender&& other, host_manager& new_parent) noexcept
@@ -151,7 +157,10 @@ hint_sender::hint_sender(hint_sender&& other, host_manager& new_parent) noexcept
     // The only non-trivial parts of the constructor.
     , _host_id{new_parent.host_id()}
     , _host_manager{new_parent}
-    , _proxy{_host_manager.get_storage_proxy()}
+    , _proxy{other._proxy}
+    , _resource_manager{other._resource_manager}
+    , _db{other._db}
+    , _gossiper{other._gossiper}
     , _shard_stats{other._shard_stats}
     , _hints_cpu_sched_group{std::move(other._hints_cpu_sched_group)}
     , _replay_waiters{std::move(other._replay_waiters)}
@@ -190,14 +199,14 @@ bool hint_sender::can_send() noexcept {
     }
 
     try {
-        auto ep_state_ptr = _host_manager.get_gossiper().get_endpoint_state_for_endpoint_ptr(_host_id);
+        auto ep_state_ptr = _gossiper.get_endpoint_state_for_endpoint_ptr(_host_id);
         if (ep_state_ptr && ep_state_ptr->is_alive()) {
             _state.remove(state::host_left_ring);
             return true;
         } else {
             if (!_state.contains(state::host_left_ring)) {
                 _state.set_if<state::host_left_ring>(
-                        !_host_manager.get_token_metadata().is_normal_token_owner(_host_id));
+                        !_proxy.get_token_metadata_ptr()->is_normal_token_owner(_host_id));
             }
             // send the hints out if the destination Node is part of the ring - we will send to all new replicas in this case
             return _state.contains(state::host_left_ring);
@@ -213,7 +222,7 @@ frozen_mutation_and_schema hint_sender::get_mutation(seastar::lw_shared_ptr<send
     hint_entry_reader hr{buf};
     auto& fm = hr.mutation();
     auto& cm = get_column_mapping(std::move(ctx_ptr), fm, hr);
-    auto schema = _host_manager.get_database().find_schema(fm.column_family_id());
+    auto schema = _db.find_schema(fm.column_family_id());
 
     if (schema->version() != fm.schema_version()) {
         mutation m{schema, fm.decorated_key(*schema)};
@@ -310,7 +319,7 @@ void hint_sender::start() {
 }
 
 seastar::future<> hint_sender::send_one_mutation(frozen_mutation_and_schema m) {
-    auto erm = _host_manager.get_database().find_column_family(m.s).get_effective_replication_map();
+    auto erm = _db.find_column_family(m.s).get_effective_replication_map();
     auto token = dht::get_token(*m.s, m.fm.key());
     inet_address_vector_replica_set natural_endpoints = erm->get_natural_endpoints(std::move(token));
 
@@ -321,7 +330,7 @@ seastar::future<> hint_sender::send_one_hint(seastar::lw_shared_ptr<send_one_fil
         fragmented_temporary_buffer buf, replay_position rp, gc_clock::duration secs_since_file_mod,
         const std::string_view fname)
 {
-    return _host_manager.get_resource_manager().get_send_units_for(buf.size_bytes()).then([this, secs_since_file_mod, &fname, buf = std::move(buf), rp, ctx_ptr] (auto units) mutable {
+    return _resource_manager.get_send_units_for(buf.size_bytes()).then([this, secs_since_file_mod, &fname, buf = std::move(buf), rp, ctx_ptr] (auto units) mutable {
         ctx_ptr->mark_hint_as_in_progress(rp);
 
         // Future is waited on indirectly in `send_one_file()` (via `ctx_ptr->file_send_gate`).
@@ -495,7 +504,7 @@ bool hint_sender::send_one_file(const seastar::sstring& fname) {
                     break;
                 }
             };
-        }, _last_not_complete_rp.pos, &_host_manager.get_database().extensions()).get();
+        }, _last_not_complete_rp.pos, &_db.extensions()).get();
     } catch (db::commitlog::segment_error& ex) {
         manager_logger.error("{}: {}. Dropping...", fname, ex.what());
         ctx_ptr->segment_replay_failed = false;

@@ -47,9 +47,18 @@ class storage_proxy;
 
 } // namespace service
 
+namespace replica {
+class database;
+} // namespace replica
+
+namespace gms {
+class gossiper;
+} // namespace gms
+
 namespace db::hints {
 
 class manager;
+class resource_manager;
 
 namespace internal {
 
@@ -116,6 +125,9 @@ private:
     host_id_type _host_id;
     host_manager& _host_manager;
     service::storage_proxy& _proxy;
+    resource_manager& _resource_manager;
+    replica::database& _db;
+    gms::gossiper& _gossiper;
     hint_stats& _shard_stats;
 
     seastar::scheduling_group _hints_cpu_sched_group;
@@ -126,7 +138,8 @@ private:
     multimap_type<replay_position, replay_waiter> _replay_waiters{};
 
 public:
-    hint_sender(host_manager& parent, seastar::scheduling_group sched_group, hint_stats& shard_stats);
+    hint_sender(host_manager& parent, service::storage_proxy& proxy, resource_manager& rm,
+            replica::database& db, gms::gossiper& gossiper, hint_stats& shard_stats);
 
     hint_sender(hint_sender&&) = default;
     hint_sender(const hint_sender&) = delete;
