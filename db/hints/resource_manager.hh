@@ -162,7 +162,7 @@ class resource_manager {
 
 public:
     static constexpr size_t hint_segment_size_in_mb = 32;
-    static constexpr size_t max_hints_per_ep_size_mb = 128; // 4 files 32MB each
+    static constexpr size_t max_hints_per_host_size_mb = 128; // 4 files 32MB each
     static constexpr size_t default_per_shard_concurrency_limit = 8;
 
 public:

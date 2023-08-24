@@ -116,14 +116,14 @@ struct send_one_file_ctx {
 };
 
 bool hint_sender::replay_allowed() const noexcept {
-    return _ep_manager.replay_allowed();
+    return _host_manager.replay_allowed();
 }
 
 seastar::future<> hint_sender::flush_maybe() noexcept {
     auto current_time = clock_type::now();
     if (current_time >= _next_flush_tp) {
         try {
-            co_await _ep_manager.flush_current_hints();
+            co_await _host_manager.flush_current_hints();
             _next_flush_tp = current_time + manager::hints_flush_period;
         } catch (...) {
             manager_logger.trace("flush_maybe() failed: {}", std::current_exception());
@@ -201,11 +201,11 @@ const column_mapping& hint_sender::get_column_mapping(seastar::lw_shared_ptr<sen
     return cm_it->second;
 }
 
-hint_sender::hint_sender(end_point_hints_manager& parent, resource_manager& rm,
+hint_sender::hint_sender(host_manager& parent, resource_manager& rm,
         service::storage_proxy& local_storage_proxy, replica::database& local_db,
         gms::gossiper& local_gossiper, hint_stats& shard_stats) noexcept
-    : _ep_key{parent.end_point_key()}
-    , _ep_manager{parent}
+    : _host_id{parent.end_point_key()}
+    , _host_manager{parent}
     , _resource_manager{rm}
     , _proxy{local_storage_proxy}
     , _db{local_db}
@@ -214,7 +214,7 @@ hint_sender::hint_sender(end_point_hints_manager& parent, resource_manager& rm,
     , _hints_cpu_sched_group{_db.get_streaming_scheduling_group()}
 {}
 
-hint_sender::hint_sender(hint_sender&& other, end_point_hints_manager& new_parent) noexcept
+hint_sender::hint_sender(hint_sender&& other, host_manager& new_parent) noexcept
     : _segments_to_replay{std::move(other._segments_to_replay)}
     , _foreign_segments_to_replay{std::move(other._foreign_segments_to_replay)}
     , _last_not_complete_rp{std::move(other._last_not_complete_rp)}
@@ -226,8 +226,8 @@ hint_sender::hint_sender(hint_sender&& other, end_point_hints_manager& new_paren
     , _next_flush_tp{std::move(other._next_flush_tp)}
     , _next_send_retry_tp{std::move(other._next_send_retry_tp)}
     // The only non-trivial parts of the constructor.
-    , _ep_key{new_parent.end_point_key()}
-    , _ep_manager{new_parent}
+    , _host_id{new_parent.end_point_key()}
+    , _host_manager{new_parent}
     , _resource_manager{other._resource_manager}
     , _proxy{other._proxy}
     , _db{other._db}
@@ -262,7 +262,7 @@ seastar::future<> hint_sender::stop(drain should_drain) noexcept {
             manager_logger.trace("Draining for {}: start", end_point_key());
             set_draining();
             send_hints_maybe();
-            _ep_manager.flush_current_hints().handle_exception([] (auto e) {
+            _host_manager.flush_current_hints().handle_exception([] (auto e) {
                 manager_logger.error("Failed to flush pending hints: {}. Ignoring...", e);
             }).get();
             send_hints_maybe();
@@ -528,8 +528,8 @@ bool hint_sender::send_one_file(const sstring& fname) {
     }
 
     // If we got here we are done with the current segment and we can remove it.
-    with_file_update_mutex(_ep_manager, [&fname, this] {
-        auto p = _ep_manager.get_or_load().get0();
+    with_file_update_mutex(_host_manager, [&fname, this] {
+        auto p = _host_manager.get_or_load().get0();
         return p->delete_segments({ fname });
     }).get();
 

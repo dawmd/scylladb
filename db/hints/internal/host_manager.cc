@@ -32,7 +32,7 @@
 namespace db::hints {
 namespace internal {
 
-bool end_point_hints_manager::store_hint(schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept {
+bool host_manager::store_hint(schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept {
     try {
         // Future is waited on indirectly in `stop()` (via `_store_gate`).
         (void)with_gate(_store_gate, [this, s = std::move(s), fm = std::move(fm), tr_state] () mutable {
@@ -75,21 +75,21 @@ bool end_point_hints_manager::store_hint(schema_ptr s, lw_shared_ptr<const froze
     return true;
 }
 
-future<> end_point_hints_manager::populate_segments_to_replay() {
+future<> host_manager::populate_segments_to_replay() {
     return with_lock(file_update_mutex(), [this] {
         return get_or_load().discard_result();
     });
 }
 
-void end_point_hints_manager::start() {
+void host_manager::start() {
     clear_stopped();
     allow_hints();
     _sender.start();
 }
 
-future<> end_point_hints_manager::stop(drain should_drain) noexcept {
+future<> host_manager::stop(drain should_drain) noexcept {
     if(stopped()) {
-        return make_exception_future<>(std::logic_error(format("ep_manager[{}]: stop() is called twice", _key).c_str()));
+        return make_exception_future<>(std::logic_error(format("host_manager[{}]: stop() is called twice", _key).c_str()));
     }
 
     return seastar::async([this, should_drain] {
@@ -112,14 +112,14 @@ future<> end_point_hints_manager::stop(drain should_drain) noexcept {
         }).handle_exception([&eptr] (auto e) { eptr = std::move(e); }).get();
 
         if (eptr) {
-            manager_logger.error("ep_manager[{}]: exception: {}", _key, eptr);
+            manager_logger.error("host_manager[{}]: exception: {}", _key, eptr);
         }
 
         set_stopped();
     });
 }
 
-end_point_hints_manager::end_point_hints_manager(const key_type& key, manager& shard_manager)
+host_manager::host_manager(const key_type& key, manager& shard_manager)
     : _key(key)
     , _shard_manager(shard_manager)
     , _file_update_mutex_ptr(make_lw_shared<seastar::shared_mutex>())
@@ -133,7 +133,7 @@ end_point_hints_manager::end_point_hints_manager(const key_type& key, manager& s
             _shard_manager.local_db(), _shard_manager.local_gossiper(), _shard_manager._stats)
 {}
 
-end_point_hints_manager::end_point_hints_manager(end_point_hints_manager&& other)
+host_manager::host_manager(host_manager&& other)
     : _key(other._key)
     , _shard_manager(other._shard_manager)
     , _file_update_mutex_ptr(std::move(other._file_update_mutex_ptr))
@@ -144,11 +144,11 @@ end_point_hints_manager::end_point_hints_manager(end_point_hints_manager&& other
     , _sender(std::move(other._sender), *this)
 {}
 
-end_point_hints_manager::~end_point_hints_manager() {
+host_manager::~host_manager() {
     assert(stopped());
 }
 
-future<hints_store_ptr> end_point_hints_manager::get_or_load() {
+future<hints_store_ptr> host_manager::get_or_load() {
     if (!_hints_store_anchor) {
         return _shard_manager.store_factory().get_or_load(_key, [this] (const key_type&) noexcept {
             return add_store();
@@ -161,7 +161,7 @@ future<hints_store_ptr> end_point_hints_manager::get_or_load() {
     return make_ready_future<hints_store_ptr>(_hints_store_anchor);
 }
 
-future<db::commitlog> end_point_hints_manager::add_store() noexcept {
+future<db::commitlog> host_manager::add_store() noexcept {
     manager_logger.trace("Going to add a store to {}", _hints_dir.c_str());
 
     return futurize_invoke([this] {
@@ -170,7 +170,7 @@ future<db::commitlog> end_point_hints_manager::add_store() noexcept {
 
             cfg.commit_log_location = _hints_dir.c_str();
             cfg.commitlog_segment_size_in_mb = resource_manager::hint_segment_size_in_mb;
-            cfg.commitlog_total_space_in_mb = resource_manager::max_hints_per_ep_size_mb;
+            cfg.commitlog_total_space_in_mb = resource_manager::max_hints_per_host_size_mb;
             cfg.fname_prefix = HINT_FILENAME_PREFIX;
             cfg.extensions = &_shard_manager.local_db().extensions();
 
@@ -179,7 +179,7 @@ future<db::commitlog> end_point_hints_manager::add_store() noexcept {
             // during standard HH workload, so no need to print a warning about it.
             cfg.warn_about_segments_left_on_disk_after_shutdown = false;
             // Allow going over the configured size limit of the commitlog
-            // (resource_manager::max_hints_per_ep_size_mb). The commitlog will
+            // (resource_manager::max_hints_per_host_size_mb). The commitlog will
             // be more conservative with its disk usage when going over the limit.
             // On the other hand, HH counts used space using the space_watchdog
             // in resource_manager, so its redundant for the commitlog to apply
@@ -262,7 +262,7 @@ future<db::commitlog> end_point_hints_manager::add_store() noexcept {
     });
 }
 
-future<> end_point_hints_manager::flush_current_hints() noexcept {
+future<> host_manager::flush_current_hints() noexcept {
     // flush the currently created hints to disk
     if (_hints_store_anchor) {
         return futurize_invoke([this] {
@@ -286,15 +286,15 @@ future<> end_point_hints_manager::flush_current_hints() noexcept {
     return make_ready_future<>();
 }
 
-bool end_point_hints_manager::replay_allowed() const noexcept {
+bool host_manager::replay_allowed() const noexcept {
     return _shard_manager.replay_allowed();
 }
 
-resource_manager& end_point_hints_manager::shard_resource_manager() noexcept {
+resource_manager& host_manager::shard_resource_manager() noexcept {
     return _shard_manager._resource_manager;
 }
 
-hint_stats& end_point_hints_manager::shard_stats() noexcept {
+hint_stats& host_manager::shard_stats() noexcept {
     return _shard_manager._stats;
 }
 

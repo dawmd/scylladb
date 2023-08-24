@@ -65,7 +65,7 @@ class resource_manager;
 namespace internal {
 
 // Data structure responsible for managing hints for a specific host.
-class end_point_hints_manager;
+class host_manager;
 
 // Class specifying context for sending one file with hints.
 struct send_one_file_ctx;
@@ -119,8 +119,8 @@ private:
     time_point_type _next_flush_tp{};
     time_point_type _next_send_retry_tp{};
 
-    host_id_type _ep_key;
-    end_point_hints_manager& _ep_manager;
+    host_id_type _host_id;
+    host_manager& _host_manager;
     resource_manager& _resource_manager;
     service::storage_proxy& _proxy;
     replica::database& _db;
@@ -132,17 +132,17 @@ private:
     std::multimap<replay_position, replay_waiter> _replay_waiters{};
 
 public:
-    hint_sender(end_point_hints_manager& parent, resource_manager& rm,
+    hint_sender(host_manager& parent, resource_manager& rm,
             service::storage_proxy& local_storage_proxy, replica::database& local_db,
             gms::gossiper& local_gossiper, hint_stats& shard_stats) noexcept;
 
-    /// \brief A constructor that should be called from the move-constructor of end_point_hints_manager.
+    /// \brief A constructor that should be called from the move-constructor of host_manager.
     ///
     /// Make sure to properly reassign the references - especially to the \param parent and its internals.
     ///
     /// \param other the "sender" instance to move
     /// \param new_parent the parent object for this "sender" instance
-    hint_sender(hint_sender&& other, end_point_hints_manager& new_parent) noexcept;
+    hint_sender(hint_sender&& other, host_manager& new_parent) noexcept;
 
     ~hint_sender() noexcept {
         dismiss_replay_waiters();
@@ -295,7 +295,7 @@ private:
     seastar::future<> flush_maybe() noexcept;
 
     const host_id_type& end_point_key() const noexcept {
-        return _ep_key;
+        return _host_id;
     }
 
     /// \brief Return the amount of time we want to sleep after the current iteration.

@@ -58,7 +58,7 @@ class resource_manager;
 
 namespace internal {
 
-class end_point_hints_manager {
+class host_manager {
 private:
     friend class hint_sender;
 
@@ -91,9 +91,9 @@ private:
     hint_sender _sender;
 
 public:
-    end_point_hints_manager(const key_type& key, manager& shard_manager);
-    end_point_hints_manager(end_point_hints_manager&&);
-    ~end_point_hints_manager();
+    host_manager(const key_type& key, manager& shard_manager);
+    host_manager(host_manager&&);
+    ~host_manager();
 
     const key_type& end_point_key() const noexcept {
         return _key;
@@ -184,19 +184,19 @@ public:
         return _sender.wait_until_hints_are_replayed_up_to(as, up_to_rp);
     }
 
-    /// \brief Safely runs a given functor under the file_update_mutex of \ref ep_man
+    /// \brief Safely runs a given functor under the file_update_mutex of \ref host_man
     ///
-    /// Runs a given functor under the file_update_mutex of the given end_point_hints_manager instance.
-    /// This function is safe even if \ref ep_man gets destroyed before the future this function returns resolves
+    /// Runs a given functor under the file_update_mutex of the given host_manager instance.
+    /// This function is safe even if \ref host_man gets destroyed before the future this function returns resolves
     /// (as long as the \ref func call itself is safe).
     ///
     /// \tparam Func Functor type.
-    /// \param ep_man end_point_hints_manager instance which file_update_mutex we want to lock.
+    /// \param host_man host_manager instance which file_update_mutex we want to lock.
     /// \param func Functor to run under the lock.
     /// \return Whatever \ref func returns.
     template <typename Func>
-    friend inline auto with_file_update_mutex(end_point_hints_manager& ep_man, Func&& func) {
-        return with_lock(*ep_man._file_update_mutex_ptr, std::forward<Func>(func)).finally([lock_ptr = ep_man._file_update_mutex_ptr] {});
+    friend inline auto with_file_update_mutex(host_manager& host_man, Func&& func) {
+        return with_lock(*host_man._file_update_mutex_ptr, std::forward<Func>(func)).finally([lock_ptr = host_man._file_update_mutex_ptr] {});
     }
 
     const fs::path& hints_dir() const noexcept {
@@ -210,7 +210,7 @@ private:
 
     /// \brief Creates a new hints store object.
     ///
-    /// - Creates a hints store directory if doesn't exist: <shard_hints_dir>/<ep_key>
+    /// - Creates a hints store directory if doesn't exist: <shard_hints_dir>/<host_id_type>
     /// - Creates a store object.
     /// - Populate _segments_to_replay if it's empty.
     ///

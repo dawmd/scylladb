@@ -45,7 +45,7 @@ namespace db {
 namespace hints {
 
 namespace internal {
-class end_point_hints_manager;
+class host_manager;
 class hint_sender;
 } // namespace internal
 
@@ -83,11 +83,11 @@ private:
     using hints_segments_map = std::unordered_map<sstring, hints_ep_segments_map>;
 
     friend class space_watchdog;
-    friend class internal::end_point_hints_manager;
+    friend class internal::host_manager;
     friend class internal::hint_sender;
 
 public:
-    using end_point_hints_manager = internal::end_point_hints_manager;
+    using host_manager = internal::host_manager;
 
     enum class state {
         started,                // hinting is currently allowed (start() call is complete)
@@ -103,8 +103,8 @@ public:
         state::stopping>>;
 
 private:
-    using ep_key_type = typename end_point_hints_manager::key_type;
-    using ep_managers_map_type = std::unordered_map<ep_key_type, end_point_hints_manager>;
+    using ep_key_type = typename host_manager::key_type;
+    using ep_managers_map_type = std::unordered_map<ep_key_type, host_manager>;
 
 public:
     // Non-const - can be modified with an error injection.
@@ -341,7 +341,7 @@ private:
         return _local_db;
     }
 
-    end_point_hints_manager& get_ep_manager(ep_key_type ep);
+    host_manager& get_ep_manager(ep_key_type ep);
     bool have_ep_manager(ep_key_type ep) const noexcept;
 
 public:
@@ -351,7 +351,7 @@ public:
     /// Otherwise drains hints to the node that has left.
     ///
     /// In both cases - removes the corresponding hints' directories after all hints have been drained and erases the
-    /// corresponding end_point_hints_manager objects.
+    /// corresponding host_manager objects.
     ///
     /// \param endpoint node that left the cluster
     void drain_for(gms::inet_address endpoint);

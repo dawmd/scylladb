@@ -153,7 +153,7 @@ void manager::forbid_hints() {
 void manager::forbid_hints_for_eps_with_pending_hints() {
     manager_logger.trace("space_watchdog: Going to block hints to: {}", _eps_with_pending_hints);
     boost::for_each(_ep_managers, [this] (auto& pair) {
-        end_point_hints_manager& ep_man = pair.second;
+        host_manager& ep_man = pair.second;
         if (has_ep_with_pending_hints(ep_man.end_point_key())) {
             ep_man.forbid_hints();
         } else {
@@ -167,7 +167,7 @@ sync_point::shard_rps manager::calculate_current_sync_point(const std::vector<gm
     for (auto addr : target_hosts) {
         auto it = _ep_managers.find(addr);
         if (it != _ep_managers.end()) {
-            const end_point_hints_manager& ep_man = it->second;
+            const host_manager& ep_man = it->second;
             rps[ep_man.end_point_key()] = ep_man.last_written_replay_position();
         }
     }
@@ -220,11 +220,11 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
     co_return;
 }
 
-manager::end_point_hints_manager& manager::get_ep_manager(ep_key_type ep) {
+manager::host_manager& manager::get_ep_manager(ep_key_type ep) {
     auto it = find_ep_manager(ep);
     if (it == ep_managers_end()) {
         manager_logger.trace("Creating an ep_manager for {}", ep);
-        manager::end_point_hints_manager& ep_man = _ep_managers.emplace(ep, end_point_hints_manager(ep, *this)).first->second;
+        manager::host_manager& ep_man = _ep_managers.emplace(ep, host_manager(ep, *this)).first->second;
         ep_man.start();
         return ep_man;
     }
