@@ -55,7 +55,7 @@ public:
 /// \param fname File name
 /// \return The last modification time stamp for \param fname.
 seastar::future<::timespec> get_last_file_modification(const std::string_view fname) {
-    seastar::file f = co_await seastar::open_file_dma(fname, open_flags::ro);
+    seastar::file f = co_await seastar::open_file_dma(fname, seastar::open_flags::ro);
     const auto st = co_await f.stat();
     co_return st.st_mtim;
 }
