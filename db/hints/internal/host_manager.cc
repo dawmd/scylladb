@@ -107,8 +107,8 @@ seastar::future<> host_manager::stop(drain should_drain) noexcept {
         _sender.stop(should_drain).handle_exception([&eptr] (auto e) { eptr = std::move(e); }).get();
 
         seastar::with_lock(file_update_mutex(), [this] {
-            if (_hints_store_anchor) {
-                hint_store_ptr tmp = std::exchange(_hints_store_anchor, nullptr);
+            if (_hint_store_anchor) {
+                hint_store_ptr tmp = std::exchange(_hint_store_anchor, nullptr);
                 return tmp->shutdown().finally([tmp] {
                     return tmp->release();
                 }).finally([tmp] {});
@@ -141,12 +141,15 @@ host_manager::host_manager(const host_id_type& key, manager& shard_manager)
 
 host_manager::host_manager(host_manager&& other)
     : _host_id{other._host_id}
-    , _state{other._state}
+    , _state{std::exchange(other._state, state_set::of<state::stopped>())}
+    , _store_gate{std::move(other._store_gate)}
+    , _hint_store_anchor{std::move(other._hint_store_anchor)}
     , _file_update_mutex_ptr{std::move(other._file_update_mutex_ptr)}
     , _last_written_rp{other._last_written_rp}
     , _shard_manager{other._shard_manager}
     , _sender{std::move(other._sender), *this}
     , _hints_dir{std::move(other._hints_dir)}
+    , _hints_in_progress{std::exchange(other._hints_in_progress, 0)}
 {}
 
 host_manager::~host_manager() {
@@ -154,17 +157,17 @@ host_manager::~host_manager() {
 }
 
 seastar::future<hint_store_ptr> host_manager::get_or_load() {
-    if (!_hints_store_anchor) {
+    if (!_hint_store_anchor) {
         hint_store_ptr log_ptr = co_await _shard_manager.store_factory().get_or_load(_host_id,
                 [this] (const host_id_type&) noexcept {
             return add_store();
         });
         
-        _hints_store_anchor = log_ptr;
+        _hint_store_anchor = log_ptr;
         co_return log_ptr;
     }
 
-    co_return _hints_store_anchor;
+    co_return _hint_store_anchor;
 }
 
 seastar::future<commitlog> host_manager::add_store() noexcept {
@@ -269,7 +272,7 @@ seastar::future<commitlog> host_manager::add_store() noexcept {
 
 seastar::future<> host_manager::flush_current_hints() noexcept {
     // flush the currently created hints to disk
-    if (_hints_store_anchor) {
+    if (_hint_store_anchor) {
         return seastar::with_lock(file_update_mutex(), [this] {
             return get_or_load().then([] (hint_store_ptr cptr) {
                 return cptr->shutdown().finally([cptr] {
@@ -278,7 +281,7 @@ seastar::future<> host_manager::flush_current_hints() noexcept {
             }).then([this] {
                 // Un-hold the commitlog object. Since we are under the exclusive _file_update_mutex lock there are no
                 // other hint_store_ptr copies and this would destroy the commitlog shared value.
-                _hints_store_anchor = nullptr;
+                _hint_store_anchor = nullptr;
 
                 // Re-create the commitlog instance - this will re-populate the _segments_to_replay if needed.
                 return get_or_load().discard_result();

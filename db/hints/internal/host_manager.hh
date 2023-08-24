@@ -78,7 +78,7 @@ private:
     state_set _state;
     
     seastar::gate _store_gate{};
-    hint_store_ptr _hints_store_anchor;
+    hint_store_ptr _hint_store_anchor;
     seastar::lw_shared_ptr<seastar::shared_mutex> _file_update_mutex_ptr;
     replay_position _last_written_rp;
     
