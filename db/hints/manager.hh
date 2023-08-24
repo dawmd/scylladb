@@ -70,6 +70,9 @@ public:
 class manager {
 private:
     friend class space_watchdog;
+    // TODO: Think if giving `internal::host_manager` full access to this class
+    //       is okay.
+    friend class internal::host_manager;
 
     enum class state {
         started,                // hinting is currently allowed (start() call is complete)
@@ -84,10 +87,7 @@ private:
         state::draining_all,
         state::stopping>>;
 
-    // This is fine. The `internal::host_manager` only stores a reference to this object,
-    // so it doesn't matter this type is incomplete at this point.
-    using host_manager = internal::host_manager<manager>;
-    using host_manager_map = std::unordered_map<internal::host_id_type, host_manager>;
+    using host_manager_map = std::unordered_map<internal::host_id_type, internal::host_manager>;
 
 private:
     static constexpr uint64_t MAX_SIZE_OF_HINTS_IN_PROGRESS = 10 * 1024 * 1024; // 10 MB
@@ -283,6 +283,7 @@ private:
     }
 
     bool have_ep_manager(internal::host_id_type ep) const noexcept;
+    internal::host_manager& get_host_manager(internal::host_id_type ep);
 
 public:
     /// \brief Initiate the draining when we detect that the node has left the cluster.
