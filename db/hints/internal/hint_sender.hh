@@ -64,8 +64,10 @@ class resource_manager;
 
 namespace internal {
 
+// Data structure responsible for managing hints for a specific host.
 class end_point_hints_manager;
 
+// Class specifying context for sending one file with hints.
 struct send_one_file_ctx;
 
 class hint_sender {
