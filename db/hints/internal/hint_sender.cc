@@ -58,26 +58,21 @@ bool hint_sender::replay_allowed() const noexcept {
 }
 
 seastar::future<> hint_sender::flush_maybe() noexcept {
-    auto current_time = clock::now();
+    auto current_time = clock_type::now();
     if (current_time >= _next_flush_tp) {
-        return _ep_manager.flush_current_hints().then([this, current_time] {
+        try {
+            co_await _ep_manager.flush_current_hints();
             _next_flush_tp = current_time + manager::hints_flush_period;
-        }).handle_exception([] (auto eptr) {
-            manager_logger.trace("flush_maybe() failed: {}", eptr);
-            return seastar::make_ready_future<>();
-        });
+        } catch (...) {
+            manager_logger.trace("flush_maybe() failed: {}", std::current_exception());
+        };
     }
-    return seastar::make_ready_future<>();
 }
 
-seastar::future<::timespec> hint_sender::get_last_file_modification(const sstring& fname) {
-    return seastar::open_file_dma(fname, open_flags::ro).then([] (file f) {
-        return seastar::do_with(std::move(f), [] (file& f) {
-            return f.stat();
-        });
-    }).then([] (struct stat st) {
-        return seastar::make_ready_future<timespec>(st.st_mtim);
-    });
+seastar::future<::timespec> hint_sender::get_last_file_modification(const std::string_view fname) {
+    seastar::file f = co_await seastar::open_file_dma(fname, open_flags::ro);
+    const auto st = co_await f.stat();
+    co_return st.st_mtim;
 }
 
 seastar::future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m,
@@ -102,15 +97,15 @@ bool hint_sender::can_send() noexcept {
 
     try {
         if (_gossiper.is_alive(end_point_key())) {
-            _state.remove(state::ep_state_left_the_ring);
+            _state.remove(state::host_left_ring);
             return true;
         } else {
-            if (!_state.contains(state::ep_state_left_the_ring)) {
-                _state.set_if<state::ep_state_left_the_ring>(
+            if (!_state.contains(state::host_left_ring)) {
+                _state.set_if<state::host_left_ring>(
                         !_shard_manager.local_db().get_token_metadata().is_normal_token_owner(end_point_key()));
             }
             // send the hints out if the destination Node is part of the ring - we will send to all new replicas in this case
-            return _state.contains(state::ep_state_left_the_ring);
+            return _state.contains(state::host_left_ring);
         }
     } catch (...) {
         return false;
@@ -177,11 +172,6 @@ hint_sender::hint_sender(const hint_sender& other, end_point_hints_manager& pare
     , _file_update_mutex(_ep_manager.file_update_mutex())
 {}
 
-hint_sender::~hint_sender() {
-    dismiss_replay_waiters();
-}
-
-
 seastar::future<> hint_sender::stop(drain should_drain) noexcept {
     return seastar::async([this, should_drain] {
         set_stopping();
@@ -217,23 +207,15 @@ seastar::future<> hint_sender::stop(drain should_drain) noexcept {
     });
 }
 
-void hint_sender::add_segment(sstring seg_name) {
-    _segments_to_replay.emplace_back(std::move(seg_name));
-}
+hint_sender::duration_type hint_sender::next_sleep_duration() const {
+    time_point_type current_time = clock_type::now();
+    time_point_type next_flush_tp = std::max(_next_flush_tp, current_time);
+    time_point_type next_retry_tp = std::max(_next_send_retry_tp, current_time);
 
-void hint_sender::add_foreign_segment(sstring seg_name) {
-    _foreign_segments_to_replay.emplace_back(std::move(seg_name));
-}
-
-hint_sender::clock::duration hint_sender::next_sleep_duration() const {
-    clock::time_point current_time = clock::now();
-    clock::time_point next_flush_tp = std::max(_next_flush_tp, current_time);
-    clock::time_point next_retry_tp = std::max(_next_send_retry_tp, current_time);
-
-    clock::duration d = std::min(next_flush_tp, next_retry_tp) - current_time;
+    duration_type d = std::min(next_flush_tp, next_retry_tp) - current_time;
 
     // Don't sleep for less than 10 ticks of the "clock" if we are planning to sleep at all - the sleep() function is not perfect.
-    return clock::duration(10 * div_ceil(d.count(), 10));
+    return duration_type{10 * div_ceil(d.count(), 10)};
 }
 
 void hint_sender::start() {
@@ -584,7 +566,7 @@ void hint_sender::send_hints_maybe() noexcept {
 
     if (have_segments()) {
         // TODO: come up with something more sophisticated here
-        _next_send_retry_tp = clock::now() + std::chrono::seconds(1);
+        _next_send_retry_tp = clock_type::now() + std::chrono::seconds(1);
     } else {
         // if there are no segments to send we want to retry when we maybe have some (after flushing)
         _next_send_retry_tp = _next_flush_tp;

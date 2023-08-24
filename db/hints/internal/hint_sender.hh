@@ -67,19 +67,23 @@ namespace internal {
 class end_point_hints_manager;
 
 class hint_sender {
-    // Important: clock::now() must be noexcept.
-    // TODO: add the corresponding static_assert() when seastar::lowres_clock::now() is marked as "noexcept".
-    using clock = seastar::lowres_clock;
+private:
+    using clock_type = seastar::lowres_clock;
+    static_assert(noexcept(clock_type::now()), "clock_type::now() must be noexcept");
+
+    using time_point_type = typename clock_type::time_point;
+    using duration_type = typename clock_type::duration;
 
     enum class state {
-        stopping,               // stop() was called
-        ep_state_left_the_ring, // destination Node is not a part of the ring anymore - usually means that it has been decommissioned
-        draining,               // try to send everything out and ignore errors
+        stopping,       // stop() has been called.
+        host_left_ring, // Destination node is not a part of the ring anymore.
+                        // That usually means that it has been decommissioned.
+        draining,       // Try to send all hints and ignore errors.
     };
 
     using state_set = enum_set<super_enum<state,
             state::stopping,
-            state::ep_state_left_the_ring,
+            state::host_left_ring,
             state::draining>>;
 
     struct send_one_file_ctx {
@@ -111,8 +115,8 @@ private:
     state_set _state;
     future<> _stopped;
     abort_source _stop_as;
-    clock::time_point _next_flush_tp;
-    clock::time_point _next_send_retry_tp;
+    time_point_type _next_flush_tp;
+    time_point_type _next_send_retry_tp;
     host_id_type _ep_key;
     end_point_hints_manager& _ep_manager;
     manager& _shard_manager;
@@ -126,8 +130,8 @@ private:
     std::multimap<db::replay_position, lw_shared_ptr<std::optional<promise<>>>> _replay_waiters;
 
 public:
-    hint_sender(end_point_hints_manager& parent, service::storage_proxy& local_storage_proxy, replica::database& local_db, gms::gossiper& local_gossiper) noexcept;
-    ~hint_sender();
+    hint_sender(end_point_hints_manager& parent, service::storage_proxy& local_storage_proxy,
+            replica::database& local_db, gms::gossiper& local_gossiper) noexcept;
 
     /// \brief A constructor that should be called from the copy/move-constructor of end_point_hints_manager.
     ///
@@ -137,6 +141,11 @@ public:
     /// \param parent the parent object for this "sender" instance
     hint_sender(const hint_sender& other, end_point_hints_manager& parent) noexcept;
 
+    ~hint_sender() noexcept {
+        dismiss_replay_waiters();
+    }
+
+public:
     /// \brief Start sending hints.
     ///
     /// Flush hints aggregated to far to the storage every hints_flush_period.
@@ -150,14 +159,20 @@ public:
     future<> stop(drain should_drain) noexcept;
 
     /// \brief Add a new segment ready for sending.
-    void add_segment(sstring seg_name);
+    void add_segment(seastar::sstring seg_name) {
+        _segments_to_replay.emplace_back(std::move(seg_name));
+    }
 
     /// \brief Add a new segment originating from another shard, ready for sending.
-    void add_foreign_segment(sstring seg_name);
+    void add_foreign_segment(seastar::sstring seg_name) {
+        _foreign_segments_to_replay.emplace_back(std::move(seg_name));
+    }
 
     /// \brief Check if there are still unsent segments.
     /// \return TRUE if there are still unsent segments.
-    bool have_segments() const noexcept { return !_segments_to_replay.empty() || !_foreign_segments_to_replay.empty(); };
+    bool have_segments() const noexcept {
+        return !_segments_to_replay.empty() || !_foreign_segments_to_replay.empty();
+    };
 
     /// \brief Sets the sent_upper_bound_rp marker to indicate that the hints were replayed _up to_ given position.
     void rewind_sent_replay_position_to(db::replay_position rp);
@@ -180,8 +195,9 @@ private:
     /// the _segments_to_replay list. Once it's empty it's going to be repopulated during the next send_hints() call
     /// with the new hints files if any.
     ///
-    /// send_hints() is going to stop sending if it sends for too long (longer than the timer period). In this case it's
-    /// going to return and next send_hints() is going to continue from the point the previous call left.
+    /// send_hints() is going to stop sending if it sends for too long (longer than the timer period).
+    /// In this case it's going to return and next send_hints() is going to continue from the point
+    /// the previous call left.
     void send_hints_maybe() noexcept;
 
     void set_draining() noexcept {
@@ -206,7 +222,8 @@ private:
     ///  - Limit the maximum memory size of hints "in the air" and the maximum total number of hints "in the air".
     ///  - Discard the hints that are older than the grace seconds value of the corresponding table.
     ///
-    /// If sending fails we are going to set the state::segment_replay_failed in the _state and _first_failed_rp will be updated to min(_first_failed_rp, \ref rp).
+    /// If sending fails we are going to set the state::segment_replay_failed in the _state
+    /// and _first_failed_rp will be updated to min(_first_failed_rp, \ref rp).
     ///
     /// \param ctx_ptr shared pointer to the file sending context
     /// \param buf buffer representing the hint
@@ -214,7 +231,9 @@ private:
     /// \param secs_since_file_mod last modification time stamp (in seconds since Epoch) of the current hints file
     /// \param fname name of the hints file this hint was read from
     /// \return future that resolves when next hint may be sent
-    future<> send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fragmented_temporary_buffer buf, db::replay_position rp, gc_clock::duration secs_since_file_mod, const sstring& fname);
+    future<> send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fragmented_temporary_buffer buf,
+            db::replay_position rp, gc_clock::duration secs_since_file_mod,
+            const seastar::sstring& fname);
 
     /// \brief Send all hint from a single file and delete it after it has been successfully sent.
     /// Send all hints from the given file. If we failed to send the current segment we will pick up in the next
@@ -232,14 +251,16 @@ private:
     /// \param ctx_ptr pointer to the send context
     /// \param buf hints file entry
     /// \return The mutation object representing the original mutation stored in the hints file.
-    frozen_mutation_and_schema get_mutation(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fragmented_temporary_buffer& buf);
+    frozen_mutation_and_schema get_mutation(lw_shared_ptr<send_one_file_ctx> ctx_ptr,
+            fragmented_temporary_buffer& buf);
 
     /// \brief Get a reference to the column_mapping object for a given frozen mutation.
     /// \param ctx_ptr pointer to the send context
     /// \param fm Frozen mutation object
     /// \param hr hint entry reader object
     /// \return
-    const column_mapping& get_column_mapping(lw_shared_ptr<send_one_file_ctx> ctx_ptr, const frozen_mutation& fm, const hint_entry_reader& hr);
+    const column_mapping& get_column_mapping(lw_shared_ptr<send_one_file_ctx> ctx_ptr,
+            const frozen_mutation& fm, const hint_entry_reader& hr);
 
     /// \brief Perform a single mutation send atempt.
     ///
@@ -249,7 +270,8 @@ private:
     /// \param m mutation to send
     /// \param natural_endpoints current replicas for the given mutation
     /// \return future that resolves when the operation is complete
-    future<> do_send_one_mutation(frozen_mutation_and_schema m, const inet_address_vector_replica_set& natural_endpoints) noexcept;
+    future<> do_send_one_mutation(frozen_mutation_and_schema m,
+            const inet_address_vector_replica_set& natural_endpoints) noexcept;
 
     /// \brief Send one mutation out.
     ///
@@ -266,7 +288,7 @@ private:
     /// \brief Get the last modification time stamp for a given file.
     /// \param fname File name
     /// \return The last modification time stamp for \param fname.
-    static future<timespec> get_last_file_modification(const sstring& fname);
+    static seastar::future<::timespec> get_last_file_modification(const std::string_view fname);
 
     hint_stats& shard_stats() noexcept;
 
@@ -280,7 +302,7 @@ private:
 
     /// \brief Return the amount of time we want to sleep after the current iteration.
     /// \return The time till the soonest event: flushing or re-sending.
-    clock::duration next_sleep_duration() const;
+    hint_sender::duration_type next_sleep_duration() const;
 };
 
 } // namespace internal
