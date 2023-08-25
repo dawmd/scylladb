@@ -185,20 +185,19 @@ public:
         return _sender.wait_until_hints_are_replayed_up_to(as, up_to_rp);
     }
 
-    /// \brief Safely runs a given functor under the file_update_mutex of \ref host_man
+    /// \brief Safely runs a given functor under the file_update_mutex of this \ref host_manager.
     ///
     /// Runs a given functor under the file_update_mutex of the given host_manager instance.
-    /// This function is safe even if \ref host_man gets destroyed before the future this function returns resolves
-    /// (as long as the \ref func call itself is safe).
+    /// This function is safe even if \ref host_man gets destroyed before
+    /// the future this function returns resolves (as long as the \ref func call itself is safe).
     ///
     /// \tparam Func Functor type.
-    /// \param host_man host_manager instance which file_update_mutex we want to lock.
     /// \param func Functor to run under the lock.
     /// \return Whatever \ref func returns.
     template <typename Func>
-    friend inline auto with_file_update_mutex(host_manager& host_man, Func&& func) {
-        return seastar::with_lock(*host_man._file_update_mutex_ptr, std::forward<Func>(func))
-                .finally([lock_ptr = host_man._file_update_mutex_ptr] {});
+    decltype(auto) with_file_update_mutex(Func&& func) {
+        return seastar::with_lock(*_file_update_mutex_ptr, std::forward<Func>(func))
+                .finally([lock_ptr = _file_update_mutex_ptr] {});
     }
 
     const std::filesystem::path& hints_dir() const noexcept {

@@ -231,7 +231,7 @@ manager::host_manager& manager::get_host_manager(host_id_type ep) {
     return it->second;
 }
 
-inline bool manager::have_host_manager(host_id_type ep) const noexcept {
+bool manager::have_host_manager(host_id_type ep) const noexcept {
     return find_host_manager(ep) != host_managers_end();
 }
 
@@ -366,9 +366,9 @@ void manager::drain_for(gms::inet_address endpoint) {
             return futurize_invoke([this, endpoint] () {
                 if (utils::fb_utilities::is_me(endpoint)) {
                     set_draining_all();
-                    return parallel_for_each(_host_managers, [] (auto& pair) {
-                        return pair.second.stop(drain::yes).finally([&pair] {
-                            return with_file_update_mutex(pair.second, [&pair] {
+                    return parallel_for_each(_host_managers, [this ] (auto& pair) {
+                        return pair.second.stop(drain::yes).finally([this, &pair] {
+                            return with_file_update_mutex(pair.first, [&pair] {
                                 return remove_file(pair.second.hints_dir().c_str());
                             });
                         });
@@ -378,8 +378,8 @@ void manager::drain_for(gms::inet_address endpoint) {
                 } else {
                     host_managers_map_type::iterator ep_manager_it = find_host_manager(endpoint);
                     if (ep_manager_it != host_managers_end()) {
-                        return ep_manager_it->second.stop(drain::yes).finally([this, endpoint, &ep_man = ep_manager_it->second] {
-                            return with_file_update_mutex(ep_man, [&ep_man] {
+                        return ep_manager_it->second.stop(drain::yes).finally([this, endpoint, ep = ep_manager_it->first, &ep_man = ep_manager_it->second] {
+                            return with_file_update_mutex(ep, [&ep_man] {
                                 return remove_file(ep_man.hints_dir().c_str());
                             }).finally([this, endpoint] {
                                 _host_managers.erase(endpoint);

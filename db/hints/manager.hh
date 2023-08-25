@@ -243,6 +243,21 @@ public:
     /// \brief Waits until hint replay reach replay positions described in `rps`.
     future<> wait_for_sync_point(abort_source& as, const sync_point::shard_rps& rps);
 
+    /// \brief Safely runs a given functor under the file_update_mutex of a specified \ref host_manager.
+    ///
+    /// Runs a given functor under the file_update_mutex of the given host_manager instance.
+    /// This function is safe even if \ref host_man gets destroyed before
+    /// the future this function returns resolves (as long as the \ref func call itself is safe).
+    ///
+    /// \tparam Func Functor type.
+    /// \param host_id Identifier of the host manager whose mutex will be used
+    /// \param func Functor to run under the lock.
+    /// \return Whatever \ref func returns.
+    template <typename Func>
+    decltype(auto) with_file_update_mutex(host_id_type host_id, Func&& func) {
+        return _host_managers.at(host_id).with_file_update_mutex(std::forward<Func>(func));
+    }
+
     /// \brief Creates an object which aids in hints directory initialization.
     /// This object can saafely be copied and used from any shard.
     /// \arg dirs The utils::directories object, used to create and lock hints directories

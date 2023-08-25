@@ -528,7 +528,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
     }
 
     // If we got here we are done with the current segment and we can remove it.
-    with_file_update_mutex(_host_manager, [&fname, this] {
+    _host_manager.with_file_update_mutex([&fname, this] {
         auto p = _host_manager.get_or_load().get0();
         return p->delete_segments({ fname });
     }).get();
