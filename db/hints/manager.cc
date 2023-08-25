@@ -231,7 +231,7 @@ manager::host_manager& manager::get_host_manager(host_id_type ep) {
     return it->second;
 }
 
-bool manager::have_host_manager(host_id_type ep) const noexcept {
+bool manager::manages_host(host_id_type ep) const noexcept {
     return find_host_manager(ep) != host_managers_end();
 }
 
@@ -345,7 +345,7 @@ bool manager::check_dc_for(host_id_type ep) const noexcept {
     try {
         // If target's DC is not a "hintable" DCs - don't hint.
         // If there is an end point manager then DC has already been checked and found to be ok.
-        return _host_filter.is_enabled_for_all() || have_host_manager(ep) ||
+        return _host_filter.is_enabled_for_all() || manages_host(ep) ||
                _host_filter.can_hint_for(_proxy_anchor->get_token_metadata_ptr()->get_topology(), ep);
     } catch (...) {
         // if we failed to check the DC - block this hint

@@ -357,7 +357,7 @@ private:
     }
 
     host_manager& get_host_manager(host_id_type ep);
-    bool have_host_manager(host_id_type ep) const noexcept;
+    bool manages_host(host_id_type ep) const noexcept;
 
 public:
     /// \brief Initiate the draining when we detect that the node has left the cluster.
