@@ -188,7 +188,7 @@ void manager::forbid_hints_for_hosts_with_pending_hints() {
     });
 }
 
-sync_point::shard_rps manager::calculate_current_sync_point(const std::span<gms::inet_address> target_hosts) const {
+sync_point::shard_rps manager::calculate_current_sync_point(std::span<const gms::inet_address> target_hosts) const {
     sync_point::shard_rps rps;
     for (auto addr : target_hosts) {
         auto it = _host_managers.find(addr);
@@ -358,8 +358,9 @@ seastar::future<> manager::change_host_filter(host_filter filter) {
             return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_type>(),
                     [this] (fs::path datadir, seastar::directory_entry de) {
                 const auto ep = host_id_type{de.name};
+                const auto& topology = _proxy_anchor->get_token_metadata_ptr()->get_topology();
 
-                if (_host_managers.contains(ep) || !_host_filter.can_hint_for(_proxy_anchor->get_token_metadata_ptr()->get_topology(), ep)) {
+                if (_host_managers.contains(ep) || !_host_filter.can_hint_for(topology, ep)) {
                     return seastar::make_ready_future<>();
                 }
 
@@ -372,8 +373,9 @@ seastar::future<> manager::change_host_filter(host_filter filter) {
                 // Remove endpoint managers which are rejected by the filter
                 return seastar::parallel_for_each(_host_managers, [this] (auto& pair) {
                     auto& [host_id, hman] = pair;
+                    const auto& topology = _proxy_anchor->get_token_metadata_ptr()->get_topology();
 
-                    if (_host_filter.can_hint_for(_proxy_anchor->get_token_metadata_ptr()->get_topology(), host_id)) {
+                    if (_host_filter.can_hint_for(topology, host_id)) {
                         return seastar::make_ready_future<>();
                     }
 
@@ -388,10 +390,12 @@ seastar::future<> manager::change_host_filter(host_filter filter) {
 
 bool manager::check_dc_for(host_id_type ep) const noexcept {
     try {
+        const auto& topology = _proxy_anchor->get_token_metadata_ptr()->get_topology();
         // If target's DC is not a "hintable" DCs - don't hint.
         // If there is an end point manager then DC has already been checked and found to be ok.
-        return _host_filter.is_enabled_for_all() || manages_host(ep) ||
-               _host_filter.can_hint_for(_proxy_anchor->get_token_metadata_ptr()->get_topology(), ep);
+        return _host_filter.is_enabled_for_all() ||
+                manages_host(ep) ||
+               _host_filter.can_hint_for(topology, ep);
     } catch (...) {
         // if we failed to check the DC - block this hint
         return false;
