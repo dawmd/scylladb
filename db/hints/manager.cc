@@ -249,8 +249,8 @@ seastar::future<> manager::wait_for_sync_point(seastar::abort_source& as,
 }
 
 manager::host_manager& manager::get_host_manager(host_id_type ep) {
-    auto it = find_host_manager(ep);
-    if (it == host_managers_end()) {
+    auto it = _host_managers.find(ep);
+    if (it == _host_managers.end()) {
         manager_logger.trace("Creating an ep_manager for {}", ep);
         host_manager& host_man = _host_managers.emplace(ep, host_manager{ep, *this}).first->second;
         host_man.start();
@@ -260,7 +260,7 @@ manager::host_manager& manager::get_host_manager(host_id_type ep) {
 }
 
 bool manager::manages_host(host_id_type ep) const noexcept {
-    return find_host_manager(ep) != host_managers_end();
+    return _host_managers.contains(ep);
 }
 
 bool manager::store_hint(host_id_type ep, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
@@ -302,8 +302,8 @@ bool manager::can_hint_for(host_id_type ep) const noexcept {
         return false;
     }
 
-    auto it = find_host_manager(ep);
-    if (it != host_managers_end() && (it->second.stopping() || !it->second.can_hint())) {
+    auto it = _host_managers.find(ep);
+    if (it != _host_managers.end() && (it->second.stopping() || !it->second.can_hint())) {
         return false;
     }
 
@@ -439,8 +439,8 @@ void manager::drain_for(gms::inet_address endpoint) {
                         _host_managers.clear();
                     });
                 } else {
-                    auto host_manager_it = find_host_manager(endpoint);
-                    if (host_manager_it != host_managers_end()) {
+                    auto host_manager_it = _host_managers.find(endpoint);
+                    if (host_manager_it != _host_managers.end()) {
                         auto& hman = host_manager_it->second;
 
                         return hman.stop(drain::yes).finally([this, endpoint, &hman] {
@@ -540,11 +540,8 @@ hint_segments_map get_current_hints_segments(const seastar::sstring& hints_direc
 /// \param hints_directory a root hints directory
 /// \param host_segments a map that was originally built by get_current_hints_segments() for this end point
 /// \param segments_to_move a list of segments we are allowed to move
-void rebalance_segments_for(
-        const seastar::sstring& ep,
-        size_t segments_per_shard,
-        const seastar::sstring& hints_directory,
-        hint_host_segments_map& host_segments,
+void rebalance_segments_for(const seastar::sstring& ep, size_t segments_per_shard,
+        const seastar::sstring& hints_directory, hint_host_segments_map& host_segments,
         std::list<std::filesystem::path>& segments_to_move)
 {
     manager_logger.trace("{}: segments_per_shard: {}, total number of segments to move: {}",

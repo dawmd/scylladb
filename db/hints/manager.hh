@@ -210,8 +210,8 @@ public:
     /// \param ep End point identificator
     /// \return Number of hints in-flight to \param ep.
     uint64_t hints_in_progress_for(host_id_type ep) const noexcept {
-        auto it = find_host_manager(ep);
-        if (it == host_managers_end()) {
+        auto it = _host_managers.find(ep);
+        if (it == _host_managers.end()) {
             return 0;
         }
         return it->second.hints_in_progress();
@@ -360,23 +360,6 @@ private:
 
     bool draining_all() noexcept {
         return _state.contains(state::draining_all);
-    }
-
-public:
-    host_managers_map_type::iterator find_host_manager(host_id_type host_id) noexcept {
-        return _host_managers.find(host_id);
-    }
-
-    host_managers_map_type::const_iterator find_host_manager(host_id_type host_id) const noexcept {
-        return _host_managers.find(host_id);
-    }
-
-    host_managers_map_type::iterator host_managers_end() noexcept {
-        return _host_managers.end();
-    }
-
-    host_managers_map_type::const_iterator host_managers_end() const noexcept {
-        return _host_managers.end();
     }
 };
 
