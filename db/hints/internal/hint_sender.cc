@@ -210,7 +210,7 @@ const column_mapping& hint_sender::get_column_mapping(seastar::lw_shared_ptr<sen
 
 hint_sender::hint_sender(host_manager& parent, resource_manager& rm,
         service::storage_proxy& local_storage_proxy, replica::database& local_db,
-        gms::gossiper& local_gossiper, hint_stats& shard_stats) noexcept
+        gms::gossiper& local_gossiper, hint_stats& shard_stats)
     : _host_id{parent.host_id()}
     , _host_manager{parent}
     , _resource_manager{rm}
@@ -221,7 +221,7 @@ hint_sender::hint_sender(host_manager& parent, resource_manager& rm,
     , _hints_cpu_sched_group{_db.get_streaming_scheduling_group()}
 {}
 
-hint_sender::hint_sender(hint_sender&& other, host_manager& new_parent) noexcept
+hint_sender::hint_sender(hint_sender&& other, host_manager& new_parent)
     : _segments_to_replay{std::move(other._segments_to_replay)}
     , _foreign_segments_to_replay{std::move(other._foreign_segments_to_replay)}
     , _last_not_complete_rp{std::move(other._last_not_complete_rp)}

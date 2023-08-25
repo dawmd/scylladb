@@ -132,7 +132,7 @@ private:
 public:
     hint_sender(host_manager& parent, resource_manager& rm,
             service::storage_proxy& local_storage_proxy, replica::database& local_db,
-            gms::gossiper& local_gossiper, hint_stats& shard_stats) noexcept;
+            gms::gossiper& local_gossiper, hint_stats& shard_stats);
 
     /// \brief A constructor that should be called from the move-constructor of host_manager.
     ///
@@ -140,7 +140,7 @@ public:
     ///
     /// \param other the "sender" instance to move
     /// \param new_parent the parent object for this "sender" instance
-    hint_sender(hint_sender&& other, host_manager& new_parent) noexcept;
+    hint_sender(hint_sender&& other, host_manager& new_parent);
 
     ~hint_sender() noexcept {
         dismiss_replay_waiters();
