@@ -294,10 +294,6 @@ private:
     /// \return Ready, never exceptional, future when operation is complete.
     seastar::future<> flush_maybe() noexcept;
 
-    const host_id_type& end_point_key() const noexcept {
-        return _host_id;
-    }
-
     /// \brief Return the amount of time we want to sleep after the current iteration.
     /// \return The time till the soonest event: flushing or re-sending.
     hint_sender::duration_type next_sleep_duration() const;
