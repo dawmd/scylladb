@@ -154,26 +154,41 @@ public:
 
 public:
     void register_metrics(const seastar::sstring& group_name);
+
     seastar::future<> start(seastar::shared_ptr<service::storage_proxy> proxy_ptr,
             seastar::shared_ptr<gms::gossiper> gossiper_ptr);
     seastar::future<> stop();
-    bool store_hint(gms::inet_address ep, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
-            tracing::trace_state_ptr tr_state) noexcept;
-
-    /// \brief Changes the host_filter currently used, stopping and starting host_managers relevant to the new host_filter.
-    /// \param filter the new host_filter
-    /// \return A future that resolves when the operation is complete.
-    seastar::future<> change_host_filter(host_filter filter);
-
-    const host_filter& get_host_filter() const noexcept {
-        return _host_filter;
-    }
 
     /// \brief Check if a hint may be generated to the give end point
     /// \param ep end point to check
     /// \return true if we should generate the hint to the given end point if it becomes unavailable
     bool can_hint_for(host_id_type ep) const noexcept;
 
+    /// \brief Check if DC \param ep belongs to is "hintable"
+    /// \param ep End point identificator
+    /// \return TRUE if hints are allowed to be generated to \param ep.
+    bool check_dc_for(host_id_type ep) const noexcept;
+
+    bool store_hint(gms::inet_address ep, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
+            tracing::trace_state_ptr tr_state) noexcept;
+
+    /// \brief Initiate the draining when we detect that the node has left the cluster.
+    ///
+    /// If the node that has left is the current node - drains all pending hints to all nodes.
+    /// Otherwise drains hints to the node that has left.
+    ///
+    /// In both cases - removes the corresponding hints' directories after all hints have been drained and erases the
+    /// corresponding host_manager objects.
+    ///
+    /// \param endpoint node that left the cluster
+    void drain_for(gms::inet_address endpoint);
+
+    /// \brief Returns a set of replay positions for hint queues towards endpoints from the `target_hosts`.
+    sync_point::shard_rps calculate_current_sync_point(std::span<const gms::inet_address> target_hosts) const;
+
+    /// \brief Waits until hint replay reach replay positions described in `rps`.
+    seastar::future<> wait_for_sync_point(seastar::abort_source& as, const sync_point::shard_rps& rps);
+    
     /// \brief Check if there aren't too many in-flight hints
     ///
     /// This function checks if there are too many "in-flight" hints on the current shard - hints that are being stored
@@ -190,10 +205,14 @@ public:
     /// \return TRUE if we are allowed to generate hint to the given end point but there are too many in-flight hints
     bool too_many_in_flight_hints_for(host_id_type ep) const noexcept;
 
-    /// \brief Check if DC \param ep belongs to is "hintable"
-    /// \param ep End point identificator
-    /// \return TRUE if hints are allowed to be generated to \param ep.
-    bool check_dc_for(host_id_type ep) const noexcept;
+    /// \brief Changes the host_filter currently used, stopping and starting host_managers relevant to the new host_filter.
+    /// \param filter the new host_filter
+    /// \return A future that resolves when the operation is complete.
+    seastar::future<> change_host_filter(host_filter filter);
+
+    const host_filter& get_host_filter() const noexcept {
+        return _host_filter;
+    }
 
     /// \brief Checks if hints are disabled for all endpoints
     /// \return TRUE if hints are disabled.
@@ -254,12 +273,6 @@ public:
         _state.set(state::replay_allowed);
     }
 
-    /// \brief Returns a set of replay positions for hint queues towards endpoints from the `target_hosts`.
-    sync_point::shard_rps calculate_current_sync_point(std::span<const gms::inet_address> target_hosts) const;
-
-    /// \brief Waits until hint replay reach replay positions described in `rps`.
-    seastar::future<> wait_for_sync_point(seastar::abort_source& as, const sync_point::shard_rps& rps);
-
     /// \brief Safely runs a given functor under the file_update_mutex of a specified \ref host_manager.
     ///
     /// Runs a given functor under the file_update_mutex of the given host_manager instance.
@@ -312,19 +325,6 @@ private:
     host_manager& get_host_manager(host_id_type ep);
     bool manages_host(host_id_type ep) const noexcept;
 
-public:
-    /// \brief Initiate the draining when we detect that the node has left the cluster.
-    ///
-    /// If the node that has left is the current node - drains all pending hints to all nodes.
-    /// Otherwise drains hints to the node that has left.
-    ///
-    /// In both cases - removes the corresponding hints' directories after all hints have been drained and erases the
-    /// corresponding host_manager objects.
-    ///
-    /// \param endpoint node that left the cluster
-    void drain_for(gms::inet_address endpoint);
-
-private:
     void update_backlog(size_t backlog, size_t max_backlog);
 
     bool stopping() const noexcept {
