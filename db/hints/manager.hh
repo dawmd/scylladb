@@ -275,13 +275,6 @@ public:
         return _host_managers.at(host_id).with_file_update_mutex(std::forward<Func>(func));
     }
 
-    /// \brief Creates an object which aids in hints directory initialization.
-    /// This object can saafely be copied and used from any shard.
-    /// \arg dirs The utils::directories object, used to create and lock hints directories
-    /// \arg hints_directory The directory with hints which should be initialized
-    directory_initializer make_directory_initializer(utils::directories& dirs,
-            std::filesystem::path hints_directory);
-
     /// \brief Rebalance hints segments among all present shards.
     ///
     /// The difference between the number of segments on every two shard will be not greater than 1 after the
