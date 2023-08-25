@@ -23,18 +23,19 @@
 #include "db/commitlog/replay_position.hh"
 #include "db/hints/internal/common.hh"
 #include "db/hints/internal/hint_storage.hh"
+#include "gms/inet_address.hh"
 #include "mutation/frozen_mutation.hh"
 #include "schema/schema.hh"
 #include "utils/fragmented_temporary_buffer.hh"
 #include "enum_set.hh"
 #include "gc_clock.hh"
-#include "inet_address_vectors.hh"
 
 // STD.
 #include <list>
 #include <map>
 #include <optional>
 #include <set>
+#include <span>
 #include <unordered_map>
 
 namespace service {
@@ -94,9 +95,6 @@ private:
     // `std::list` provides good semantics in that case
     // -- it doesn't allocate overly much memory.
     using segment_list = std::list<seastar::sstring>;
-
-    template <typename Key, typename Value>
-    using multimap_type = std::multimap<Key, Value>;
 
     // TODO: Add a comment here explaining what this type "means".
     using replay_waiter = seastar::lw_shared_ptr<std::optional<seastar::promise<>>>;
@@ -276,7 +274,7 @@ private:
     /// \param natural_endpoints current replicas for the given mutation
     /// \return future that resolves when the operation is complete
     seastar::future<> do_send_one_mutation(frozen_mutation_and_schema m,
-            const inet_address_vector_replica_set& natural_endpoints) noexcept;
+            const std::span<gms::inet_address> natural_endpoints) noexcept;
 
     /// \brief Send one mutation out.
     ///

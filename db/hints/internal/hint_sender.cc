@@ -27,6 +27,7 @@
 #include "db/hints/manager.hh"
 #include "db/hints/resource_manager.hh"
 #include "gms/gossiper.hh"
+#include "gms/inet_address.hh"
 #include "replica/database.hh"
 #include "schema/schema_fwd.hh"
 #include "service/storage_proxy.hh"
@@ -36,6 +37,8 @@
 #include "gc_clock.hh"
 
 // STD.
+#include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 
@@ -63,9 +66,7 @@ seastar::future<::timespec> get_last_file_modification(const std::string_view fn
 } // anonymous namespace
 
 struct send_one_file_ctx {
-    send_one_file_ctx(std::unordered_map<table_schema_version, column_mapping>& last_schema_ver_to_column_mapping)
-        : schema_ver_to_column_mapping(last_schema_ver_to_column_mapping)
-    {}
+public:
     std::unordered_map<table_schema_version, column_mapping>& schema_ver_to_column_mapping;
     seastar::gate file_send_gate;
     std::optional<replay_position> first_failed_rp;
@@ -73,6 +74,12 @@ struct send_one_file_ctx {
     std::set<replay_position> in_progress_rps;
     bool segment_replay_failed = false;
 
+public:
+    send_one_file_ctx(std::unordered_map<table_schema_version, column_mapping>& last_schema_ver_to_column_mapping)
+        : schema_ver_to_column_mapping(last_schema_ver_to_column_mapping)
+    {}
+
+public:
     void mark_hint_as_in_progress(replay_position rp) {
         in_progress_rps.insert(rp);
     }
@@ -132,11 +139,11 @@ seastar::future<> hint_sender::flush_maybe() noexcept {
 }
 
 seastar::future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m,
-        const inet_address_vector_replica_set& natural_endpoints) noexcept
+        const std::span<gms::inet_address> natural_endpoints) noexcept
 {
     // The fact that we send with CL::ALL in both cases below ensures that new hints are not going
     // to be generated as a result of hints sending.
-    if (boost::range::find(natural_endpoints, _host_id) != natural_endpoints.end()) {
+    if (std::ranges::find(natural_endpoints, _host_id) != natural_endpoints.end()) {
         manager_logger.trace("Sending directly to {}", _host_id);
         return _proxy.send_hint_to_endpoint(std::move(m), _host_id);
     } else {
