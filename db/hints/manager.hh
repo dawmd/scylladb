@@ -62,9 +62,14 @@ using hint_entry_reader = internal::hint_entry_reader;
 class directory_initializer {
 private:
     class impl;
+private:
     std::shared_ptr<impl> _impl;
 
-    directory_initializer(std::shared_ptr<impl> impl);
+private:
+    directory_initializer(std::shared_ptr<impl> impl_ptr) noexcept : _impl{impl_ptr} {}
+
+public:
+    ~directory_initializer() noexcept = default;
 
 public:
     /// Creates an initializer that does nothing. Useful in tests.
@@ -73,8 +78,6 @@ public:
     }
     static seastar::future<directory_initializer> make(utils::directories& dirs,
             seastar::sstring hints_directory);
-
-    ~directory_initializer();
     
 public:
     seastar::future<> ensure_created_and_verified();

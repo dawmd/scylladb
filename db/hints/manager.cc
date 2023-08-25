@@ -39,8 +39,7 @@
 using namespace std::literals::chrono_literals;
 using namespace db::hints::internal;
 
-namespace db {
-namespace hints {
+namespace db::hints {
 
 std::chrono::seconds manager::hints_flush_period = std::chrono::seconds(10);
 
@@ -618,37 +617,31 @@ public:
     }
 };
 
-directory_initializer::directory_initializer(std::shared_ptr<directory_initializer::impl> impl)
-        : _impl(std::move(impl))
-{ }
-
-directory_initializer::~directory_initializer()
-{ }
-
-future<directory_initializer> directory_initializer::make(utils::directories& dirs, sstring hints_directory) {
+seastar::future<directory_initializer> directory_initializer::make(utils::directories& dirs,
+        seastar::sstring hints_directory)
+{
     return smp::submit_to(0, [&dirs, hints_directory = std::move(hints_directory)] () mutable {
         auto impl = std::make_shared<directory_initializer::impl>(dirs, std::move(hints_directory));
-        return make_ready_future<directory_initializer>(directory_initializer(std::move(impl)));
+        return seastar::make_ready_future<directory_initializer>(directory_initializer{std::move(impl)});
     });
 }
 
-future<> directory_initializer::ensure_created_and_verified() {
+seastar::future<> directory_initializer::ensure_created_and_verified() {
     if (!_impl) {
-        return make_ready_future<>();
+        return seastar::make_ready_future<>();
     }
-    return smp::submit_to(0, [impl = this->_impl] () mutable {
+    return smp::submit_to(0, [impl = _impl] () mutable {
         return impl->ensure_created_and_verified().then([impl] {});
     });
 }
 
-future<> directory_initializer::ensure_rebalanced() {
+seastar::future<> directory_initializer::ensure_rebalanced() {
     if (!_impl) {
-        return make_ready_future<>();
+        return seastar::make_ready_future<>();
     }
-    return smp::submit_to(0, [impl = this->_impl] () mutable {
+    return smp::submit_to(0, [impl = _impl] () mutable {
         return impl->ensure_rebalanced().then([impl] {});
     });
 }
 
-}
-}
+} // namespace db::hints
