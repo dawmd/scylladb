@@ -83,12 +83,15 @@ public:
     void mark_hint_as_in_progress(replay_position rp) {
         in_progress_rps.insert(rp);
     }
+    // Noexcept because `std::set::erase` is noexcept when
+    // the operator< of the value type is noexcept.
     void on_hint_send_success(replay_position rp) noexcept {
         in_progress_rps.erase(rp);
         if (!last_succeeded_rp || *last_succeeded_rp < rp) {
             last_succeeded_rp = rp;
         }
     }
+    // Ditto.
     void on_hint_send_failure(replay_position rp) noexcept {
         in_progress_rps.erase(rp);
         segment_replay_failed = true;
@@ -184,7 +187,7 @@ frozen_mutation_and_schema hint_sender::get_mutation(seastar::lw_shared_ptr<send
     auto schema = _db.find_schema(fm.column_family_id());
 
     if (schema->version() != fm.schema_version()) {
-        mutation m(schema, fm.decorated_key(*schema));
+        mutation m{schema, fm.decorated_key(*schema)};
         converting_mutation_partition_applier v{cm, *schema, m.partition()};
         fm.partition().accept(cm, v);
         return {freeze(m), std::move(schema)};
@@ -543,7 +546,7 @@ bool hint_sender::send_one_file(const seastar::sstring& fname) {
     }).get();
 
     // clear the replay position - we are going to send the next segment...
-    _last_not_complete_rp = replay_position();
+    _last_not_complete_rp = replay_position{};
     _last_schema_ver_to_column_mapping.clear();
     manager_logger.trace("send_one_file(): segment {} was sent in full and deleted", fname);
     return true;
