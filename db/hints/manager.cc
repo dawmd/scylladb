@@ -10,6 +10,7 @@
 #include "db/hints/manager.hh"
 
 // Seastar features.
+#include <exception>
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/gate.hh>
@@ -31,6 +32,7 @@
 #include "locator/abstract_replication_strategy.hh"
 #include "mutation/mutation_partition_view.hh"
 #include "replica/database.hh"
+#include "seastar/core/file-types.hh"
 #include "service/storage_proxy.hh"
 #include "utils/directories.hh"
 #include "utils/disk-error-handler.hh"
@@ -45,6 +47,8 @@
 // STD.
 #include <algorithm>
 #include <filesystem>
+#include <ranges>
+#include <span>
 
 using namespace std::literals::chrono_literals;
 using namespace db::hints::internal;
@@ -114,8 +118,11 @@ seastar::future<> manager::start(seastar::shared_ptr<service::storage_proxy> pro
 {
     _proxy_anchor = std::move(proxy_ptr);
     _gossiper_anchor = std::move(gossiper_ptr);
-    return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<seastar::directory_entry_type::directory>(), [this] (fs::path datadir, seastar::directory_entry de) {
-        host_id_type ep = host_id_type(de.name);
+
+    constexpr auto directory_type = seastar::directory_entry_type::directory;
+    return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_type>(),
+            [this] (fs::path datadir, seastar::directory_entry de) {
+        host_id_type ep = host_id_type{de.name};
         if (!check_dc_for(ep)) {
             return seastar::make_ready_future<>();
         }
@@ -130,64 +137,75 @@ seastar::future<> manager::start(seastar::shared_ptr<service::storage_proxy> pro
 seastar::future<> manager::stop() {
     manager_logger.info("Asked to stop");
 
-  auto f = seastar::make_ready_future<>();
+    auto f = seastar::make_ready_future<>();
 
-  return f.finally([this] {
-    set_stopping();
+    return f.finally([this] {
+        set_stopping();
 
-    return _draining_hosts_gate.close().finally([this] {
-        return seastar::parallel_for_each(_host_managers, [] (auto& pair) {
-            return pair.second.stop();
-        }).finally([this] {
-            _host_managers.clear();
-            manager_logger.info("Stopped");
-        }).discard_result();
+        return _draining_hosts_gate.close().finally([this] {
+            return seastar::parallel_for_each(_host_managers | boost::adaptors::map_values,
+                    [] (host_manager& host_man) {
+                return host_man.stop();
+            }).finally([this] {
+                _host_managers.clear();
+                manager_logger.info("Stopped");
+            }).discard_result();
+        });
     });
-  });
 }
 
 seastar::future<> manager::compute_hints_dir_device_id() {
-    return get_device_id(_hints_dir.native()).then([this] (::dev_t device_id) {
-        _hints_dir_device_id = device_id;
-    }).handle_exception([this](auto ep) {
-        manager_logger.warn("Failed to stat directory {} for device id: {}", _hints_dir.native(), ep);
-        return seastar::make_exception_future<>(ep);
-    });
+    try {
+        _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
+    } catch (...) {
+        manager_logger.warn("Failed to stat directory {} for device id: {}",
+                _hints_dir.native(), std::current_exception());
+        throw;
+    }
 }
 
 void manager::allow_hints() {
-    boost::for_each(_host_managers, [] (auto& pair) { pair.second.allow_hints(); });
+    // TODO: When std::ranges::values_view is available, replace Boost's adaptor with it.
+    std::ranges::for_each(_host_managers | boost::adaptors::map_values, [] (host_manager& hman) {
+        hman.allow_hints();
+    });
 }
 
 void manager::forbid_hints() {
-    boost::for_each(_host_managers, [] (auto& pair) { pair.second.forbid_hints(); });
+    // TODO: When std::ranges::values_view is available, replace Boost's adaptor with it.
+    std::ranges::for_each(_host_managers | boost::adaptors::map_values, [] (host_manager& hman) {
+        hman.forbid_hints();
+    });
 }
 
 void manager::forbid_hints_for_hosts_with_pending_hints() {
     manager_logger.trace("space_watchdog: Going to block hints to: {}", _hosts_with_pending_hints);
-    boost::for_each(_host_managers, [this] (auto& pair) {
-        host_manager& ep_man = pair.second;
-        if (has_host_with_pending_hints(ep_man.host_id())) {
-            ep_man.forbid_hints();
+
+    // TODO: When std::ranges::values_view is available, replace Boost's adaptor with it.
+    std::ranges::for_each(_host_managers | boost::adaptors::map_values, [this] (host_manager& hman) {
+        if (has_host_with_pending_hints(hman.host_id())) {
+            hman.forbid_hints();
         } else {
-            ep_man.allow_hints();
+            hman.allow_hints();
         }
     });
 }
 
-sync_point::shard_rps manager::calculate_current_sync_point(const std::vector<gms::inet_address>& target_hosts) const {
+sync_point::shard_rps manager::calculate_current_sync_point(const std::span<gms::inet_address> target_hosts) const {
     sync_point::shard_rps rps;
     for (auto addr : target_hosts) {
         auto it = _host_managers.find(addr);
         if (it != _host_managers.end()) {
-            const host_manager& ep_man = it->second;
-            rps[ep_man.host_id()] = ep_man.last_written_replay_position();
+            const host_manager& host_man = it->second;
+            rps[host_man.host_id()] = host_man.last_written_replay_position();
         }
     }
     return rps;
 }
 
-seastar::future<> manager::wait_for_sync_point(seastar::abort_source& as, const sync_point::shard_rps& rps) {
+seastar::future<> manager::wait_for_sync_point(seastar::abort_source& as,
+        const sync_point::shard_rps& rps)
+{
     abort_source local_as;
 
     auto sub = as.subscribe([&local_as] () noexcept {
@@ -202,16 +220,15 @@ seastar::future<> manager::wait_for_sync_point(seastar::abort_source& as, const 
 
     bool was_aborted = false;
     co_await seastar::coroutine::parallel_for_each(_host_managers, [&was_aborted, &rps, &local_as] (auto& p) {
-        const auto addr = p.first;
-        auto& ep_man = p.second;
+        auto& [addr, host_man] = p;
 
-        db::replay_position rp;
+        replay_position rp;
         auto it = rps.find(addr);
         if (it != rps.end()) {
             rp = it->second;
         }
 
-        return ep_man.wait_until_hints_are_replayed_up_to(local_as, rp).handle_exception([&local_as, &was_aborted] (auto eptr) {
+        return host_man.wait_until_hints_are_replayed_up_to(local_as, rp).handle_exception([&local_as, &was_aborted] (auto eptr) {
             if (!local_as.abort_requested()) {
                 local_as.request_abort();
             }
@@ -227,19 +244,17 @@ seastar::future<> manager::wait_for_sync_point(seastar::abort_source& as, const 
     });
 
     if (was_aborted) {
-        throw seastar::abort_requested_exception();
+        throw seastar::abort_requested_exception{};
     }
-
-    co_return;
 }
 
 manager::host_manager& manager::get_host_manager(host_id_type ep) {
     auto it = find_host_manager(ep);
     if (it == host_managers_end()) {
         manager_logger.trace("Creating an ep_manager for {}", ep);
-        manager::host_manager& ep_man = _host_managers.emplace(ep, host_manager(ep, *this)).first->second;
-        ep_man.start();
-        return ep_man;
+        host_manager& host_man = _host_managers.emplace(ep, host_manager{ep, *this}).first->second;
+        host_man.start();
+        return host_man;
     }
     return it->second;
 }
@@ -275,7 +290,10 @@ bool manager::store_hint(host_id_type ep, schema_ptr s, seastar::lw_shared_ptr<c
 bool manager::too_many_in_flight_hints_for(host_id_type ep) const noexcept {
     // There is no need to check the DC here because if there is an in-flight hint for this end point then this means that
     // its DC has already been checked and found to be ok.
-    return _stats.size_of_hints_in_progress > max_size_of_hints_in_progress && !utils::fb_utilities::is_me(ep) && hints_in_progress_for(ep) > 0 && local_gossiper().get_endpoint_downtime(ep) <= _max_hint_window_us;
+    return _stats.size_of_hints_in_progress > max_size_of_hints_in_progress &&
+            !utils::fb_utilities::is_me(ep) &&
+            hints_in_progress_for(ep) > 0 &&
+            local_gossiper().get_endpoint_downtime(ep) <= _max_hint_window_us;
 }
 
 bool manager::can_hint_for(host_id_type ep) const noexcept {
@@ -293,7 +311,8 @@ bool manager::can_hint_for(host_id_type ep) const noexcept {
     //
     // In the worst case there's going to be (_max_size_of_hints_in_progress + N - 1) in-flight hints, where N is the total number Nodes in the cluster.
     if (_stats.size_of_hints_in_progress > max_size_of_hints_in_progress && hints_in_progress_for(ep) > 0) {
-        manager_logger.trace("size_of_hints_in_progress {} hints_in_progress_for({}) {}", _stats.size_of_hints_in_progress, ep, hints_in_progress_for(ep));
+        manager_logger.trace("size_of_hints_in_progress {} hints_in_progress_for({}) {}",
+                _stats.size_of_hints_in_progress, ep, hints_in_progress_for(ep));
         return false;
     }
 
@@ -305,7 +324,8 @@ bool manager::can_hint_for(host_id_type ep) const noexcept {
 
     // check if the end point has been down for too long
     if (local_gossiper().get_endpoint_downtime(ep) > _max_hint_window_us) {
-        manager_logger.trace("{} is down for {}, not hinting", ep, local_gossiper().get_endpoint_downtime(ep));
+        manager_logger.trace("{} is down for {}, not hinting",
+                ep, local_gossiper().get_endpoint_downtime(ep));
         return false;
     }
 
@@ -314,7 +334,7 @@ bool manager::can_hint_for(host_id_type ep) const noexcept {
 
 seastar::future<> manager::change_host_filter(host_filter filter) {
     if (!started()) {
-        return seastar::make_exception_future<>(std::logic_error("change_host_filter: called before the hints_manager was started"));
+        return seastar::make_exception_future<>(std::logic_error{"change_host_filter: called before the hints_manager was started"});
     }
 
     return seastar::with_gate(_draining_hosts_gate, [this, filter = std::move(filter)] () mutable {
@@ -413,8 +433,12 @@ void manager::drain_for(gms::inet_address endpoint) {
     });
 }
 
-static seastar::future<> scan_for_hints_dirs(const sstring& hints_directory, std::function<seastar::future<> (fs::path dir, seastar::directory_entry de, seastar::shard_id shard_id)> f) {
-    return lister::scan_dir(hints_directory, lister::dir_entry_types::of<seastar::directory_entry_type::directory>(), [f = std::move(f)] (fs::path dir, seastar::directory_entry de) mutable {
+static seastar::future<> scan_for_hints_dirs(const seastar::sstring& hints_directory,
+        std::function<seastar::future<> (fs::path dir, seastar::directory_entry de, seastar::shard_id shard_id)> f)
+{
+    constexpr auto directory_type = seastar::directory_entry_type::directory;
+    return lister::scan_dir(hints_directory, lister::dir_entry_types::of<directory_type>(),
+            [f = std::move(f)] (fs::path dir, seastar::directory_entry de) mutable {
         seastar::shard_id shard_id;
         try {
             shard_id = std::stoi(de.name.c_str());
@@ -429,18 +453,21 @@ static seastar::future<> scan_for_hints_dirs(const sstring& hints_directory, std
 // runs in seastar::async context
 manager::hints_segments_map manager::get_current_hints_segments(const seastar::sstring& hints_directory) {
     hints_segments_map current_hints_segments;
+    constexpr auto directory_type = seastar::directory_entry_type::directory;
 
     // shards level
     scan_for_hints_dirs(hints_directory, [&current_hints_segments] (fs::path dir, seastar::directory_entry de, seastar::shard_id shard_id) {
         manager_logger.trace("shard_id = {}", shard_id);
         // IPs level
-        return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::of<seastar::directory_entry_type::directory>(), [&current_hints_segments, shard_id] (fs::path dir, seastar::directory_entry de) {
+        return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::of<directory_type>(),
+                [&current_hints_segments, shard_id] (fs::path dir, seastar::directory_entry de) {
             manager_logger.trace("\tIP: {}", de.name);
             // hints files
-            return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::of<seastar::directory_entry_type::regular>(), [&current_hints_segments, shard_id, ep_addr = de.name] (fs::path dir, seastar::directory_entry de) {
+            return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::of<directory_type>(),
+                    [&current_hints_segments, shard_id, ep_addr = de.name] (fs::path dir, seastar::directory_entry de) {
                 manager_logger.trace("\t\tfile: {}", de.name);
                 current_hints_segments[ep_addr][shard_id].emplace_back(dir / de.name.c_str());
-                return make_ready_future<>();
+                return seastar::make_ready_future<>();
             });
         });
     }).get();
@@ -523,7 +550,7 @@ void manager::rebalance_segments_for(
     }
 
     for (unsigned i = 0; i < smp::count && !segments_to_move.empty(); ++i) {
-        fs::path shard_path_dir{fs::path(hints_directory.c_str()) / seastar::format("{:d}", i).c_str() / ep.c_str()};
+        fs::path shard_path_dir{fs::path{hints_directory.c_str()} / seastar::format("{:d}", i).c_str() / ep.c_str()};
         std::list<fs::path>& current_shard_segments = ep_segments[i];
 
         // Make sure that the shard_path_dir exists and if not - create it
@@ -531,7 +558,7 @@ void manager::rebalance_segments_for(
 
         while (current_shard_segments.size() < segments_per_shard && !segments_to_move.empty()) {
             auto seg_path_it = segments_to_move.begin();
-            fs::path new_path(shard_path_dir / seg_path_it->filename());
+            fs::path new_path{shard_path_dir / seg_path_it->filename()};
 
             // Don't move the file to the same location - it's pointless.
             if (*seg_path_it != new_path) {
@@ -551,7 +578,8 @@ void manager::remove_irrelevant_shards_directories(const seastar::sstring& hints
     scan_for_hints_dirs(hints_directory, [] (fs::path dir, seastar::directory_entry de, seastar::shard_id shard_id) {
         if (shard_id >= smp::count) {
             // IPs level
-            return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::full(), lister::show_hidden::yes, [] (fs::path dir, seastar::directory_entry de) {
+            return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::full(), lister::show_hidden::yes,
+                    [] (fs::path dir, seastar::directory_entry de) {
                 return io_check(remove_file, (dir / de.name.c_str()).native());
             }).then([shard_base_dir = dir, shard_entry = de] {
                 return io_check(remove_file, (shard_base_dir / shard_entry.name.c_str()).native());
