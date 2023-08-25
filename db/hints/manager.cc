@@ -567,53 +567,57 @@ void manager::update_backlog(size_t backlog, size_t max_backlog) {
 }
 
 class directory_initializer::impl {
+private:
     enum class state {
         uninitialized = 0,
         created_and_validated = 1,
         rebalanced = 2,
     };
 
+private:
     utils::directories& _dirs;
-    sstring _hints_directory;
+    seastar::sstring _hints_directory;
     state _state = state::uninitialized;
     seastar::named_semaphore _lock = {1, named_semaphore_exception_factory{"hints directory initialization lock"}};
 
 public:
-    impl(utils::directories& dirs, sstring hints_directory)
-            : _dirs(dirs)
-            , _hints_directory(std::move(hints_directory))
-    { }
+    impl(utils::directories& dirs, seastar::sstring hints_directory)
+        : _dirs(dirs)
+        , _hints_directory(std::move(hints_directory))
+    {}
 
-    future<> ensure_created_and_verified() {
+public:
+    seastar::future<> ensure_created_and_verified() {
         if (_state > state::uninitialized) {
-            return make_ready_future<>();
+            co_return;
         }
 
-        return with_semaphore(_lock, 1, [this] () {
-            utils::directories::set dir_set;
-            dir_set.add_sharded(_hints_directory);
-            return _dirs.create_and_verify(std::move(dir_set)).then([this] {
-                manager_logger.debug("Creating and validating hint directories: {}", _hints_directory);
-                _state = state::created_and_validated;
-            });
-        });
+        const auto sem_units = co_await seastar::get_units(_lock, 1);
+        
+        utils::directories::set dir_set;
+        dir_set.add_sharded(_hints_directory);
+        
+        co_await _dirs.create_and_verify(std::move(dir_set));
+        manager_logger.debug("Creating and validating hint directories: {}", _hints_directory);
+        
+        _state = state::created_and_validated;
     }
 
-    future<> ensure_rebalanced() {
+    seastar::future<> ensure_rebalanced() {
         if (_state < state::created_and_validated) {
-            return make_exception_future<>(std::logic_error("hints directory needs to be created and validated before rebalancing"));
+            throw std::logic_error{"hints directory needs to be created and validated before rebalancing"};
         }
 
         if (_state > state::created_and_validated) {
-            return make_ready_future<>();
+            co_return;
         }
 
-        return with_semaphore(_lock, 1, [this] () {
-            manager_logger.debug("Rebalancing hints in {}", _hints_directory);
-            return manager::rebalance(_hints_directory).then([this] {
-                _state = state::rebalanced;
-            });
-        });
+        const auto sem_units = co_await seastar::get_units(_lock, 1);
+        
+        manager_logger.debug("Rebalancing hints in {}", _hints_directory);
+        co_await manager::rebalance(_hints_directory);
+        
+        _state = state::rebalanced;
     }
 };
 
