@@ -39,16 +39,18 @@
 using namespace std::literals::chrono_literals;
 using namespace db::hints::internal;
 
+namespace fs = std::filesystem;
+
 namespace db::hints {
 
 std::chrono::seconds manager::hints_flush_period = std::chrono::seconds(10);
 
-manager::manager(sstring hints_directory, host_filter filter, int64_t max_hint_window_ms, resource_manager& res_manager, distributed<replica::database>& db)
-    : _hints_dir(fs::path(hints_directory) / format("{:d}", this_shard_id()))
-    , _host_filter(std::move(filter))
-    , _max_hint_window_us(max_hint_window_ms * 1000)
-    , _local_db(db.local())
-    , _resource_manager(res_manager)
+manager::manager(seastar::sstring hints_directory, host_filter filter, int64_t max_hint_window_ms, resource_manager& res_manager, seastar::distributed<replica::database>& db)
+    : _hints_dir{fs::path{hints_directory} / seastar::format("{:d}", seastar::this_shard_id())}
+    , _host_filter{std::move(filter)}
+    , _max_hint_window_us{max_hint_window_ms * 1000}
+    , _local_db{db.local()}
+    , _resource_manager{res_manager}
 {
     if (utils::get_local_injector().enter("decrease_hints_flush_period")) {
         hints_flush_period = std::chrono::seconds{1};
@@ -97,13 +99,15 @@ void manager::register_metrics(const sstring& group_name) {
     });
 }
 
-future<> manager::start(shared_ptr<service::storage_proxy> proxy_ptr, shared_ptr<gms::gossiper> gossiper_ptr) {
+seastar::future<> manager::start(seastar::shared_ptr<service::storage_proxy> proxy_ptr,
+        seastar::shared_ptr<gms::gossiper> gossiper_ptr)
+{
     _proxy_anchor = std::move(proxy_ptr);
     _gossiper_anchor = std::move(gossiper_ptr);
-    return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(), [this] (fs::path datadir, directory_entry de) {
+    return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<seastar::directory_entry_type::directory>(), [this] (fs::path datadir, seastar::directory_entry de) {
         host_id_type ep = host_id_type(de.name);
         if (!check_dc_for(ep)) {
-            return make_ready_future<>();
+            return seastar::make_ready_future<>();
         }
         return get_host_manager(ep).populate_segments_to_replay();
     }).then([this] {
@@ -113,16 +117,16 @@ future<> manager::start(shared_ptr<service::storage_proxy> proxy_ptr, shared_ptr
     });
 }
 
-future<> manager::stop() {
+seastar::future<> manager::stop() {
     manager_logger.info("Asked to stop");
 
-  auto f = make_ready_future<>();
+  auto f = seastar::make_ready_future<>();
 
   return f.finally([this] {
     set_stopping();
 
     return _draining_hosts_gate.close().finally([this] {
-        return parallel_for_each(_host_managers, [] (auto& pair) {
+        return seastar::parallel_for_each(_host_managers, [] (auto& pair) {
             return pair.second.stop();
         }).finally([this] {
             _host_managers.clear();
@@ -132,12 +136,12 @@ future<> manager::stop() {
   });
 }
 
-future<> manager::compute_hints_dir_device_id() {
-    return get_device_id(_hints_dir.native()).then([this](dev_t device_id) {
+seastar::future<> manager::compute_hints_dir_device_id() {
+    return get_device_id(_hints_dir.native()).then([this] (::dev_t device_id) {
         _hints_dir_device_id = device_id;
     }).handle_exception([this](auto ep) {
         manager_logger.warn("Failed to stat directory {} for device id: {}", _hints_dir.native(), ep);
-        return make_exception_future<>(ep);
+        return seastar::make_exception_future<>(ep);
     });
 }
 
@@ -173,7 +177,7 @@ sync_point::shard_rps manager::calculate_current_sync_point(const std::vector<gm
     return rps;
 }
 
-future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_rps& rps) {
+seastar::future<> manager::wait_for_sync_point(seastar::abort_source& as, const sync_point::shard_rps& rps) {
     abort_source local_as;
 
     auto sub = as.subscribe([&local_as] () noexcept {
@@ -187,7 +191,7 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
     }
 
     bool was_aborted = false;
-    co_await coroutine::parallel_for_each(_host_managers, [&was_aborted, &rps, &local_as] (auto& p) {
+    co_await seastar::coroutine::parallel_for_each(_host_managers, [&was_aborted, &rps, &local_as] (auto& p) {
         const auto addr = p.first;
         auto& ep_man = p.second;
 
@@ -206,14 +210,14 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
             } catch (abort_requested_exception&) {
                 was_aborted = true;
             } catch (...) {
-                return make_exception_future<>(std::current_exception());
+                return seastar::make_exception_future<>(std::current_exception());
             }
-            return make_ready_future();
+            return seastar::make_ready_future();
         });
     });
 
     if (was_aborted) {
-        throw abort_requested_exception();
+        throw seastar::abort_requested_exception();
     }
 
     co_return;
@@ -234,7 +238,9 @@ bool manager::manages_host(host_id_type ep) const noexcept {
     return find_host_manager(ep) != host_managers_end();
 }
 
-bool manager::store_hint(host_id_type ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept {
+bool manager::store_hint(host_id_type ep, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
+        tracing::trace_state_ptr tr_state) noexcept
+{
     if (stopping() || draining_all() || !started() || !can_hint_for(ep)) {
         manager_logger.trace("Can't store a hint to {}", ep);
         ++_stats.dropped;
@@ -296,15 +302,15 @@ bool manager::can_hint_for(host_id_type ep) const noexcept {
     return true;
 }
 
-future<> manager::change_host_filter(host_filter filter) {
+seastar::future<> manager::change_host_filter(host_filter filter) {
     if (!started()) {
-        return make_exception_future<>(std::logic_error("change_host_filter: called before the hints_manager was started"));
+        return seastar::make_exception_future<>(std::logic_error("change_host_filter: called before the hints_manager was started"));
     }
 
-    return with_gate(_draining_hosts_gate, [this, filter = std::move(filter)] () mutable {
-        return with_semaphore(drain_lock(), 1, [this, filter = std::move(filter)] () mutable {
+    return seastar::with_gate(_draining_hosts_gate, [this, filter = std::move(filter)] () mutable {
+        return seastar::with_semaphore(drain_lock(), 1, [this, filter = std::move(filter)] () mutable {
             if (draining_all()) {
-                return make_exception_future<>(std::logic_error("change_host_filter: cannot change the configuration because hints all hints were drained"));
+                return seastar::make_exception_future<>(std::logic_error("change_host_filter: cannot change the configuration because hints all hints were drained"));
             }
 
             manager_logger.debug("change_host_filter: changing from {} to {}", _host_filter, filter);
@@ -315,10 +321,10 @@ future<> manager::change_host_filter(host_filter filter) {
 
             // Iterate over existing hint directories and see if we can enable an endpoint manager
             // for some of them
-            return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(), [this] (fs::path datadir, directory_entry de) {
+            return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<seastar::directory_entry_type::directory>(), [this] (fs::path datadir, seastar::directory_entry de) {
                 const host_id_type ep = host_id_type(de.name);
                 if (_host_managers.contains(ep) || !_host_filter.can_hint_for(_proxy_anchor->get_token_metadata_ptr()->get_topology(), ep)) {
-                    return make_ready_future<>();
+                    return seastar::make_ready_future<>();
                 }
                 return get_host_manager(ep).populate_segments_to_replay();
             }).handle_exception([this, filter = std::move(filter)] (auto ep) mutable {
@@ -327,9 +333,9 @@ future<> manager::change_host_filter(host_filter filter) {
                 _host_filter = std::move(filter);
             }).finally([this] {
                 // Remove endpoint managers which are rejected by the filter
-                return parallel_for_each(_host_managers, [this] (auto& pair) {
+                return seastar::parallel_for_each(_host_managers, [this] (auto& pair) {
                     if (_host_filter.can_hint_for(_proxy_anchor->get_token_metadata_ptr()->get_topology(), pair.first)) {
-                        return make_ready_future<>();
+                        return seastar::make_ready_future<>();
                     }
                     return pair.second.stop(drain::no).finally([this, ep = pair.first] {
                         _host_managers.erase(ep);
@@ -360,15 +366,15 @@ void manager::drain_for(gms::inet_address endpoint) {
     manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", endpoint);
 
     // Future is waited on indirectly in `stop()` (via `_draining_hosts_gate`).
-    (void)with_gate(_draining_hosts_gate, [this, endpoint] {
-        return with_semaphore(drain_lock(), 1, [this, endpoint] {
+    (void) seastar::with_gate(_draining_hosts_gate, [this, endpoint] {
+        return seastar::with_semaphore(drain_lock(), 1, [this, endpoint] {
             return futurize_invoke([this, endpoint] () {
                 if (utils::fb_utilities::is_me(endpoint)) {
                     set_draining_all();
-                    return parallel_for_each(_host_managers, [this ] (auto& pair) {
+                    return seastar::parallel_for_each(_host_managers, [this ] (auto& pair) {
                         return pair.second.stop(drain::yes).finally([this, &pair] {
                             return with_file_update_mutex(pair.first, [&pair] {
-                                return remove_file(pair.second.hints_dir().c_str());
+                                return seastar::remove_file(pair.second.hints_dir().c_str());
                             });
                         });
                     }).finally([this] {
@@ -379,14 +385,14 @@ void manager::drain_for(gms::inet_address endpoint) {
                     if (ep_manager_it != host_managers_end()) {
                         return ep_manager_it->second.stop(drain::yes).finally([this, endpoint, ep = ep_manager_it->first, &ep_man = ep_manager_it->second] {
                             return with_file_update_mutex(ep, [&ep_man] {
-                                return remove_file(ep_man.hints_dir().c_str());
+                                return seastar::remove_file(ep_man.hints_dir().c_str());
                             }).finally([this, endpoint] {
                                 _host_managers.erase(endpoint);
                             });
                         });
                     }
 
-                    return make_ready_future<>();
+                    return seastar::make_ready_future<>();
                 }
             }).handle_exception([endpoint] (auto eptr) {
                 manager_logger.error("Exception when draining {}: {}", endpoint, eptr);
@@ -397,31 +403,31 @@ void manager::drain_for(gms::inet_address endpoint) {
     });
 }
 
-static future<> scan_for_hints_dirs(const sstring& hints_directory, std::function<future<> (fs::path dir, directory_entry de, unsigned shard_id)> f) {
-    return lister::scan_dir(hints_directory, lister::dir_entry_types::of<directory_entry_type::directory>(), [f = std::move(f)] (fs::path dir, directory_entry de) mutable {
-        unsigned shard_id;
+static seastar::future<> scan_for_hints_dirs(const sstring& hints_directory, std::function<seastar::future<> (fs::path dir, seastar::directory_entry de, seastar::shard_id shard_id)> f) {
+    return lister::scan_dir(hints_directory, lister::dir_entry_types::of<seastar::directory_entry_type::directory>(), [f = std::move(f)] (fs::path dir, seastar::directory_entry de) mutable {
+        seastar::shard_id shard_id;
         try {
             shard_id = std::stoi(de.name.c_str());
         } catch (std::invalid_argument& ex) {
             manager_logger.debug("Ignore invalid directory {}", de.name);
-            return make_ready_future<>();
+            return seastar::make_ready_future<>();
         }
         return f(std::move(dir), std::move(de), shard_id);
     });
 }
 
 // runs in seastar::async context
-manager::hints_segments_map manager::get_current_hints_segments(const sstring& hints_directory) {
+manager::hints_segments_map manager::get_current_hints_segments(const seastar::sstring& hints_directory) {
     hints_segments_map current_hints_segments;
 
     // shards level
-    scan_for_hints_dirs(hints_directory, [&current_hints_segments] (fs::path dir, directory_entry de, unsigned shard_id) {
+    scan_for_hints_dirs(hints_directory, [&current_hints_segments] (fs::path dir, seastar::directory_entry de, seastar::shard_id shard_id) {
         manager_logger.trace("shard_id = {}", shard_id);
         // IPs level
-        return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::of<directory_entry_type::directory>(), [&current_hints_segments, shard_id] (fs::path dir, directory_entry de) {
+        return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::of<seastar::directory_entry_type::directory>(), [&current_hints_segments, shard_id] (fs::path dir, seastar::directory_entry de) {
             manager_logger.trace("\tIP: {}", de.name);
             // hints files
-            return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::of<directory_entry_type::regular>(), [&current_hints_segments, shard_id, ep_addr = de.name] (fs::path dir, directory_entry de) {
+            return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::of<seastar::directory_entry_type::regular>(), [&current_hints_segments, shard_id, ep_addr = de.name] (fs::path dir, seastar::directory_entry de) {
                 manager_logger.trace("\t\tfile: {}", de.name);
                 current_hints_segments[ep_addr][shard_id].emplace_back(dir / de.name.c_str());
                 return make_ready_future<>();
@@ -433,9 +439,9 @@ manager::hints_segments_map manager::get_current_hints_segments(const sstring& h
 }
 
 // runs in seastar::async context
-void manager::rebalance_segments(const sstring& hints_directory, hints_segments_map& segments_map) {
+void manager::rebalance_segments(const seastar::sstring& hints_directory, hints_segments_map& segments_map) {
     // Count how many hints segments to each destination we have.
-    std::unordered_map<sstring, size_t> per_ep_hints;
+    std::unordered_map<seastar::sstring, size_t> per_ep_hints;
     for (auto& ep_info : segments_map) {
         per_ep_hints[ep_info.first] = boost::accumulate(ep_info.second | boost::adaptors::map_values | boost::adaptors::transformed(std::mem_fn(&std::list<fs::path>::size)), 0);
         manager_logger.trace("{}: total files: {}", ep_info.first, per_ep_hints[ep_info.first]);
@@ -444,7 +450,7 @@ void manager::rebalance_segments(const sstring& hints_directory, hints_segments_
     // Create a map of lists of segments that we will move (for each destination end point): if a shard has segments
     // then we will NOT move q = int(N/S) segments out of them, where N is a total number of segments to the current
     // destination and S is a current number of shards.
-    std::unordered_map<sstring, std::list<fs::path>> segments_to_move;
+    std::unordered_map<seastar::sstring, std::list<fs::path>> segments_to_move;
     for (auto& [ep, ep_segments] : segments_map) {
         size_t q = per_ep_hints[ep] / smp::count;
         auto& current_segments_to_move = segments_to_move[ep];
@@ -493,9 +499,9 @@ void manager::rebalance_segments(const sstring& hints_directory, hints_segments_
 
 // runs in seastar::async context
 void manager::rebalance_segments_for(
-        const sstring& ep,
+        const seastar::sstring& ep,
         size_t segments_per_shard,
-        const sstring& hints_directory,
+        const seastar::sstring& hints_directory,
         hints_host_segments_map& ep_segments,
         std::list<fs::path>& segments_to_move)
 {
@@ -507,11 +513,11 @@ void manager::rebalance_segments_for(
     }
 
     for (unsigned i = 0; i < smp::count && !segments_to_move.empty(); ++i) {
-        fs::path shard_path_dir(fs::path(hints_directory.c_str()) / seastar::format("{:d}", i).c_str() / ep.c_str());
+        fs::path shard_path_dir{fs::path(hints_directory.c_str()) / seastar::format("{:d}", i).c_str() / ep.c_str()};
         std::list<fs::path>& current_shard_segments = ep_segments[i];
 
         // Make sure that the shard_path_dir exists and if not - create it
-        io_check([name = shard_path_dir.c_str()] { return recursive_touch_directory(name); }).get();
+        io_check([name = shard_path_dir.c_str()] { return seastar::recursive_touch_directory(name); }).get();
 
         while (current_shard_segments.size() < segments_per_shard && !segments_to_move.empty()) {
             auto seg_path_it = segments_to_move.begin();
@@ -530,22 +536,22 @@ void manager::rebalance_segments_for(
 }
 
 // runs in seastar::async context
-void manager::remove_irrelevant_shards_directories(const sstring& hints_directory) {
+void manager::remove_irrelevant_shards_directories(const seastar::sstring& hints_directory) {
     // shards level
-    scan_for_hints_dirs(hints_directory, [] (fs::path dir, directory_entry de, unsigned shard_id) {
+    scan_for_hints_dirs(hints_directory, [] (fs::path dir, seastar::directory_entry de, seastar::shard_id shard_id) {
         if (shard_id >= smp::count) {
             // IPs level
-            return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::full(), lister::show_hidden::yes, [] (fs::path dir, directory_entry de) {
+            return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::full(), lister::show_hidden::yes, [] (fs::path dir, seastar::directory_entry de) {
                 return io_check(remove_file, (dir / de.name.c_str()).native());
             }).then([shard_base_dir = dir, shard_entry = de] {
                 return io_check(remove_file, (shard_base_dir / shard_entry.name.c_str()).native());
             });
         }
-        return make_ready_future<>();
+        return seastar::make_ready_future<>();
     }).get();
 }
 
-future<> manager::rebalance(sstring hints_directory) {
+seastar::future<> manager::rebalance(seastar::sstring hints_directory) {
     return seastar::async([hints_directory = std::move(hints_directory)] {
         // Scan currently present hints segments.
         hints_segments_map current_hints_segments = get_current_hints_segments(hints_directory);
