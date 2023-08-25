@@ -35,14 +35,13 @@ class fragmented_temporary_buffer;
 
 namespace utils {
 class directories;
-}
+} // namespace utils
 
 namespace gms {
 class gossiper;
-}
+} // namespace gms
 
-namespace db {
-namespace hints {
+namespace db::hints {
 
 namespace internal {
 class host_manager;
@@ -58,18 +57,23 @@ using hint_entry_reader = internal::hint_entry_reader;
 class directory_initializer {
 private:
     class impl;
-    ::std::shared_ptr<impl> _impl;
+    std::shared_ptr<impl> _impl;
 
-    directory_initializer(::std::shared_ptr<impl> impl);
+    directory_initializer(std::shared_ptr<impl> impl);
 
 public:
     /// Creates an initializer that does nothing. Useful in tests.
-    static directory_initializer make_dummy();
-    static future<directory_initializer> make(utils::directories& dirs, sstring hints_directory);
+    static directory_initializer make_dummy() noexcept {
+        return {nullptr};
+    }
+    static seastar::future<directory_initializer> make(utils::directories& dirs,
+            seastar::sstring hints_directory);
 
     ~directory_initializer();
-    future<> ensure_created_and_verified();
-    future<> ensure_rebalanced();
+    
+public:
+    seastar::future<> ensure_created_and_verified();
+    seastar::future<> ensure_rebalanced();
 };
 
 class manager {
@@ -79,9 +83,9 @@ private:
     using host_id_type = internal::host_id_type;
 
     // map: shard -> segments
-    using hints_host_segments_map = std::unordered_map<unsigned, std::list<fs::path>>;
+    using hints_host_segments_map = std::unordered_map<seastar::shard_id, std::list<std::filesystem::path>>;
     // map: IP -> map: shard -> segments
-    using hints_segments_map = std::unordered_map<sstring, hints_host_segments_map>;
+    using hints_segments_map = std::unordered_map<seastar::sstring, hints_host_segments_map>;
 
     friend class space_watchdog;
     friend class internal::host_manager;
@@ -113,13 +117,13 @@ public:
 private:
     static constexpr uint64_t max_size_of_hints_in_progress = 10 * 1024 * 1024; // 10MB
     state_set _state;
-    const fs::path _hints_dir;
+    std::filesystem::path _hints_dir;
     dev_t _hints_dir_device_id = 0;
 
     node_to_hint_store_factory_type _store_factory;
     host_filter _host_filter;
-    shared_ptr<service::storage_proxy> _proxy_anchor;
-    shared_ptr<gms::gossiper> _gossiper_anchor;
+    seastar::shared_ptr<service::storage_proxy> _proxy_anchor;
+    seastar::shared_ptr<gms::gossiper> _gossiper_anchor;
     int64_t _max_hint_window_us = 0;
     replica::database& _local_db;
 
@@ -134,19 +138,23 @@ private:
     seastar::named_semaphore _drain_lock = {1, named_semaphore_exception_factory{"drain lock"}};
 
 public:
-    manager(sstring hints_directory, host_filter filter, int64_t max_hint_window_ms, resource_manager&res_manager, sharded<replica::database>& db);
-    virtual ~manager();
+    manager(seastar::sstring hints_directory, host_filter filter, int64_t max_hint_window_ms,
+            resource_manager&res_manager, seastar::sharded<replica::database>& db);
     manager(manager&&) = delete;
     manager& operator=(manager&&) = delete;
+    virtual ~manager();
+
+public:
     void register_metrics(const sstring& group_name);
-    future<> start(shared_ptr<service::storage_proxy> proxy_ptr, shared_ptr<gms::gossiper> gossiper_ptr);
-    future<> stop();
-    bool store_hint(gms::inet_address ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept;
+    seastar::future<> start(shared_ptr<service::storage_proxy> proxy_ptr, shared_ptr<gms::gossiper> gossiper_ptr);
+    seastar::future<> stop();
+    bool store_hint(gms::inet_address ep, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
+            tracing::trace_state_ptr tr_state) noexcept;
 
     /// \brief Changes the host_filter currently used, stopping and starting host_managers relevant to the new host_filter.
     /// \param filter the new host_filter
     /// \return A future that resolves when the operation is complete.
-    future<> change_host_filter(host_filter filter);
+    seastar::future<> change_host_filter(host_filter filter);
 
     const host_filter& get_host_filter() const noexcept {
         return _host_filter;
@@ -241,7 +249,7 @@ public:
     sync_point::shard_rps calculate_current_sync_point(const std::vector<gms::inet_address>& target_hosts) const;
 
     /// \brief Waits until hint replay reach replay positions described in `rps`.
-    future<> wait_for_sync_point(abort_source& as, const sync_point::shard_rps& rps);
+    seastar::future<> wait_for_sync_point(seastar::abort_source& as, const sync_point::shard_rps& rps);
 
     /// \brief Safely runs a given functor under the file_update_mutex of a specified \ref host_manager.
     ///
@@ -262,7 +270,8 @@ public:
     /// This object can saafely be copied and used from any shard.
     /// \arg dirs The utils::directories object, used to create and lock hints directories
     /// \arg hints_directory The directory with hints which should be initialized
-    directory_initializer make_directory_initializer(utils::directories& dirs, fs::path hints_directory);
+    directory_initializer make_directory_initializer(utils::directories& dirs,
+            std::filesystem::path hints_directory);
 
     /// \brief Rebalance hints segments among all present shards.
     ///
@@ -277,10 +286,10 @@ public:
     ///
     /// \param hints_directory A hints directory to rebalance
     /// \return A future that resolves when the operation is complete.
-    static future<> rebalance(sstring hints_directory);
+    static seastar::future<> rebalance(seastar::sstring hints_directory);
 
 private:
-    future<> compute_hints_dir_device_id();
+    seastar::future<> compute_hints_dir_device_id();
 
     /// \brief Scan the given hints directory and build the map of all present hints segments.
     ///
@@ -291,7 +300,7 @@ private:
     ///
     /// \param hints_directory directory to scan
     /// \return a map: ep -> map: shard -> segments (full paths)
-    static hints_segments_map get_current_hints_segments(const sstring& hints_directory);
+    static hints_segments_map get_current_hints_segments(const seastar::sstring& hints_directory);
 
     /// \brief Rebalance hints segments for a given (destination) end point
     ///
@@ -313,11 +322,11 @@ private:
     /// \param host_segments a map that was originally built by get_current_hints_segments() for this end point
     /// \param segments_to_move a list of segments we are allowed to move
     static void rebalance_segments_for(
-            const sstring& ep,
+            const seastar::sstring& ep,
             size_t segments_per_shard,
-            const sstring& hints_directory,
+            const seastar::sstring& hints_directory,
             hints_host_segments_map& host_segments,
-            std::list<fs::path>& segments_to_move);
+            std::list<std::filesystem::path>& segments_to_move);
 
     /// \brief Rebalance all present hints segments.
     ///
@@ -330,7 +339,7 @@ private:
     ///
     /// \param hints_directory a root hints directory
     /// \param segments_map a map that was built by get_current_hints_segments()
-    static void rebalance_segments(const sstring& hints_directory, hints_segments_map& segments_map);
+    static void rebalance_segments(const seastar::sstring& hints_directory, hints_segments_map& segments_map);
 
     /// \brief Remove sub-directories of shards that are not relevant any more (re-sharding to a lower number of shards case).
     ///
@@ -338,7 +347,7 @@ private:
     ///                           E is a number of end points for which hints where ever created.
     ///
     /// \param hints_directory a root hints directory
-    static void remove_irrelevant_shards_directories(const sstring& hints_directory);
+    static void remove_irrelevant_shards_directories(const seastar::sstring& hints_directory);
 
     node_to_hint_store_factory_type& store_factory() noexcept {
         return _store_factory;
@@ -420,5 +429,4 @@ public:
     }
 };
 
-}
-}
+} // namespace db::hints
