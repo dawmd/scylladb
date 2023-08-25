@@ -38,6 +38,7 @@
 #include "utils/disk-error-handler.hh"
 #include "utils/div_ceil.hh"
 #include "utils/error_injection.hh"
+#include "utils/exceptions.hh"
 #include "utils/lister.hh"
 #include "utils/runtime.hh"
 #include "converting_mutation_partition_applier.hh"
@@ -335,57 +336,67 @@ bool manager::can_hint_for(host_id_type ep) const noexcept {
 
 seastar::future<> manager::change_host_filter(host_filter filter) {
     if (!started()) {
-        return seastar::make_exception_future<>(
-                std::logic_error{"change_host_filter: called before the hints_manager was started"});
+        throw std::logic_error{"change_host_filter: called before the hints_manager was started"};
     }
 
-    return seastar::with_gate(_draining_hosts_gate, [this, filter = std::move(filter)] () mutable {
-        return seastar::with_semaphore(drain_lock(), 1, [this, filter = std::move(filter)] () mutable {
-            if (draining_all()) {
-                return seastar::make_exception_future<>(
-                        std::logic_error{"change_host_filter: cannot change the configuration because hints all hints were drained"});
+    const auto gate_holder = seastar::gate::holder{_draining_hosts_gate};
+    const auto units = co_await seastar::get_units(drain_lock(), 1);
+    
+    if (draining_all()) {
+        throw std::logic_error{"change_host_filter: cannot change the configuration because hints all hints were drained"};
+    }
+
+    manager_logger.debug("change_host_filter: changing from {} to {}", _host_filter, filter);
+
+    // Change the host_filter now and save the old one so that we can
+    // roll back in case of failure
+    std::swap(_host_filter, filter);
+
+    std::exception_ptr eptr = nullptr;
+
+    try {
+        constexpr auto directory_type = seastar::directory_entry_type::directory;
+        // Iterate over existing hint directories and see if we can enable an endpoint manager
+        // for some of them
+        co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_type>(),
+                [this] (fs::path datadir, seastar::directory_entry de) {
+            const auto ep = host_id_type{de.name};
+            const auto& topology = _proxy_anchor->get_token_metadata_ptr()->get_topology();
+
+            if (_host_managers.contains(ep) || !_host_filter.can_hint_for(topology, ep)) {
+                return seastar::make_ready_future<>();
             }
 
-            manager_logger.debug("change_host_filter: changing from {} to {}", _host_filter, filter);
+            return get_host_manager(ep).populate_segments_to_replay();
+        });
+    } catch (...) {
+        // Bring back the old filter. The finally() block will cause us to stop
+        // the additional ep_hint_managers that we started
+        _host_filter = std::move(filter);
+        eptr = std::current_exception();
+    }
+    
+    try {
+        // Remove endpoint managers which are rejected by the filter
+        co_await seastar::coroutine::parallel_for_each(_host_managers, [this] (auto& pair) {
+            auto& [host_id, hman] = pair;
+            const auto& topology = _proxy_anchor->get_token_metadata_ptr()->get_topology();
 
-            // Change the host_filter now and save the old one so that we can
-            // roll back in case of failure
-            std::swap(_host_filter, filter);
+            if (_host_filter.can_hint_for(topology, host_id)) {
+                return seastar::make_ready_future<>();
+            }
 
-            constexpr auto directory_type = seastar::directory_entry_type::directory;
-            // Iterate over existing hint directories and see if we can enable an endpoint manager
-            // for some of them
-            return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_type>(),
-                    [this] (fs::path datadir, seastar::directory_entry de) {
-                const auto ep = host_id_type{de.name};
-                const auto& topology = _proxy_anchor->get_token_metadata_ptr()->get_topology();
-
-                if (_host_managers.contains(ep) || !_host_filter.can_hint_for(topology, ep)) {
-                    return seastar::make_ready_future<>();
-                }
-
-                return get_host_manager(ep).populate_segments_to_replay();
-            }).handle_exception([this, filter = std::move(filter)] (auto ep) mutable {
-                // Bring back the old filter. The finally() block will cause us to stop
-                // the additional ep_hint_managers that we started
-                _host_filter = std::move(filter);
-            }).finally([this] {
-                // Remove endpoint managers which are rejected by the filter
-                return seastar::parallel_for_each(_host_managers, [this] (auto& pair) {
-                    auto& [host_id, hman] = pair;
-                    const auto& topology = _proxy_anchor->get_token_metadata_ptr()->get_topology();
-
-                    if (_host_filter.can_hint_for(topology, host_id)) {
-                        return seastar::make_ready_future<>();
-                    }
-
-                    return hman.stop(drain::no).finally([this, host_id = host_id] {
-                        _host_managers.erase(host_id);
-                    });
-                });
+            return hman.stop(drain::no).finally([this, host_id = host_id] {
+                _host_managers.erase(host_id);
             });
         });
-    });
+    } catch (...) {
+        eptr = make_nested_exception_ptr(std::current_exception(), eptr);
+    }
+
+    if (eptr) {
+        std::rethrow_exception(eptr);
+    }
 }
 
 bool manager::check_dc_for(host_id_type ep) const noexcept {
