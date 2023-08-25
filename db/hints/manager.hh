@@ -149,13 +149,18 @@ private:
 public:
     manager(seastar::sstring hints_directory, host_filter filter, int64_t max_hint_window_ms,
             resource_manager&res_manager, seastar::sharded<replica::database>& db);
+    
     manager(manager&&) = delete;
     manager& operator=(manager&&) = delete;
-    virtual ~manager();
+
+    ~manager() noexcept {
+        assert(_host_managers.empty());
+    }
 
 public:
-    void register_metrics(const sstring& group_name);
-    seastar::future<> start(shared_ptr<service::storage_proxy> proxy_ptr, shared_ptr<gms::gossiper> gossiper_ptr);
+    void register_metrics(const seastar::sstring& group_name);
+    seastar::future<> start(seastar::shared_ptr<service::storage_proxy> proxy_ptr,
+            seastar::shared_ptr<gms::gossiper> gossiper_ptr);
     seastar::future<> stop();
     bool store_hint(gms::inet_address ep, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
             tracing::trace_state_ptr tr_state) noexcept;
