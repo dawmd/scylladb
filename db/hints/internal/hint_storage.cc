@@ -48,7 +48,7 @@ using hint_segments_map = std::unordered_map<seastar::sstring, hint_host_segment
 
 template <typename Func>
     requires std::is_invocable_r_v<seastar::future<>, Func, fs::path, seastar::directory_entry, seastar::shard_id>
-seastar::future<> scan_for_hints_dirs(const std::string_view hints_directory, Func func) {
+seastar::future<> scan_for_hints_dirs(const std::string_view hint_directory, Func func) {
     // Capturing this function by reference is fine. It will be kept alive
     // as a local variable of this coroutine.
     //
@@ -67,7 +67,7 @@ seastar::future<> scan_for_hints_dirs(const std::string_view hints_directory, Fu
     };
     
     co_await lister::scan_dir(
-        fs::path{hints_directory},
+        fs::path{hint_directory},
         lister::dir_entry_types::of<seastar::directory_entry_type::directory>(),
         std::ref(lambda)
     );
@@ -80,7 +80,7 @@ seastar::future<> scan_for_hints_dirs(const std::string_view hints_directory, Fu
 ///
 /// \note Should be called from a seastar::thread context.
 ///
-/// \param hints_directory directory to scan
+/// \param hint_directory directory to scan
 /// \return a map: ep -> map: shard -> segments (full paths)
 hint_segments_map get_current_hint_segments(const std::string_view hint_directory) {
     using seastar::shard_id;
@@ -140,11 +140,11 @@ hint_segments_map get_current_hint_segments(const std::string_view hint_director
 ///
 /// \param ep destination end point ID (a string with its IP address)
 /// \param segments_per_shard number of hints segments per-shard we want to achieve
-/// \param hints_directory a root hints directory
+/// \param hint_directory a root hints directory
 /// \param host_segments a map that was originally built by get_current_hint_segments() for this end point
 /// \param segments_to_move a list of segments we are allowed to move
-void rebalance_segments_for(const seastar::sstring& ep, size_t segments_per_shard,
-        const seastar::sstring& hints_directory, hint_host_segments_map& host_segments,
+void rebalance_segments_for(const std::string_view ep, size_t segments_per_shard,
+        const std::string_view hint_directory, hint_host_segments_map& host_segments,
         std::list<std::filesystem::path>& segments_to_move)
 {
     manager_logger.trace("{}: segments_per_shard: {}, total number of segments to move: {}",
@@ -156,7 +156,7 @@ void rebalance_segments_for(const seastar::sstring& ep, size_t segments_per_shar
     }
 
     for (seastar::shard_id i = 0; i < smp::count && !segments_to_move.empty(); ++i) {
-        fs::path shard_path_dir{fs::path{hints_directory.c_str()} / seastar::format("{:d}", i).c_str() / ep.c_str()};
+        fs::path shard_path_dir{hint_directory / seastar::format("{:d}", i).c_str() / ep};
         std::list<fs::path>& current_shard_segments = host_segments[i];
 
         // Make sure that the shard_path_dir exists and if not - create it
@@ -190,9 +190,9 @@ void rebalance_segments_for(const seastar::sstring& ep, size_t segments_per_shar
 ///
 /// \note Should be called from a seastar::thread context.
 ///
-/// \param hints_directory a root hints directory
+/// \param hint_directory a root hints directory
 /// \param segments_map a map that was built by get_current_hint_segments()
-void rebalance_segments(const seastar::sstring& hints_directory, hint_segments_map& segments_map) {
+void rebalance_segments(const seastar::sstring& hint_directory, hint_segments_map& segments_map) {
     // Count how many hints segments to each destination we have.
     std::unordered_map<seastar::sstring, size_t> per_ep_hints;
     for (auto& ep_info : segments_map) {
@@ -248,12 +248,12 @@ void rebalance_segments(const seastar::sstring& hints_directory, hint_segments_m
         auto& current_segments_map = segments_map[ep];
 
         if (q) {
-            rebalance_segments_for(ep, q, hints_directory,
+            rebalance_segments_for(ep, q, hint_directory,
                     current_segments_map, current_segments_to_move);
         }
 
         if (r) {
-            rebalance_segments_for(ep, q + 1, hints_directory,
+            rebalance_segments_for(ep, q + 1, hint_directory,
                     current_segments_map, current_segments_to_move);
         }
     }
@@ -266,10 +266,10 @@ void rebalance_segments(const seastar::sstring& hints_directory, hint_segments_m
 ///
 /// Runs in seastar::async context
 ///
-/// \param hints_directory a root hints directory
-void remove_irrelevant_shards_directories(const seastar::sstring& hints_directory) {
+/// \param hint_directory a root hints directory
+void remove_irrelevant_shards_directories(const seastar::sstring& hint_directory) {
     // Shards level
-    scan_for_hints_dirs(hints_directory, [] (fs::path dir, seastar::directory_entry de, seastar::shard_id shard_id)
+    scan_for_hints_dirs(hint_directory, [] (fs::path dir, seastar::directory_entry de, seastar::shard_id shard_id)
             -> seastar::future<>
     {
         if (shard_id >= smp::count) {
