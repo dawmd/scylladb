@@ -102,19 +102,19 @@ hint_segments_map get_current_hint_segments(const std::string_view hint_director
                 // Hint file level.
                 manager_logger.trace("\t\tfile: {}", de.name);
 
-                current_hints_segments[addr][shard_id].emplace_back(dir / de.name.c_str());
+                current_hints_segments[addr][shard_id].emplace_back(dir / de.name);
 
                 return seastar::make_ready_future<>();
             };
 
             return lister::scan_dir(
-                dir / de.name.c_str(),
+                dir / de.name,
                 lister::dir_entry_types::of<directory_entry_type::directory>(),
                 hint_lambda);
         };
 
         return lister::scan_dir(
-            dir / de.name.c_str(),
+            dir / de.name,
             lister::dir_entry_types::of<directory_entry_type::directory>(),
             ip_lambda);
     };
@@ -156,11 +156,11 @@ void rebalance_segments_for(const std::string_view ep, size_t segments_per_shard
     }
 
     for (seastar::shard_id i = 0; i < smp::count && !segments_to_move.empty(); ++i) {
-        fs::path shard_path_dir{hint_directory / seastar::format("{:d}", i).c_str() / ep};
+        fs::path shard_path_dir{hint_directory / seastar::format("{:d}", i) / ep};
         std::list<fs::path>& current_shard_segments = host_segments[i];
 
         // Make sure that the shard_path_dir exists and if not - create it
-        io_check([name = shard_path_dir.c_str()] {
+        io_check([&name = shard_path_dir.native()] {
             return seastar::recursive_touch_directory(name);
         }).get();
 
