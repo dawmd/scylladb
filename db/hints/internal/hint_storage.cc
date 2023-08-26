@@ -192,7 +192,7 @@ void rebalance_segments_for(const std::string_view ep, size_t segments_per_shard
 ///
 /// \param hint_directory a root hints directory
 /// \param segments_map a map that was built by get_current_hint_segments()
-void rebalance_segments(const seastar::sstring& hint_directory, hint_segments_map& segments_map) {
+void rebalance_segments(const std::string_view hint_directory, hint_segments_map& segments_map) {
     // Count how many hints segments to each destination we have.
     std::unordered_map<seastar::sstring, size_t> per_ep_hints;
     for (auto& ep_info : segments_map) {
