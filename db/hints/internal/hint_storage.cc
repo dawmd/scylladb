@@ -82,7 +82,7 @@ seastar::future<> scan_for_hints_dirs(const std::string_view hints_directory, Fu
 ///
 /// \param hints_directory directory to scan
 /// \return a map: ep -> map: shard -> segments (full paths)
-hint_segments_map get_current_hints_segments(const std::string_view hint_directory) {
+hint_segments_map get_current_hint_segments(const std::string_view hint_directory) {
     using seastar::shard_id;
     using seastar::directory_entry;
     using seastar::directory_entry_type;
@@ -141,7 +141,7 @@ hint_segments_map get_current_hints_segments(const std::string_view hint_directo
 /// \param ep destination end point ID (a string with its IP address)
 /// \param segments_per_shard number of hints segments per-shard we want to achieve
 /// \param hints_directory a root hints directory
-/// \param host_segments a map that was originally built by get_current_hints_segments() for this end point
+/// \param host_segments a map that was originally built by get_current_hint_segments() for this end point
 /// \param segments_to_move a list of segments we are allowed to move
 void rebalance_segments_for(const seastar::sstring& ep, size_t segments_per_shard,
         const seastar::sstring& hints_directory, hint_host_segments_map& host_segments,
@@ -191,7 +191,7 @@ void rebalance_segments_for(const seastar::sstring& ep, size_t segments_per_shar
 /// \note Should be called from a seastar::thread context.
 ///
 /// \param hints_directory a root hints directory
-/// \param segments_map a map that was built by get_current_hints_segments()
+/// \param segments_map a map that was built by get_current_hint_segments()
 void rebalance_segments(const seastar::sstring& hints_directory, hint_segments_map& segments_map) {
     // Count how many hints segments to each destination we have.
     std::unordered_map<seastar::sstring, size_t> per_ep_hints;
@@ -293,7 +293,7 @@ void remove_irrelevant_shards_directories(const seastar::sstring& hints_director
 seastar::future<> rebalance_hints(seastar::sstring hint_directory) {
     return seastar::async([hint_directory = std::move(hint_directory)] {
         // Scan currently present hints segments.
-        hint_segments_map current_hints_segments = get_current_hints_segments(hint_directory);
+        hint_segments_map current_hints_segments = get_current_hint_segments(hint_directory);
 
         // Move segments to achieve an even distribution of files among all present shards.
         rebalance_segments(hint_directory, current_hints_segments);
