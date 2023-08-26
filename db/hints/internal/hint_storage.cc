@@ -267,25 +267,27 @@ void rebalance_segments(const std::string_view hint_directory, hint_segments_map
 /// Runs in seastar::async context
 ///
 /// \param hint_directory a root hints directory
-void remove_irrelevant_shards_directories(const seastar::sstring& hint_directory) {
+void remove_irrelevant_shards_directories(const std::string_view hint_directory) {
+    using seastar::directory_entry;
+    using seastar::shard_id;
+
     // Shards level
-    scan_for_hints_dirs(hint_directory, [] (fs::path dir, seastar::directory_entry de, seastar::shard_id shard_id)
-            -> seastar::future<>
-    {
+    auto shard_lambda = [] (fs::path dir, directory_entry de, shard_id shard_id) -> seastar::future<> {
+        auto ip_lambda = [] (fs::path dir, directory_entry de) {
+            return io_check(seastar::remove_file, (dir / de.name).native());
+        };
+
         if (shard_id >= smp::count) {
             // IPs level
-            co_await lister::scan_dir(
-                    dir / de.name.c_str(),
-                    lister::dir_entry_types::full(),
-                    lister::show_hidden::yes,
-                    [] (fs::path dir, seastar::directory_entry de) {
-                        return io_check(seastar::remove_file, (dir / de.name.c_str()).native());
-                    });
+            co_await lister::scan_dir(dir / de.name, lister::dir_entry_types::full(),
+                    lister::show_hidden::yes, ip_lambda);
             
             // Specific shard level
-            co_await io_check(seastar::remove_file, (dir / de.name.c_str()).native());
+            co_await io_check(seastar::remove_file, (dir / de.name).native());
         }
-    }).get();
+    };
+
+    scan_for_hints_dirs(hint_directory, shard_lambda).get();
 }
 
 } // anonymous namespace
