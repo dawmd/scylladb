@@ -30,6 +30,7 @@
 #include <filesystem>
 #include <functional>
 #include <list>
+#include <type_traits>
 #include <unordered_map>
 
 namespace fs = std::filesystem;
@@ -44,21 +45,31 @@ using hint_host_segments_map = std::unordered_map<seastar::shard_id, std::list<s
 // map: IP -> (map: shard -> segments)
 using hint_segments_map = std::unordered_map<seastar::sstring, hint_host_segments_map>;
 
-seastar::future<> scan_for_hints_dirs(const seastar::sstring& hints_directory,
-        std::function<seastar::future<> (fs::path dir, seastar::directory_entry de, seastar::shard_id shard_id)> f)
-{
-    constexpr auto directory_type = seastar::directory_entry_type::directory;
-    return lister::scan_dir(hints_directory, lister::dir_entry_types::of<directory_type>(),
-            [f = std::move(f)] (fs::path dir, seastar::directory_entry de) mutable {
+template <typename Func>
+    requires std::is_invocable_r_v<seastar::future<>, Func, fs::path, seastar::directory_entry, seastar::shard_id>
+seastar::future<> scan_for_hints_dirs(const std::string_view hints_directory, Func func) {
+    // Capturing this function by reference is fine. It will be kept alive
+    // as a local variable of this coroutine.
+    //
+    // Note that the coroutine takes the function by value.
+    auto lambda = [&func] (fs::path dir, seastar::directory_entry de) mutable -> seastar::future<> {
         seastar::shard_id shard_id;
+
         try {
             shard_id = std::stoi(de.name.c_str());
         } catch (std::invalid_argument& ex) {
             manager_logger.debug("Ignore invalid directory {}", de.name);
-            return seastar::make_ready_future<>();
+            co_return;
         }
-        return f(std::move(dir), std::move(de), shard_id);
-    });
+
+        co_await func(std::move(dir), std::move(de), shard_id);
+    };
+    
+    co_await lister::scan_dir(
+        fs::path{hints_directory},
+        lister::dir_entry_types::of<seastar::directory_entry_type::directory>(),
+        std::ref(lambda)
+    );
 }
 
 /// \brief Scan the given hints directory and build the map of all present hints segments.
