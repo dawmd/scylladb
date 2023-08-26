@@ -541,7 +541,13 @@ manager::host_manager& manager::get_host_manager(host_id_type ep) {
     auto it = _host_managers.find(ep);
     if (it == _host_managers.end()) {
         manager_logger.trace("Creating an ep_manager for {}", ep);
-        host_manager& host_man = _host_managers.emplace(ep, host_manager{ep, *this}).first->second;
+        auto [host_man_it, emplaced] = _host_managers.emplace(ep, host_manager{ep, *this});
+        
+        if (!emplaced) [[unlikely]] {
+            manager_logger.warn("Creating a host_manager for {} has failed", ep);
+        }
+
+        auto& host_man = host_man_it->second;
         host_man.start();
         return host_man;
     }
