@@ -94,7 +94,7 @@ void host_manager::start() {
 seastar::future<> host_manager::stop(drain should_drain) noexcept {
     if (stopped()) {
         return seastar::make_exception_future<>(
-                std::logic_error{seastar::format("host_manager[{}]: stop() is called twice", _host_id).c_str()});
+                std::logic_error{seastar::format("host_manager[{}]: stop() is called twice", _host_id)});
     }
 
     return seastar::async([this, should_drain] {
@@ -136,7 +136,7 @@ host_manager::host_manager(const host_id_type& key, manager& shard_manager)
     , _shard_manager{shard_manager}
     , _sender{*this, _shard_manager._resource_manager, _shard_manager.local_storage_proxy(),
             _shard_manager.local_db(), _shard_manager.local_gossiper(), _shard_manager._stats}
-    , _hints_dir{_shard_manager.hints_dir() / format("{}", _host_id).c_str()}
+    , _hints_dir{_shard_manager.hints_dir() / seastar::format("{}", _host_id).c_str()}
 {}
 
 host_manager::host_manager(host_manager&& other)
