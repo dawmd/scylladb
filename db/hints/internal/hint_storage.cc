@@ -23,6 +23,7 @@
 
 // Scylla includes.
 #include "db/hints/internal/hint_logger.hh"
+#include "seastar/core/future.hh"
 #include "utils/disk-error-handler.hh"
 #include "utils/lister.hh"
 
@@ -81,27 +82,44 @@ seastar::future<> scan_for_hints_dirs(const std::string_view hints_directory, Fu
 ///
 /// \param hints_directory directory to scan
 /// \return a map: ep -> map: shard -> segments (full paths)
-hint_segments_map get_current_hints_segments(const seastar::sstring& hints_directory) {
-    hint_segments_map current_hints_segments;
-    constexpr auto directory_type = seastar::directory_entry_type::directory;
+hint_segments_map get_current_hints_segments(const std::string_view hint_directory) {
+    using seastar::shard_id;
+    using seastar::directory_entry;
+    using seastar::directory_entry_type;
 
-    // shards level
-    scan_for_hints_dirs(hints_directory,
-            [&current_hints_segments] (fs::path dir, seastar::directory_entry de, seastar::shard_id shard_id) {
-        manager_logger.trace("shard_id = {}", shard_id);
-        // IPs level
-        return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::of<directory_type>(),
-                [&current_hints_segments, shard_id] (fs::path dir, seastar::directory_entry de) {
+    hint_segments_map current_hints_segments;
+
+    auto shard_lambda = [&current_hints_segments] (fs::path dir, directory_entry de, shard_id shard_id) {
+        // Shard level.
+        manager_logger.trace("shard_id = {}, shard_id");
+
+        auto ip_lambda = [&current_hints_segments, shard_id] (fs::path dir, directory_entry de) {
+            // IP level.
             manager_logger.trace("\tIP: {}", de.name);
-            // hints files
-            return lister::scan_dir(dir / de.name.c_str(), lister::dir_entry_types::of<directory_type>(),
-                    [&current_hints_segments, shard_id, ep_addr = de.name] (fs::path dir, seastar::directory_entry de) {
+
+            auto hint_lambda =
+                    [&current_hints_segments, shard_id, addr = de.name] (fs::path dir, directory_entry de) {
+                // Hint file level.
                 manager_logger.trace("\t\tfile: {}", de.name);
-                current_hints_segments[ep_addr][shard_id].emplace_back(dir / de.name.c_str());
+
+                current_hints_segments[addr][shard_id].emplace_back(dir / de.name.c_str());
+
                 return seastar::make_ready_future<>();
-            });
-        });
-    }).get();
+            };
+
+            return lister::scan_dir(
+                dir / de.name.c_str(),
+                lister::dir_entry_types::of<directory_entry_type::directory>(),
+                hint_lambda);
+        };
+
+        return lister::scan_dir(
+            dir / de.name.c_str(),
+            lister::dir_entry_types::of<directory_entry_type::directory>(),
+            ip_lambda);
+    };
+
+    scan_for_hints_dirs(hint_directory, shard_lambda).get();
 
     return current_hints_segments;
 }
