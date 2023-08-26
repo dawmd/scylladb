@@ -31,6 +31,8 @@
 #include <filesystem>
 #include <functional>
 #include <list>
+#include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 
