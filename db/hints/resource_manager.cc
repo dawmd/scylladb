@@ -62,8 +62,6 @@ size_t resource_manager::sending_queue_length() const {
     return _send_limiter.waiters();
 }
 
-const std::chrono::seconds space_watchdog::_watchdog_period = std::chrono::seconds(1);
-
 space_watchdog::space_watchdog(shard_managers_set& managers, per_device_limits_map& per_device_limits_map)
     : _shard_managers(managers)
     , _per_device_limits_map(per_device_limits_map)

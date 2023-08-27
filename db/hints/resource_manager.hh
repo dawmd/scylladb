@@ -47,18 +47,22 @@ class space_watchdog {
 private:
     using host_id_type = internal::host_id_type;
 
-    static const std::chrono::seconds _watchdog_period;
-
     struct manager_hash {
         size_t operator()(const manager& manager) const {
             return reinterpret_cast<uintptr_t>(&manager);
         }
     };
+
     struct manager_comp {
-        bool operator()(const std::reference_wrapper<manager>& m1, const std::reference_wrapper<manager>& m2) const {
+        bool operator()(const std::reference_wrapper<manager>& m1,
+                const std::reference_wrapper<manager>& m2) const
+        {
             return std::addressof(m1.get()) == std::addressof(m2.get());
         }
     };
+
+private:
+    static constexpr std::chrono::seconds _watchdog_period = std::chrono::seconds(1);
 
 public:
     struct per_device_limits {
@@ -81,10 +85,12 @@ private:
 
 public:
     space_watchdog(shard_managers_set& managers, per_device_limits_map& per_device_limits_map);
+
+public:
     void start();
     seastar::future<> stop() noexcept;
 
-    seastar::named_semaphore& update_lock() {
+    seastar::named_semaphore& update_lock() noexcept {
         return _update_lock;
     }
 
