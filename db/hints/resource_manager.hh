@@ -49,7 +49,7 @@ private:
 
     struct manager_hash {
         size_t operator()(const manager& manager) const {
-            return reinterpret_cast<uintptr_t>(&manager);
+            return reinterpret_cast<uintptr_t>(std::addressof(manager));
         }
     };
 
@@ -62,7 +62,7 @@ private:
     };
 
 private:
-    static constexpr std::chrono::seconds _watchdog_period = std::chrono::seconds(1);
+    static constexpr std::chrono::seconds WATCHDOG_PERIOD = std::chrono::seconds(1);
 
 public:
     struct per_device_limits {
@@ -167,9 +167,10 @@ class resource_manager {
     future<> prepare_per_device_limits(manager& shard_manager);
 
 public:
-    static constexpr size_t hint_segment_size_in_mb = 32;
-    static constexpr size_t max_hints_per_host_size_mb = 128; // 4 files 32MB each
-    static constexpr size_t default_per_shard_concurrency_limit = 8;
+    // TODO: Explain these.
+    static constexpr size_t HINT_SEGMENT_SIZE_IN_MB = 32;
+    static constexpr size_t MAX_HINTS_PER_HOST_SIZE_MB = 128; // 4 files, 32MB each
+    static constexpr size_t DEFAULT_PER_SHARD_CONCURRENCY_LIMIT = 8;
 
 public:
     resource_manager(size_t max_send_in_flight_memory, utils::updateable_value<uint32_t> max_hint_sending_concurrency)
