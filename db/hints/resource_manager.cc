@@ -6,18 +6,24 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#include "resource_manager.hh"
-#include "gms/inet_address.hh"
-#include "manager.hh"
-#include "log.hh"
-#include <boost/range/algorithm/for_each.hpp>
-#include <boost/range/adaptor/map.hpp>
-#include "utils/disk-error-handler.hh"
-#include "seastarx.hh"
+#include "db/hints/resource_manager.hh"
+
+// Seastar features.
 #include <seastar/core/sleep.hh>
 #include <seastar/core/seastar.hh>
+
+// Boost features.
+#include <boost/range/algorithm/for_each.hpp>
+#include <boost/range/adaptor/map.hpp>
+
+// Scylla includes.
+#include "db/hints/manager.hh"
+#include "gms/inet_address.hh"
+#include "utils/disk-error-handler.hh"
 #include "utils/div_ceil.hh"
 #include "utils/lister.hh"
+#include "log.hh"
+#include "seastarx.hh"
 
 namespace fs = std::filesystem;
 
