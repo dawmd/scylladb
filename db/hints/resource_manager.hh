@@ -35,8 +35,6 @@ namespace db::hints {
 seastar::future<::dev_t> get_device_id(const std::filesystem::path& path);
 seastar::future<bool> is_mountpoint(const std::filesystem::path& path);
 
-using timer_clock_type = seastar::lowres_clock;
-
 class manager;
 
 class space_watchdog {
