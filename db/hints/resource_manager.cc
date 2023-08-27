@@ -9,8 +9,10 @@
 #include "db/hints/resource_manager.hh"
 
 // Seastar features.
-#include <seastar/core/sleep.hh>
 #include <seastar/core/seastar.hh>
+#include <seastar/core/semaphore.hh>
+#include <seastar/core/sleep.hh>
+#include <seastar/coroutine/parallel_for_each.hh>
 
 // Boost features.
 #include <boost/range/adaptor/map.hpp>
@@ -201,19 +203,18 @@ seastar::future<> resource_manager::start(seastar::shared_ptr<service::storage_p
     _proxy_ptr = std::move(proxy_ptr);
     _gossiper_ptr = std::move(gossiper_ptr);
 
-    return seastar::with_semaphore(_operation_lock, 1, [this] () {
-        return seastar::parallel_for_each(_shard_managers, [this](manager& m) {
-            return m.start(_proxy_ptr, _gossiper_ptr);
-        }).then([this]() {
-            return seastar::do_for_each(_shard_managers, [this](manager& m) {
-                return prepare_per_device_limits(m);
-            });
-        }).then([this]() {
-            return _space_watchdog.start();
-        }).then([this]() {
-            set_running();
-        });
+    const auto operation_units = co_await seastar::get_units(_operation_lock, 1);
+    
+    co_await seastar::coroutine::parallel_for_each(_shard_managers, [this] (manager& m) {
+        return m.start(_proxy_ptr, _gossiper_ptr);
     });
+    
+    co_await seastar::do_for_each(_shard_managers, [this] (manager& m) {
+        return prepare_per_device_limits(m);
+    });
+    
+    _space_watchdog.start();
+    set_running();
 }
 
 void resource_manager::allow_replaying() noexcept {
