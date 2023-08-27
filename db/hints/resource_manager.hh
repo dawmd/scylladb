@@ -39,7 +39,6 @@ class inet_address;
 namespace db::hints {
 
 seastar::future<::dev_t> get_device_id(const std::filesystem::path& path);
-seastar::future<bool> is_mountpoint(const std::filesystem::path& path);
 
 class manager;
 
