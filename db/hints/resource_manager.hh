@@ -164,7 +164,9 @@ public:
     resource_manager& operator=(resource_manager&&) = delete;
 
 public:
-    seastar::future<seastar::semaphore_units<named_semaphore::exception_factory>> get_send_units_for(size_t buf_size);
+    seastar::future<seastar::semaphore_units<seastar::named_semaphore::exception_factory>>
+    get_send_units_for(size_t buf_size);
+    
     size_t sending_queue_length() const;
 
     seastar::future<> start(seastar::shared_ptr<service::storage_proxy> proxy_ptr,

@@ -13,7 +13,6 @@
 #include <seastar/core/seastar.hh>
 
 // Boost features.
-#include <boost/range/algorithm/for_each.hpp>
 #include <boost/range/adaptor/map.hpp>
 
 // Scylla includes.
@@ -25,12 +24,17 @@
 #include "log.hh"
 #include "seastarx.hh"
 
+// STD.
+#include <algorithm>
+#include <ranges>
+
 namespace fs = std::filesystem;
 
-namespace db {
-namespace hints {
+namespace db::hints {
 
 namespace {
+
+logging::logger resource_manager_logger("hints_resource_manager");
 
 seastar::future<bool> is_mountpoint(const std::filesystem::path path) {
     // Special case for '/', which is always a mount point.
@@ -46,15 +50,13 @@ seastar::future<bool> is_mountpoint(const std::filesystem::path path) {
 
 } // anonymous namespace
 
-static logging::logger resource_manager_logger("hints_resource_manager");
-
-future<dev_t> get_device_id(const fs::path& path) {
-    return file_stat(path.native()).then([] (struct stat_data sd) {
-        return sd.device_id;
-    });
+seastar::future<::dev_t> get_device_id(const fs::path& path) {
+    const auto sd = co_await seastar::file_stat(path.native());
+    co_return sd.device_id;
 }
 
-future<semaphore_units<named_semaphore::exception_factory>> resource_manager::get_send_units_for(size_t buf_size) {
+seastar::future<seastar::semaphore_units<seastar::named_semaphore::exception_factory>>
+resource_manager::get_send_units_for(size_t buf_size) {
     // In order to impose a limit on the number of hints being sent concurrently,
     // require each hint to reserve at least 1/(max concurrency) of the shard budget
     const size_t per_node_concurrency_limit = _max_hints_send_queue_length();
@@ -66,8 +68,11 @@ future<semaphore_units<named_semaphore::exception_factory>> resource_manager::ge
     size_t hint_memory_budget = std::max(min_send_hint_budget, buf_size);
     // Allow a very big mutation to be sent out by consuming the whole shard budget
     hint_memory_budget = std::min(hint_memory_budget, _max_send_in_flight_memory);
-    resource_manager_logger.trace("memory budget: need {} have {}", hint_memory_budget, _send_limiter.available_units());
-    return get_units(_send_limiter, hint_memory_budget);
+    
+    resource_manager_logger.trace("memory budget: need {} have {}",
+            hint_memory_budget, _send_limiter.available_units());
+
+    return seastar::get_units(_send_limiter, hint_memory_budget);
 }
 
 size_t resource_manager::sending_queue_length() const {
@@ -75,16 +80,16 @@ size_t resource_manager::sending_queue_length() const {
 }
 
 space_watchdog::space_watchdog(shard_managers_set& managers, per_device_limits_map& per_device_limits_map)
-    : _shard_managers(managers)
-    , _per_device_limits_map(per_device_limits_map)
-    , _update_lock(1, named_semaphore_exception_factory{"update lock"})
+    : _shard_managers{managers}
+    , _per_device_limits_map{per_device_limits_map}
+    , _update_lock{1, named_semaphore_exception_factory{"update lock"}}
 {}
 
 void space_watchdog::start() {
     _started = seastar::async([this] {
         while (!_as.abort_requested()) {
             try {
-                const auto units = get_units(_update_lock, 1).get();
+                const auto units = seastar::get_units(_update_lock, 1).get();
                 on_timer();
             } catch (...) {
                 resource_manager_logger.trace("space_watchdog: unexpected exception - stop all hints generators");
@@ -95,16 +100,18 @@ void space_watchdog::start() {
             }
             seastar::sleep_abortable(WATCHDOG_PERIOD, _as).get();
         }
-    }).handle_exception_type([] (const seastar::sleep_aborted& ignored) { });
+    }).handle_exception_type([] (const seastar::sleep_aborted& ignored) {});
 }
 
-future<> space_watchdog::stop() noexcept {
+seastar::future<> space_watchdog::stop() noexcept {
     _as.request_abort();
     return std::move(_started);
 }
 
 // Called under the end_point_hints_manager::file_update_mutex() of the corresponding end_point_hints_manager instance.
-future<> space_watchdog::scan_one_ep_dir(fs::path path, manager& shard_manager, host_id_type ep_key) {
+seastar::future<> space_watchdog::scan_one_ep_dir(fs::path path, manager& shard_manager,
+        host_id_type ep_key)
+{
     return do_with(std::move(path), [this, ep_key, &shard_manager] (fs::path& path) {
         // It may happen that we get here and the directory has already been deleted in the context of manager::drain_for().
         // In this case simply bail out.
@@ -186,15 +193,17 @@ void space_watchdog::on_timer() {
     }
 }
 
-future<> resource_manager::start(shared_ptr<service::storage_proxy> proxy_ptr, shared_ptr<gms::gossiper> gossiper_ptr) {
+seastar::future<> resource_manager::start(seastar::shared_ptr<service::storage_proxy> proxy_ptr,
+        seastar::shared_ptr<gms::gossiper> gossiper_ptr)
+{
     _proxy_ptr = std::move(proxy_ptr);
     _gossiper_ptr = std::move(gossiper_ptr);
 
-    return with_semaphore(_operation_lock, 1, [this] () {
-        return parallel_for_each(_shard_managers, [this](manager& m) {
+    return seastar::with_semaphore(_operation_lock, 1, [this] () {
+        return seastar::parallel_for_each(_shard_managers, [this](manager& m) {
             return m.start(_proxy_ptr, _gossiper_ptr);
         }).then([this]() {
-            return do_for_each(_shard_managers, [this](manager& m) {
+            return seastar::do_for_each(_shard_managers, [this](manager& m) {
                 return prepare_per_device_limits(m);
             });
         }).then([this]() {
@@ -207,12 +216,12 @@ future<> resource_manager::start(shared_ptr<service::storage_proxy> proxy_ptr, s
 
 void resource_manager::allow_replaying() noexcept {
     set_replay_allowed();
-    boost::for_each(_shard_managers, [] (manager& m) { m.allow_replaying(); });
+    std::ranges::for_each(_shard_managers, [] (manager& m) { m.allow_replaying(); });
 }
 
-future<> resource_manager::stop() noexcept {
-    return with_semaphore(_operation_lock, 1, [this] () {
-        return parallel_for_each(_shard_managers, [](manager& m) {
+seastar::future<> resource_manager::stop() noexcept {
+    return seastar::with_semaphore(_operation_lock, 1, [this] () {
+        return seastar::parallel_for_each(_shard_managers, [](manager& m) {
             return m.stop();
         }).finally([this]() {
             return _space_watchdog.stop();
@@ -222,17 +231,17 @@ future<> resource_manager::stop() noexcept {
     });
 }
 
-future<> resource_manager::register_manager(manager& m) {
-    return with_semaphore(_operation_lock, 1, [this, &m] () {
-        return with_semaphore(_space_watchdog.update_lock(), 1, [this, &m] {
+seastar::future<> resource_manager::register_manager(manager& m) {
+    return seastar::with_semaphore(_operation_lock, 1, [this, &m] {
+        return seastar::with_semaphore(_space_watchdog.update_lock(), 1, [this, &m] {
             const auto [it, inserted] = _shard_managers.insert(m);
             if (!inserted) {
                 // Already registered
-                return make_ready_future<>();
+                return seastar::make_ready_future<>();
             }
             if (!running()) {
                 // The hints manager will be started later by resource_manager::start()
-                return make_ready_future<>();
+                return seastar::make_ready_future<>();
             }
 
             // If the resource_manager was started, start the hints manager, too.
@@ -246,13 +255,13 @@ future<> resource_manager::register_manager(manager& m) {
                 });
             }).handle_exception([this, &m] (auto ep) {
                 _shard_managers.erase(m);
-                return make_exception_future<>(ep);
+                return seastar::make_exception_future<>(ep);
             });
         });
     });
 }
 
-future<> resource_manager::prepare_per_device_limits(manager& shard_manager) {
+seastar::future<> resource_manager::prepare_per_device_limits(manager& shard_manager) {
     dev_t device_id = shard_manager.hints_dir_device_id();
     auto it = _per_device_limits_map.find(device_id);
     if (it == _per_device_limits_map.end()) {
@@ -272,9 +281,8 @@ future<> resource_manager::prepare_per_device_limits(manager& shard_manager) {
         });
     } else {
         it->second.managers.emplace_back(std::ref(shard_manager));
-        return make_ready_future<>();
+        return seastar::make_ready_future<>();
     }
 }
 
-}
-}
+} // namespace db::hints
