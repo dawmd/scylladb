@@ -54,10 +54,6 @@ class host_manager;
 class hint_sender;
 } // namespace internal
 
-using node_to_hint_store_factory_type = internal::node_to_hint_store_factory_type;
-using hint_store_ptr = internal::hint_store_ptr;
-using hint_entry_reader = internal::hint_entry_reader;
-
 /// A helper class which tracks hints directory creation
 /// and allows to perform hints directory initialization lazily.
 class directory_initializer {
@@ -91,12 +87,16 @@ private:
     using drain = internal::drain;
     using host_id_type = internal::host_id_type;
 
+    using node_to_hint_store_factory_type = internal::node_to_hint_store_factory_type;
+    using hint_store_ptr = internal::hint_store_ptr;
+    using hint_entry_reader = internal::hint_entry_reader;
+
     friend class space_watchdog;
     friend class internal::host_manager;
     friend class internal::hint_sender;
 
-public:
     using host_manager = internal::host_manager;
+    using host_managers_map_type = std::unordered_map<host_id_type, host_manager>;
 
     enum class state {
         started,                // hinting is currently allowed (start() call is complete)
@@ -112,9 +112,6 @@ public:
         state::stopping>>;
 
 private:
-    using host_managers_map_type = std::unordered_map<host_id_type, host_manager>;
-
-public:
     // Non-const - can be modified with an error injection.
     static std::chrono::seconds hints_flush_period;
 
