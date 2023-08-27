@@ -9,6 +9,7 @@
 #include "db/hints/resource_manager.hh"
 
 // Seastar features.
+#include <exception>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/semaphore.hh>
 #include <seastar/core/sleep.hh>
@@ -222,16 +223,25 @@ void resource_manager::allow_replaying() noexcept {
     std::ranges::for_each(_shard_managers, [] (manager& m) { m.allow_replaying(); });
 }
 
-seastar::future<> resource_manager::stop() noexcept {
-    return seastar::with_semaphore(_operation_lock, 1, [this] () {
-        return seastar::parallel_for_each(_shard_managers, [](manager& m) {
+seastar::future<> resource_manager::stop() {
+    const auto operation_units = co_await seastar::get_units(_operation_lock, 1);
+    std::exception_ptr eptr = nullptr;
+    
+    try {
+        co_await seastar::coroutine::parallel_for_each(_shard_managers, [] (manager& m) {
             return m.stop();
-        }).finally([this]() {
-            return _space_watchdog.stop();
-        }).then([this]() {
-            unset_running();
         });
-    });
+    } catch (...) {
+        eptr = std::current_exception();
+    }
+
+    co_await _space_watchdog.stop(); // We rely on this function not throwing exceptions!
+
+    if (eptr) {
+        std::rethrow_exception(eptr);
+    }
+
+    unset_running();
 }
 
 seastar::future<> resource_manager::register_manager(manager& m) {

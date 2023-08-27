@@ -171,7 +171,7 @@ public:
 
     seastar::future<> start(seastar::shared_ptr<service::storage_proxy> proxy_ptr,
             seastar::shared_ptr<gms::gossiper> gossiper_ptr);
-    seastar::future<> stop() noexcept;
+    seastar::future<> stop();
 
     /// \brief Allows replaying hints for managers which are registered now or will be in the future.
     void allow_replaying() noexcept;
