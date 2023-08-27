@@ -16,6 +16,7 @@
 #include <seastar/core/semaphore.hh>
 
 // Scylla includes.
+#include "db/hints/internal/common.hh"
 #include "utils/small_vector.hh"
 #include "utils/updateable_value.hh"
 #include "enum_set.hh"
@@ -44,7 +45,8 @@ class manager;
 
 class space_watchdog {
 private:
-    using ep_key_type = gms::inet_address;
+    using host_id_type = internal::host_id_type;
+
     static const std::chrono::seconds _watchdog_period;
 
     struct manager_hash {
@@ -110,7 +112,7 @@ private:
     /// \param ep_name end point ID (as a string)
     /// \return future that resolves when scanning is complete
     seastar::future<> scan_one_ep_dir(std::filesystem::path path, manager& shard_manager,
-            ep_key_type ep_key);
+            host_id_type ep_key);
 };
 
 class resource_manager {

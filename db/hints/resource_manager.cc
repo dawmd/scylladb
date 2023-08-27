@@ -94,7 +94,7 @@ future<> space_watchdog::stop() noexcept {
 }
 
 // Called under the end_point_hints_manager::file_update_mutex() of the corresponding end_point_hints_manager instance.
-future<> space_watchdog::scan_one_ep_dir(fs::path path, manager& shard_manager, ep_key_type ep_key) {
+future<> space_watchdog::scan_one_ep_dir(fs::path path, manager& shard_manager, host_id_type ep_key) {
     return do_with(std::move(path), [this, ep_key, &shard_manager] (fs::path& path) {
         // It may happen that we get here and the directory has already been deleted in the context of manager::drain_for().
         // In this case simply bail out.
@@ -152,10 +152,10 @@ void space_watchdog::on_timer() {
                 const gms::inet_address ep = de.name;
                 if (shard_manager.manages_host(ep)) {
                     return shard_manager.with_file_update_mutex(ep, [this, &shard_manager, dir = std::move(dir), ep_name = std::move(de.name)] () mutable {
-                        return scan_one_ep_dir(dir / ep_name, shard_manager, ep_key_type(ep_name));
+                        return scan_one_ep_dir(dir / ep_name, shard_manager, host_id_type(ep_name));
                     });
                 } else {
-                    return scan_one_ep_dir(dir / de.name, shard_manager, ep_key_type(de.name));
+                    return scan_one_ep_dir(dir / de.name, shard_manager, host_id_type(de.name));
                 }
             }).get();
         }
