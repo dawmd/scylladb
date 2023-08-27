@@ -122,18 +122,7 @@ private:
 };
 
 class resource_manager {
-    const size_t _max_send_in_flight_memory;
-    utils::updateable_value<uint32_t> _max_hints_send_queue_length;
-    seastar::named_semaphore _send_limiter;
-
-    seastar::named_semaphore _operation_lock;
-    space_watchdog::shard_managers_set _shard_managers;
-    space_watchdog::per_device_limits_map _per_device_limits_map;
-    space_watchdog _space_watchdog;
-
-    seastar::shared_ptr<service::storage_proxy> _proxy_ptr;
-    seastar::shared_ptr<gms::gossiper> _gossiper_ptr;
-
+private:
     enum class state {
         running,
         replay_allowed,
@@ -142,8 +131,57 @@ class resource_manager {
         state::running,
         state::replay_allowed>>;
 
-    state_set _state;
+private:
+    const size_t _max_send_in_flight_memory;
+    utils::updateable_value<uint32_t> _max_hints_send_queue_length;
+    seastar::named_semaphore _send_limiter;
 
+    seastar::named_semaphore _operation_lock{1, named_semaphore_exception_factory{"operation lock"}};
+    space_watchdog::shard_managers_set _shard_managers{};
+    space_watchdog::per_device_limits_map _per_device_limits_map{};
+    space_watchdog _space_watchdog;
+
+    seastar::shared_ptr<service::storage_proxy> _proxy_ptr = nullptr;
+    seastar::shared_ptr<gms::gossiper> _gossiper_ptr = nullptr;
+
+    state_set _state{};
+
+public:
+    // TODO: Explain these.
+    static constexpr size_t HINT_SEGMENT_SIZE_IN_MB = 32;
+    static constexpr size_t MAX_HINTS_PER_HOST_SIZE_MB = 128; // 4 files, 32MB each
+    static constexpr size_t DEFAULT_PER_SHARD_CONCURRENCY_LIMIT = 8;
+
+public:
+    resource_manager(size_t max_send_in_flight_memory,
+            utils::updateable_value<uint32_t> max_hint_sending_concurrency)
+        : _max_send_in_flight_memory{max_send_in_flight_memory}
+        , _max_hints_send_queue_length{std::move(max_hint_sending_concurrency)}
+        , _send_limiter{_max_send_in_flight_memory, named_semaphore_exception_factory{"send limiter"}}
+        , _space_watchdog{_shard_managers, _per_device_limits_map}
+    {}
+
+    resource_manager(resource_manager&&) = delete;
+    resource_manager& operator=(resource_manager&&) = delete;
+
+public:
+    seastar::future<seastar::semaphore_units<named_semaphore::exception_factory>> get_send_units_for(size_t buf_size);
+    size_t sending_queue_length() const;
+
+    seastar::future<> start(seastar::shared_ptr<service::storage_proxy> proxy_ptr,
+            seastar::shared_ptr<gms::gossiper> gossiper_ptr);
+    seastar::future<> stop() noexcept;
+
+    /// \brief Allows replaying hints for managers which are registered now or will be in the future.
+    void allow_replaying() noexcept;
+
+    /// \brief Registers the hints::manager in resource_manager, and starts it, if resource_manager is already running.
+    ///
+    /// The hints::managers can be added either before or after resource_manager starts.
+    /// If resource_manager is already started, the hints manager will also be started.
+    seastar::future<> register_manager(manager& m);
+
+private:
     void set_running() noexcept {
         _state.set(state::running);
     }
@@ -164,41 +202,7 @@ class resource_manager {
         return _state.contains(state::replay_allowed);
     }
 
-    future<> prepare_per_device_limits(manager& shard_manager);
-
-public:
-    // TODO: Explain these.
-    static constexpr size_t HINT_SEGMENT_SIZE_IN_MB = 32;
-    static constexpr size_t MAX_HINTS_PER_HOST_SIZE_MB = 128; // 4 files, 32MB each
-    static constexpr size_t DEFAULT_PER_SHARD_CONCURRENCY_LIMIT = 8;
-
-public:
-    resource_manager(size_t max_send_in_flight_memory, utils::updateable_value<uint32_t> max_hint_sending_concurrency)
-        : _max_send_in_flight_memory(max_send_in_flight_memory)
-        , _max_hints_send_queue_length(std::move(max_hint_sending_concurrency))
-        , _send_limiter(_max_send_in_flight_memory, named_semaphore_exception_factory{"send limiter"})
-        , _operation_lock(1, named_semaphore_exception_factory{"operation lock"})
-        , _space_watchdog(_shard_managers, _per_device_limits_map)
-    {}
-
-    resource_manager(resource_manager&&) = delete;
-    resource_manager& operator=(resource_manager&&) = delete;
-
-    seastar::future<seastar::semaphore_units<named_semaphore::exception_factory>> get_send_units_for(size_t buf_size);
-    size_t sending_queue_length() const;
-
-    seastar::future<> start(seastar::shared_ptr<service::storage_proxy> proxy_ptr,
-            seastar::shared_ptr<gms::gossiper> gossiper_ptr);
-    seastar::future<> stop() noexcept;
-
-    /// \brief Allows replaying hints for managers which are registered now or will be in the future.
-    void allow_replaying() noexcept;
-
-    /// \brief Registers the hints::manager in resource_manager, and starts it, if resource_manager is already running.
-    ///
-    /// The hints::managers can be added either before or after resource_manager starts.
-    /// If resource_manager is already started, the hints manager will also be started.
-    seastar::future<> register_manager(manager& m);
+    seastar::future<> prepare_per_device_limits(manager& shard_manager);
 };
 
 } // db::hints
