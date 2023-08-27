@@ -21,24 +21,19 @@
 #include "utils/updateable_value.hh"
 #include "enum_set.hh"
 
-// Usually we don't define namespace aliases in our headers
-// but this one is already entrenched.
-namespace fs = std::filesystem;
-
 namespace service {
 class storage_proxy;
-}
+} // namespace service
 
 namespace gms {
-    class gossiper;
-    class inet_address;
+class gossiper;
+class inet_address;
 } // namespace gms
 
-namespace db {
-namespace hints {
+namespace db::hints {
 
-future<dev_t> get_device_id(const fs::path& path);
-future<bool> is_mountpoint(const fs::path& path);
+seastar::future<::dev_t> get_device_id(const std::filesystem::path& path);
+seastar::future<bool> is_mountpoint(const std::filesystem::path& path);
 
 using timer_clock_type = seastar::lowres_clock;
 
@@ -61,14 +56,13 @@ private:
     };
 
 public:
-
     struct per_device_limits {
         utils::small_vector<std::reference_wrapper<manager>, 2> managers;
         size_t max_shard_disk_space_size;
     };
 
     using shard_managers_set = std::unordered_set<std::reference_wrapper<manager>, manager_hash, manager_comp>;
-    using per_device_limits_map = std::unordered_map<dev_t, per_device_limits>;
+    using per_device_limits_map = std::unordered_map<::dev_t, per_device_limits>;
 
 private:
     size_t _total_size = 0;
@@ -76,14 +70,14 @@ private:
     per_device_limits_map& _per_device_limits_map;
     seastar::named_semaphore _update_lock;
 
-    future<> _started = make_ready_future<>();
+    seastar::future<> _started = seastar::make_ready_future<>();
     seastar::abort_source _as;
     int _files_count = 0;
 
 public:
     space_watchdog(shard_managers_set& managers, per_device_limits_map& per_device_limits_map);
     void start();
-    future<> stop() noexcept;
+    seastar::future<> stop() noexcept;
 
     seastar::named_semaphore& update_lock() {
         return _update_lock;
@@ -112,7 +106,8 @@ private:
     /// \param path directory to scan
     /// \param ep_name end point ID (as a string)
     /// \return future that resolves when scanning is complete
-    future<> scan_one_ep_dir(fs::path path, manager& shard_manager, ep_key_type ep_key);
+    seastar::future<> scan_one_ep_dir(std::filesystem::path path, manager& shard_manager,
+            ep_key_type ep_key);
 };
 
 class resource_manager {
@@ -125,8 +120,8 @@ class resource_manager {
     space_watchdog::per_device_limits_map _per_device_limits_map;
     space_watchdog _space_watchdog;
 
-    shared_ptr<service::storage_proxy> _proxy_ptr;
-    shared_ptr<gms::gossiper> _gossiper_ptr;
+    seastar::shared_ptr<service::storage_proxy> _proxy_ptr;
+    seastar::shared_ptr<gms::gossiper> _gossiper_ptr;
 
     enum class state {
         running,
@@ -177,11 +172,12 @@ public:
     resource_manager(resource_manager&&) = delete;
     resource_manager& operator=(resource_manager&&) = delete;
 
-    future<semaphore_units<named_semaphore::exception_factory>> get_send_units_for(size_t buf_size);
+    seastar::future<seastar::semaphore_units<named_semaphore::exception_factory>> get_send_units_for(size_t buf_size);
     size_t sending_queue_length() const;
 
-    future<> start(shared_ptr<service::storage_proxy> proxy_ptr, shared_ptr<gms::gossiper> gossiper_ptr);
-    future<> stop() noexcept;
+    seastar::future<> start(seastar::shared_ptr<service::storage_proxy> proxy_ptr,
+            seastar::shared_ptr<gms::gossiper> gossiper_ptr);
+    seastar::future<> stop() noexcept;
 
     /// \brief Allows replaying hints for managers which are registered now or will be in the future.
     void allow_replaying() noexcept;
@@ -190,8 +186,7 @@ public:
     ///
     /// The hints::managers can be added either before or after resource_manager starts.
     /// If resource_manager is already started, the hints manager will also be started.
-    future<> register_manager(manager& m);
+    seastar::future<> register_manager(manager& m);
 };
 
-}
-}
+} // db::hints

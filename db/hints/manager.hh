@@ -250,7 +250,7 @@ public:
         return _host_managers.size();
     }
 
-    const fs::path& hints_dir() const {
+    const std::filesystem::path& hints_dir() const {
         return _hints_dir;
     }
 

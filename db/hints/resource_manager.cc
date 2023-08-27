@@ -19,6 +19,8 @@
 #include "utils/div_ceil.hh"
 #include "utils/lister.hh"
 
+namespace fs = std::filesystem;
+
 namespace db {
 namespace hints {
 
