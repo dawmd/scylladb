@@ -114,10 +114,10 @@ private:
     /// value.
     ///
     /// \param path directory to scan
-    /// \param ep_name end point ID (as a string)
+    /// \param host_id host_id
     /// \return future that resolves when scanning is complete
-    seastar::future<> scan_one_ep_dir(std::filesystem::path path, manager& shard_manager,
-            host_id_type ep_key);
+    seastar::future<> scan_one_host_dir(std::filesystem::path path, manager& shard_manager,
+            host_id_type host_id);
 };
 
 class resource_manager {
