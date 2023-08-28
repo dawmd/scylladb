@@ -9,7 +9,6 @@
 #include "db/hints/resource_manager.hh"
 
 // Seastar features.
-#include <exception>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/semaphore.hh>
 #include <seastar/core/sleep.hh>
@@ -29,6 +28,7 @@
 
 // STD.
 #include <algorithm>
+#include <exception>
 #include <ranges>
 
 namespace fs = std::filesystem;
