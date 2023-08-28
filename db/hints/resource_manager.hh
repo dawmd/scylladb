@@ -126,9 +126,12 @@ private:
         running,
         replay_allowed,
     };
+    
     using state_set = enum_set<super_enum<state,
         state::running,
         state::replay_allowed>>;
+    
+    using semaphore_unit_type = seastar::semaphore_units<seastar::named_semaphore::exception_factory>;
 
 private:
     const size_t _max_send_in_flight_memory;
@@ -164,8 +167,7 @@ public:
     resource_manager& operator=(resource_manager&&) = delete;
 
 public:
-    seastar::future<seastar::semaphore_units<seastar::named_semaphore::exception_factory>>
-    get_send_units_for(size_t buf_size);
+    seastar::future<semaphore_unit_type> get_send_units_for(size_t buf_size);
     
     size_t sending_queue_length() const;
 
@@ -206,4 +208,4 @@ private:
     seastar::future<> prepare_per_device_limits(manager& shard_manager);
 };
 
-} // db::hints
+} // namespace db::hints

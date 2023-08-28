@@ -37,7 +37,7 @@ namespace db::hints {
 
 namespace {
 
-logging::logger resource_manager_logger("hints_resource_manager");
+logging::logger resource_manager_logger{"hints_resource_manager"};
 
 seastar::future<bool> is_mountpoint(const std::filesystem::path& path) {
     // Special case for '/', which is always a mount point.
@@ -188,8 +188,9 @@ seastar::future<> space_watchdog::scan_one_host_dir(fs::path path, manager& shar
 //////////////////////////////////
 //////////////////////////////////
 
-seastar::future<seastar::semaphore_units<seastar::named_semaphore::exception_factory>>
-resource_manager::get_send_units_for(size_t buf_size) {
+seastar::future<typename resource_manager::semaphore_unit_type> resource_manager::get_send_units_for(
+        size_t buf_size)
+{
     // In order to impose a limit on the number of hints being sent concurrently,
     // require each hint to reserve at least 1/(max concurrency) of the shard budget
     const size_t per_node_concurrency_limit = _max_hints_send_queue_length();
