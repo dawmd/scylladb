@@ -93,7 +93,7 @@ hint_segments_map get_current_hint_segments(const std::string_view hint_director
 
     auto shard_lambda = [&current_hints_segments] (fs::path dir, directory_entry de, shard_id shard_id) {
         // Shard level.
-        manager_logger.trace("shard_id = {}, shard_id");
+        manager_logger.trace("shard_id = {}", shard_id);
 
         auto ip_lambda = [&current_hints_segments, shard_id] (fs::path dir, directory_entry de) {
             // IP level.
