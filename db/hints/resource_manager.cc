@@ -39,14 +39,16 @@ namespace {
 
 logging::logger resource_manager_logger("hints_resource_manager");
 
-seastar::future<bool> is_mountpoint(const std::filesystem::path path) {
+seastar::future<bool> is_mountpoint(const std::filesystem::path& path) {
     // Special case for '/', which is always a mount point.
     if (path == path.parent_path()) {
         co_return true;
     }
 
+    const fs::path parent_path = path.parent_path();
+
     const auto device_id_1 = co_await get_device_id(path);
-    const auto device_id_2 = co_await get_device_id(path.parent_path());
+    const auto device_id_2 = co_await get_device_id(parent_path);
 
     co_return device_id_1 != device_id_2;
 }
