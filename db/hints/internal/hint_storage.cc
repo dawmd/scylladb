@@ -281,21 +281,11 @@ seastar::future<> rebalance_hints(seastar::sstring hints_directory) {
 ////////////////////////////////////////////////////////
 
 
-class host_hint_storage_impl {
-private:
-    fs::path _dir_path;
-
-public:
-    host_hint_storage_impl(fs::path host_hint_dir_path)
-        : _dir_path{std::move(host_hint_dir_path)}
-    {}
-
-    // TODO?
-    ~host_hint_storage_impl() = default;
-
-public:
-
-};
+host_hint_storage::host_hint_storage(const std::filesystem::path& shard_hint_storage_path,
+        host_id_type host_id, std::optional<seastar::scheduling_group> maybe_sched_group)
+    : _host_dir_path{shard_hint_storage_path / host_id.to_sstring()}
+    , _maybe_sched_group{maybe_sched_group}
+{}
 
 
 ////////////////////////////////////////////////////////
@@ -311,10 +301,9 @@ shard_hint_storage::shard_hint_storage(const fs::path& hint_dir_path, seastar::s
     , _maybe_sched_group{sched_group}
 {}
 
-// host_hint_storage shard_hint_storage::get_host_hint_storage_for(host_id_type host_id) {
-//     auto ptr = std::make_unique<host_hint_storage_impl>(_dir_path / host_id.to_sstring());
-//     return host_hint_storage{std::move(ptr)};
-// }
+host_hint_storage shard_hint_storage::get_host_hint_storage_for(host_id_type host_id) const {
+    return host_hint_storage{_dir_path, host_id, _maybe_sched_group};
+}
 
 
 } // namespace internal

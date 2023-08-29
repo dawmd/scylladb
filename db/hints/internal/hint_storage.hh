@@ -165,6 +165,8 @@ public:
                 std::ref(lambda));
     }
 
+    host_hint_storage get_host_hint_storage_for(host_id_type host_id) const;
+
 private:
     template <typename Func, typename... Args>
     decltype(auto) maybe_invoke_with_scheduling_group(Func&& func, Args&&... args) {
