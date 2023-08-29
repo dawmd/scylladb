@@ -14,12 +14,12 @@
 #include <seastar/core/future.hh>
 #include <seastar/core/scheduling.hh>
 #include <seastar/core/sstring.hh>
+#include <seastar/core/with_scheduling_group.hh>
 
 // Scylla includes.
 #include "db/commitlog/commitlog.hh"
 #include "db/commitlog/commitlog_entry.hh"
 #include "db/hints/internal/common.hh"
-#include "seastar/core/with_scheduling_group.hh"
 #include "utils/lister.hh"
 #include "utils/loading_shared_values.hh"
 
@@ -49,7 +49,35 @@ using hint_entry_reader = commitlog_entry_reader;
 inline const std::string HINT_FILENAME_PREFIX{"HintsLog" + commitlog::descriptor::SEPARATOR};
 constexpr inline std::chrono::seconds HINT_FILE_WRITE_TIMEOUT = std::chrono::seconds(2);
 
-class host_hint_storage {};
+
+/// This class is responsible for managing hints corresponding to a specific host and local shard.
+/// Its main functionality is to store and read hints from the disk.
+///
+/// Its actions can be assigned to a specific scheduling group.
+class host_hint_storage {
+private:
+    // Path to the directory corresponding to this host on a specific shard.
+    // In the usual configuration, it should be "{SCYLLA_WORKDIR}/{HINT_DIR}/<shard_id>/<host_id>".
+    std::filesystem::path _host_dir_path;
+    // Scheduling group that I/O operations performed by this object should belong to.
+    // If equal to `std::nullopt`, no scheduling group is set.
+    std::optional<seastar::scheduling_group> _maybe_sched_group;
+
+public:
+    host_hint_storage(const std::filesystem::path& shard_hint_storage_path, host_id_type host_id,
+            std::optional<seastar::scheduling_group> maybe_sched_group);
+    ~host_hint_storage() noexcept = default;
+
+public:
+    const std::filesystem::path& path() const noexcept {
+        return _host_dir_path;
+    }
+
+    std::optional<seastar::scheduling_group> scheduling_group() const noexcept {
+        return _maybe_sched_group;
+    }
+};
+
 
 /// This class is responsible for managing the directory corresponding to a specific shard.
 /// It allows for browsing which hosts are currently managed (i.e. we store some hints to them).
@@ -57,10 +85,12 @@ class host_hint_storage {};
 /// The class does NOT implement any mechanism related to storing or reading hints.
 /// That's a responsibility of @ref host_hint_storage objects.
 /// This class functions as an interface for creating those, though.
+///
+/// Its actions can be assigned to a specific scheduling group.
 class shard_hint_storage {
 private:
     // Path to the directory corresponding to this shard.
-    // In the usual configuration, it should be "{SCYLLA_WORKDIR}/hints/<shard_id>/".
+    // In the usual configuration, it should be "{SCYLLA_WORKDIR}/{HINT_DIR}/<shard_id>/".
     std::filesystem::path _dir_path;
     // Scheduling group that I/O operations performed by this object should belong to.
     // If equal to `std::nullopt`, no scheduling group is set.
