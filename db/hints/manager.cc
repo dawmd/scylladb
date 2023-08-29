@@ -53,8 +53,6 @@
 using namespace std::literals::chrono_literals;
 using namespace db::hints::internal;
 
-namespace fs = std::filesystem;
-
 namespace db::hints {
 
 class directory_initializer::impl {
@@ -148,7 +146,7 @@ std::chrono::seconds manager::hints_flush_period = std::chrono::seconds(10);
 
 manager::manager(seastar::sstring hints_directory, host_filter filter, int64_t max_hint_window_ms,
         resource_manager& res_manager, seastar::distributed<replica::database>& db)
-    : _hints_dir{fs::path{hints_directory} / seastar::format("{:d}", seastar::this_shard_id())}
+    : _hint_storage{std::filesystem::path{hints_directory}}
     , _host_filter{std::move(filter)}
     , _max_hint_window_us{max_hint_window_ms * 1000}
     , _local_db{db.local()}
@@ -203,10 +201,7 @@ seastar::future<> manager::start(seastar::shared_ptr<service::storage_proxy> pro
     _proxy_anchor = std::move(proxy_ptr);
     _gossiper_anchor = std::move(gossiper_ptr);
 
-    constexpr auto directory_type = seastar::directory_entry_type::directory;
-    return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_type>(),
-            [this] (fs::path datadir, seastar::directory_entry de) {
-        host_id_type ep = host_id_type{de.name};
+    return _hint_storage.for_each_host_dir([this] (host_id_type ep) {
         if (!check_dc_for(ep)) {
             return seastar::make_ready_future<>();
         }
@@ -452,12 +447,9 @@ seastar::future<> manager::change_host_filter(host_filter filter) {
     std::exception_ptr eptr = nullptr;
 
     try {
-        constexpr auto directory_type = seastar::directory_entry_type::directory;
         // Iterate over existing hint directories and see if we can enable an endpoint manager
         // for some of them
-        co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_type>(),
-                [this] (fs::path datadir, seastar::directory_entry de) {
-            const auto ep = host_id_type{de.name};
+        co_await _hint_storage.for_each_host_dir([this] (host_id_type ep) {
             const auto& topology = _proxy_anchor->get_token_metadata_ptr()->get_topology();
 
             if (_host_managers.contains(ep) || !_host_filter.can_hint_for(topology, ep)) {
@@ -529,10 +521,10 @@ seastar::future<> manager::rebalance(seastar::sstring hints_directory) {
 
 seastar::future<> manager::compute_hints_dir_device_id() {
     try {
-        _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
+        _hints_dir_device_id = co_await get_device_id(_hint_storage.path().native());
     } catch (...) {
         manager_logger.warn("Failed to stat directory {} for device id: {}",
-                _hints_dir.native(), std::current_exception());
+                _hint_storage.path().native(), std::current_exception());
         throw;
     }
 }

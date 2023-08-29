@@ -98,6 +98,8 @@ private:
     using host_manager = internal::host_manager;
     using host_managers_map_type = std::unordered_map<host_id_type, host_manager>;
 
+    using shard_hint_storage = internal::shard_hint_storage;
+
     enum class state {
         started,                // hinting is currently allowed (start() call is complete)
         replay_allowed,         // replaying (hints sending) is allowed
@@ -118,7 +120,8 @@ private:
 private:
     static constexpr uint64_t max_size_of_hints_in_progress = 10 * 1024 * 1024; // 10MB
     state_set _state;
-    std::filesystem::path _hints_dir;
+    shard_hint_storage _hint_storage;
+    
     dev_t _hints_dir_device_id = 0;
 
     node_to_hint_store_factory_type _store_factory;
@@ -251,7 +254,7 @@ public:
     }
 
     const std::filesystem::path& hints_dir() const {
-        return _hints_dir;
+        return _hint_storage.path();
     }
 
     dev_t hints_dir_device_id() const {
