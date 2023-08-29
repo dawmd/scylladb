@@ -49,6 +49,14 @@ using hint_entry_reader = commitlog_entry_reader;
 inline const std::string HINT_FILENAME_PREFIX{"HintsLog" + commitlog::descriptor::SEPARATOR};
 constexpr inline std::chrono::seconds HINT_FILE_WRITE_TIMEOUT = std::chrono::seconds(2);
 
+class host_hint_storage {};
+
+/// This class is responsible for managing the directory corresponding to a specific shard.
+/// It allows for browsing which hosts are currently managed (i.e. we store some hints to them).
+///
+/// The class does NOT implement any mechanism related to storing or reading hints.
+/// That's a responsibility of @ref host_hint_storage objects.
+/// This class functions as an interface for creating those, though.
 class shard_hint_storage {
 private:
     // Path to the directory corresponding to this shard.
