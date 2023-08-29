@@ -10,7 +10,6 @@
 #include "db/hints/manager.hh"
 
 // Seastar features.
-#include <exception>
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/gate.hh>
@@ -38,7 +37,6 @@
 #include "utils/div_ceil.hh"
 #include "utils/error_injection.hh"
 #include "utils/exceptions.hh"
-#include "utils/lister.hh"
 #include "utils/runtime.hh"
 #include "converting_mutation_partition_applier.hh"
 #include "seastarx.hh"
@@ -46,6 +44,7 @@
 
 // STD.
 #include <algorithm>
+#include <exception>
 #include <filesystem>
 #include <ranges>
 #include <span>
