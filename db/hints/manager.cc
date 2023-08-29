@@ -201,16 +201,15 @@ seastar::future<> manager::start(seastar::shared_ptr<service::storage_proxy> pro
     _proxy_anchor = std::move(proxy_ptr);
     _gossiper_anchor = std::move(gossiper_ptr);
 
-    return _hint_storage.for_each_host_dir([this] (host_id_type ep) {
+    co_await _hint_storage.for_each_host_dir([this] (host_id_type ep) {
         if (!check_dc_for(ep)) {
             return seastar::make_ready_future<>();
         }
         return get_host_manager(ep).populate_segments_to_replay();
-    }).then([this] {
-        return compute_hints_dir_device_id();
-    }).then([this] {
-        set_started();
     });
+    
+    co_await compute_hints_dir_device_id();
+    set_started();
 }
 
 seastar::future<> manager::stop() {
