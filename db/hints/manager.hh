@@ -169,7 +169,7 @@ public:
     /// \return TRUE if hints are allowed to be generated to \param ep.
     bool check_dc_for(host_id_type ep) const noexcept;
 
-    bool store_hint(gms::inet_address ep, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
+    bool store_hint(host_id_type ep, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
             tracing::trace_state_ptr tr_state) noexcept;
 
     /// \brief Initiate the draining when we detect that the node has left the cluster.
@@ -181,10 +181,10 @@ public:
     /// corresponding host_manager objects.
     ///
     /// \param endpoint node that left the cluster
-    void drain_for(gms::inet_address endpoint);
+    void drain_for(host_id_type endpoint);
 
     /// \brief Returns a set of replay positions for hint queues towards endpoints from the `target_hosts`.
-    sync_point::shard_rps calculate_current_sync_point(std::span<const gms::inet_address> target_hosts) const;
+    sync_point::shard_rps calculate_current_sync_point(std::span<const host_id_type> target_hosts) const;
 
     /// \brief Waits until hint replay reach replay positions described in `rps`.
     seastar::future<> wait_for_sync_point(seastar::abort_source& as, const sync_point::shard_rps& rps);

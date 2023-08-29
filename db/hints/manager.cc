@@ -307,7 +307,7 @@ bool manager::store_hint(host_id_type ep, schema_ptr s, seastar::lw_shared_ptr<c
     }
 }
 
-void manager::drain_for(gms::inet_address endpoint) {
+void manager::drain_for(host_id_type endpoint) {
     if (!started() || stopping() || draining_all()) {
         return;
     }
@@ -357,7 +357,7 @@ void manager::drain_for(gms::inet_address endpoint) {
     });
 }
 
-sync_point::shard_rps manager::calculate_current_sync_point(std::span<const gms::inet_address> target_hosts) const {
+sync_point::shard_rps manager::calculate_current_sync_point(std::span<const host_id_type> target_hosts) const {
     sync_point::shard_rps rps;
     for (auto addr : target_hosts) {
         auto it = _host_managers.find(addr);
