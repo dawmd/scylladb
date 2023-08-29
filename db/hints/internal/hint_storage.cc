@@ -13,6 +13,7 @@
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/file.hh>
 #include <seastar/core/file-types.hh>
+#include <seastar/core/print.hh> // For seastar::format
 #include <seastar/core/seastar.hh>
 #include <seastar/core/smp.hh>
 #include <seastar/core/sstring.hh>
@@ -24,6 +25,7 @@
 // Scylla includes.
 #include "db/hints/internal/hint_logger.hh"
 #include "seastar/core/future.hh"
+#include "seastar/core/scheduling.hh"
 #include "utils/disk-error-handler.hh"
 #include "utils/lister.hh"
 
@@ -31,6 +33,7 @@
 #include <filesystem>
 #include <functional>
 #include <list>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -270,6 +273,49 @@ seastar::future<> rebalance_hints(seastar::sstring hints_directory) {
     // Remove the directories of shards that are not present anymore - they should not have any segments by now
     co_await remove_irrelevant_shards_directories(hints_directory);
 }
+
+
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+
+
+class host_hint_storage_impl {
+private:
+    fs::path _dir_path;
+
+public:
+    host_hint_storage_impl(fs::path host_hint_dir_path)
+        : _dir_path{std::move(host_hint_dir_path)}
+    {}
+
+    // TODO?
+    ~host_hint_storage_impl() = default;
+
+public:
+
+};
+
+
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+
+
+shard_hint_storage::shard_hint_storage(const fs::path& hint_dir_path)
+    : _dir_path{hint_dir_path / seastar::format("{:d}", seastar::this_shard_id())}
+{}
+
+shard_hint_storage::shard_hint_storage(const fs::path& hint_dir_path, seastar::scheduling_group sched_group)
+    : _dir_path{hint_dir_path / seastar::format("{:d}", seastar::this_shard_id())}
+    , _maybe_sched_group{sched_group}
+{}
+
+// host_hint_storage shard_hint_storage::get_host_hint_storage_for(host_id_type host_id) {
+//     auto ptr = std::make_unique<host_hint_storage_impl>(_dir_path / host_id.to_sstring());
+//     return host_hint_storage{std::move(ptr)};
+// }
+
 
 } // namespace internal
 } // namespace db::hints

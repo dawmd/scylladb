@@ -9,17 +9,25 @@
 #pragma once
 
 // Seastar features.
+#include <seastar/core/file.hh>
+#include <seastar/core/file-types.hh>
 #include <seastar/core/future.hh>
+#include <seastar/core/scheduling.hh>
 #include <seastar/core/sstring.hh>
 
 // Scylla includes.
 #include "db/commitlog/commitlog.hh"
 #include "db/commitlog/commitlog_entry.hh"
 #include "db/hints/internal/common.hh"
+#include "seastar/core/with_scheduling_group.hh"
+#include "utils/lister.hh"
 #include "utils/loading_shared_values.hh"
 
 // STD.
 #include <chrono>
+#include <concepts>
+#include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -41,13 +49,64 @@ using hint_entry_reader = commitlog_entry_reader;
 inline const std::string HINT_FILENAME_PREFIX{"HintsLog" + commitlog::descriptor::SEPARATOR};
 constexpr inline std::chrono::seconds HINT_FILE_WRITE_TIMEOUT = std::chrono::seconds(2);
 
-/// \brief Rebalance hints segments among all present shards.
+class shard_hint_storage {
+private:
+    // Path to the directory corresponding to this shard.
+    // In the usual configuration, it should be "{SCYLLA_WORKDIR}/hints/<shard_id>/".
+    std::filesystem::path _dir_path;
+    // Scheduling group that I/O operations performed by this object should belong to.
+    // If equal to `std::nullopt`, no scheduling group is set.
+    std::optional<seastar::scheduling_group> _maybe_sched_group = std::nullopt;
+
+public:
+    shard_hint_storage(const std::filesystem::path& hint_dir_path);
+    shard_hint_storage(const std::filesystem::path& hint_dir_path, seastar::scheduling_group sched_group);
+
+    // TODO?
+    ~shard_hint_storage() noexcept = default;
+
+public:
+    const std::filesystem::path& path() const noexcept {
+        return _dir_path;
+    }
+
+    std::optional<seastar::scheduling_group> scheduling_group() const noexcept {
+        return _maybe_sched_group;
+    }
+
+    template <typename Func>
+        requires std::invocable<Func, host_id_type>
+    seastar::future<> for_each_host_dir(Func func) {
+        auto lambda = [&] (auto&& /* ignored */, seastar::directory_entry de) mutable {
+            const auto host_id = host_id_type{de.name};
+            return func(host_id);
+        };
+
+        co_await maybe_invoke_with_scheduling_group([&] {
+            return lister::scan_dir(
+                    _dir_path,
+                    lister::dir_entry_types::of<seastar::directory_entry_type::directory>(),
+                    std::ref(lambda));
+        });
+    }
+
+private:
+    template <typename Func>
+    decltype(auto) maybe_invoke_with_scheduling_group(Func&& func) {
+        return _maybe_sched_group.has_value()
+                ? seastar::with_scheduling_group(_maybe_sched_group.value(), std::forward<Func>(func))
+                : std::forward<Func>(func)();
+    }
+};
+
+
+/// \brief Rebalance hints segments among ALL present shards.
 ///
-/// The difference between the number of segments on every two shard will be not greater than 1 after the
-/// rebalancing.
+/// The difference between the number of segments on every two shard will be not greater
+/// than 1 after the rebalancing.
 ///
-/// Removes the sub-directories of \ref hints_directory that correspond to shards that are not relevant any more
-/// (re-sharding to a lower shards number case).
+/// Removes the sub-directories of \ref hints_directory that correspond to shards
+/// that are not relevant any more (re-sharding to a lower shards number case).
 ///
 /// Complexity: O(N+K), where N is a total number of present hints' segments and
 ///                           K = <number of shards during the previous boot> * <number of end points for which hints where ever created>
