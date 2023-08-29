@@ -76,16 +76,26 @@ public:
 
     template <typename Func>
         requires std::invocable<Func, host_id_type>
-    seastar::future<> for_each_host_dir(Func func) {
-        auto lambda = [&] (auto&& /* ignored */, seastar::directory_entry de) mutable {
+    seastar::future<> for_each_host_dir(Func&& func) {
+        // We mark this lambda as mutable because `operator()(host_id_type)` of the passed functor
+        // can be marked as const or there could be two overloads: one for when it's const-qualified,
+        // and another for when it's not. We want to use the right one.
+        auto lambda = [func = std::forward<Func>(func)] (auto&& /* ignored */,
+                seastar::directory_entry de) mutable {
             const auto host_id = host_id_type{de.name};
             return func(host_id);
         };
 
-        co_await maybe_invoke_with_scheduling_group([&] {
+        // We use mutable to ensure using the right overload again.
+        co_await maybe_invoke_with_scheduling_group([&] () mutable {
             return lister::scan_dir(
                     _dir_path,
                     lister::dir_entry_types::of<seastar::directory_entry_type::directory>(),
+                    // std::ref to leverage the small object optimization of std::function
+                    // that all major compilers implement. If the passed functor's size is
+                    // big, that would lead to unnecessary allocations that we can avoid.
+                    // This local lambda will live until this function returns because of
+                    // lifetime extension related to how coroutines are implemented.
                     std::ref(lambda));
         });
     }
