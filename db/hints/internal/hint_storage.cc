@@ -44,35 +44,26 @@ namespace internal {
 namespace {
 
 // map: shard -> segments
-using hint_host_segments_map = std::unordered_map<seastar::shard_id, std::list<std::filesystem::path>>;
+using hint_host_segments_map = std::unordered_map<seastar::shard_id, std::list<fs::path>>;
 // map: IP -> (map: shard -> segments)
 using hint_segments_map = std::unordered_map<seastar::sstring, hint_host_segments_map>;
 
 template <typename Func>
-    requires std::is_invocable_r_v<seastar::future<>, Func, fs::path, seastar::directory_entry, seastar::shard_id>
-seastar::future<> scan_for_hints_dirs(const std::string_view hint_directory, Func func) {
-    // Capturing this function by reference is fine. It will be kept alive
-    // as a local variable of this coroutine.
-    //
-    // Note that the coroutine takes the function by value.
-    auto lambda = [&func] (fs::path dir, seastar::directory_entry de) mutable -> seastar::future<> {
+    requires std::invocable<Func, fs::path, seastar::directory_entry, seastar::shard_id>
+seastar::future<> scan_for_hints_dirs(const std::string_view hints_directory, Func&& func) {
+    return lister::scan_dir(hints_directory, lister::dir_entry_types::of<seastar::directory_entry_type::directory>(),
+            [func = std::forward<Func>(func)] (fs::path dir, seastar::directory_entry de) mutable {
         seastar::shard_id shard_id;
 
         try {
             shard_id = std::stoi(de.name.c_str());
         } catch (std::invalid_argument& ex) {
             manager_logger.debug("Ignore invalid directory {}", de.name);
-            co_return;
+            return seastar::make_ready_future<>();
         }
-
-        co_await func(std::move(dir), std::move(de), shard_id);
-    };
-    
-    co_await lister::scan_dir(
-        fs::path{hint_directory},
-        lister::dir_entry_types::of<seastar::directory_entry_type::directory>(),
-        std::ref(lambda)
-    );
+        
+        return func(std::move(dir), std::move(de), shard_id);
+    });
 }
 
 /// \brief Scan the given hints directory and build the map of all present hints segments.
@@ -84,46 +75,31 @@ seastar::future<> scan_for_hints_dirs(const std::string_view hint_directory, Fun
 ///
 /// \param hint_directory directory to scan
 /// \return a map: ep -> map: shard -> segments (full paths)
-hint_segments_map get_current_hint_segments(const std::string_view hint_directory) {
-    using seastar::shard_id;
-    using seastar::directory_entry;
-    using seastar::directory_entry_type;
-
+seastar::future<hint_segments_map> get_current_hints_segments(const std::string_view hint_directory) {
     hint_segments_map current_hints_segments;
 
-    auto shard_lambda = [&current_hints_segments] (fs::path dir, directory_entry de, shard_id shard_id) {
-        // Shard level.
+    // Shard level.
+    co_await scan_for_hints_dirs(hint_directory, [&current_hints_segments] (fs::path dir,
+            seastar::directory_entry de, seastar::shard_id shard_id) {
         manager_logger.trace("shard_id = {}", shard_id);
 
-        auto ip_lambda = [&current_hints_segments, shard_id] (fs::path dir, directory_entry de) {
-            // IP level.
+        // IP level.
+        return lister::scan_dir(dir / de.name, lister::dir_entry_types::of<seastar::directory_entry_type::directory>(),
+                [&current_hints_segments, shard_id] (fs::path dir, seastar::directory_entry de) {
             manager_logger.trace("\tIP: {}", de.name);
 
-            auto hint_lambda =
-                    [&current_hints_segments, shard_id, addr = de.name] (fs::path dir, directory_entry de) {
-                // Hint file level.
+            // Hint files.
+            return lister::scan_dir(dir / de.name, lister::dir_entry_types::of<seastar::directory_entry_type::regular>(),
+                    [&current_hints_segments, shard_id, ep_addr = de.name] (fs::path dir,
+                            seastar::directory_entry de) {
                 manager_logger.trace("\t\tfile: {}", de.name);
-
-                current_hints_segments[addr][shard_id].emplace_back(dir / de.name);
-
+                current_hints_segments[ep_addr][shard_id].emplace_back(dir / de.name);
                 return seastar::make_ready_future<>();
-            };
+            });
+        });
+    });
 
-            return lister::scan_dir(
-                dir / de.name,
-                lister::dir_entry_types::of<directory_entry_type::directory>(),
-                hint_lambda);
-        };
-
-        return lister::scan_dir(
-            dir / de.name,
-            lister::dir_entry_types::of<directory_entry_type::directory>(),
-            ip_lambda);
-    };
-
-    scan_for_hints_dirs(hint_directory, shard_lambda).get();
-
-    return current_hints_segments;
+    co_return current_hints_segments;
 }
 
 /// \brief Rebalance hints segments for a given (destination) end point
@@ -138,33 +114,33 @@ hint_segments_map get_current_hint_segments(const std::string_view hint_director
 ///
 /// Complexity: O(N), where N is a total number of present hints' segments for the \ref ep end point (as a destination).
 ///
-/// \note Should be called from a seastar::thread context.
-///
 /// \param ep destination end point ID (a string with its IP address)
 /// \param segments_per_shard number of hints segments per-shard we want to achieve
 /// \param hint_directory a root hints directory
 /// \param host_segments a map that was originally built by get_current_hint_segments() for this end point
 /// \param segments_to_move a list of segments we are allowed to move
-void rebalance_segments_for(const std::string_view ep, size_t segments_per_shard,
+seastar::future<> rebalance_segments_for(const std::string_view ep, size_t segments_per_shard,
         const std::string_view hint_directory, hint_host_segments_map& host_segments,
-        std::list<std::filesystem::path>& segments_to_move)
+        std::list<fs::path>& segments_to_move)
 {
     manager_logger.trace("{}: segments_per_shard: {}, total number of segments to move: {}",
             ep, segments_per_shard, segments_to_move.size());
 
     // sanity check
     if (segments_to_move.empty() || !segments_per_shard) {
-        return;
+        co_return;
     }
 
+    const fs::path hint_directory_path{hint_directory};
+
     for (seastar::shard_id i = 0; i < smp::count && !segments_to_move.empty(); ++i) {
-        fs::path shard_path_dir{hint_directory / seastar::format("{:d}", i) / ep};
+        fs::path shard_path_dir{hint_directory_path / seastar::format("{:d}", i) / ep};
         std::list<fs::path>& current_shard_segments = host_segments[i];
 
         // Make sure that the shard_path_dir exists and if not - create it
-        io_check([&name = shard_path_dir.native()] {
+        co_await io_check([name = shard_path_dir.c_str()] {
             return seastar::recursive_touch_directory(name);
-        }).get();
+        });
 
         while (current_shard_segments.size() < segments_per_shard && !segments_to_move.empty()) {
             auto seg_path_it = segments_to_move.begin();
@@ -173,7 +149,7 @@ void rebalance_segments_for(const std::string_view ep, size_t segments_per_shard
             // Don't move the file to the same location - it's pointless.
             if (*seg_path_it != new_path) {
                 manager_logger.trace("going to move: {} -> {}", *seg_path_it, new_path);
-                io_check(seastar::rename_file, seg_path_it->native(), new_path.native()).get();
+                co_await io_check(seastar::rename_file, seg_path_it->native(), new_path.native());
             } else {
                 manager_logger.trace("skipping: {}", *seg_path_it);
             }
@@ -190,11 +166,9 @@ void rebalance_segments_for(const std::string_view ep, size_t segments_per_shard
 ///
 /// Complexity: O(N), where N is a total number of present hints' segments.
 ///
-/// \note Should be called from a seastar::thread context.
-///
 /// \param hint_directory a root hints directory
 /// \param segments_map a map that was built by get_current_hint_segments()
-void rebalance_segments(const std::string_view hint_directory, hint_segments_map& segments_map) {
+seastar::future<> rebalance_segments(const std::string_view hint_directory, hint_segments_map& segments_map) {
     // Count how many hints segments to each destination we have.
     std::unordered_map<seastar::sstring, size_t> per_ep_hints;
     for (auto& ep_info : segments_map) {
@@ -202,7 +176,7 @@ void rebalance_segments(const std::string_view hint_directory, hint_segments_map
                 ep_info.second |
                 boost::adaptors::map_values |
                 boost::adaptors::transformed(std::mem_fn(&std::list<fs::path>::size)),
-                0);
+                size_t(0));
         manager_logger.trace("{}: total files: {}", ep_info.first, per_ep_hints[ep_info.first]);
     }
 
@@ -250,12 +224,12 @@ void rebalance_segments(const std::string_view hint_directory, hint_segments_map
         auto& current_segments_map = segments_map[ep];
 
         if (q) {
-            rebalance_segments_for(ep, q, hint_directory,
+            co_await rebalance_segments_for(ep, q, hint_directory,
                     current_segments_map, current_segments_to_move);
         }
 
         if (r) {
-            rebalance_segments_for(ep, q + 1, hint_directory,
+            co_await rebalance_segments_for(ep, q + 1, hint_directory,
                     current_segments_map, current_segments_to_move);
         }
     }
@@ -269,43 +243,32 @@ void rebalance_segments(const std::string_view hint_directory, hint_segments_map
 /// Runs in seastar::async context
 ///
 /// \param hint_directory a root hints directory
-void remove_irrelevant_shards_directories(const std::string_view hint_directory) {
-    using seastar::directory_entry;
-    using seastar::shard_id;
-
-    // Shards level
-    auto shard_lambda = [] (fs::path dir, directory_entry de, shard_id shard_id) -> seastar::future<> {
-        auto ip_lambda = [] (fs::path dir, directory_entry de) {
-            return io_check(seastar::remove_file, (dir / de.name).native());
-        };
-
+seastar::future<> remove_irrelevant_shards_directories(const std::string_view hint_directory) {
+    // Shard level.
+    return scan_for_hints_dirs(hint_directory, [] (fs::path dir, seastar::directory_entry de,
+            seastar::shard_id shard_id) -> seastar::future<> {
         if (shard_id >= smp::count) {
-            // IPs level
+            // IP level.
             co_await lister::scan_dir(dir / de.name, lister::dir_entry_types::full(),
-                    lister::show_hidden::yes, ip_lambda);
-            
-            // Specific shard level
+                    lister::show_hidden::yes, [] (fs::path dir, seastar::directory_entry de) {
+                return io_check(seastar::remove_file, (dir / de.name).native());
+            });
             co_await io_check(seastar::remove_file, (dir / de.name).native());
         }
-    };
-
-    scan_for_hints_dirs(hint_directory, shard_lambda).get();
+    });
 }
 
 } // anonymous namespace
 
-seastar::future<> rebalance_hints(seastar::sstring hint_directory) {
-    return seastar::async([hint_directory = std::move(hint_directory)] {
-        // Scan currently present hints segments.
-        hint_segments_map current_hints_segments = get_current_hint_segments(hint_directory);
+seastar::future<> rebalance_hints(seastar::sstring hints_directory) {
+    // Scan currently present hints segments.
+    hint_segments_map current_hints_segments = co_await get_current_hints_segments(hints_directory);
 
-        // Move segments to achieve an even distribution of files among all present shards.
-        rebalance_segments(hint_directory, current_hints_segments);
+    // Move segments to achieve an even distribution of files among all present shards.
+    co_await rebalance_segments(hints_directory, current_hints_segments);
 
-        // Remove the directories of shards that are not present anymore
-        // -- they should not have any segments by now.
-        remove_irrelevant_shards_directories(hint_directory);
-    });
+    // Remove the directories of shards that are not present anymore - they should not have any segments by now
+    co_await remove_irrelevant_shards_directories(hints_directory);
 }
 
 } // namespace internal
