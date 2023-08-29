@@ -76,6 +76,37 @@ public:
     std::optional<seastar::scheduling_group> scheduling_group() const noexcept {
         return _maybe_sched_group;
     }
+
+    template <typename Func>
+        requires std::invocable<Func, seastar::directory_entry>
+    seastar::future<> for_each_hint_file(Func&& func) {
+        // We mark this lambda as mutable because `operator()(seastar::directory_entry)` of
+        // the passed functor can be marked as const or there could be two overloads:
+        // one for when it's const-qualified, and another for when it's not.
+        // We want to use the right one.
+        auto lambda = [func = std::forward<Func>(func)] (auto&& /* ignored */,
+                seastar::directory_entry de) mutable {
+            return func(std::move(de));
+        };
+
+        co_await maybe_invoke_with_scheduling_group(lister::scan_dir, _host_dir_path,
+                lister::dir_entry_types::of<seastar::directory_entry_type::regular>(),
+                // std::ref to leverage the small object optimization of std::function
+                // that all major compilers implement. If the passed functor's size is
+                // big, that would lead to unnecessary allocations that we can avoid.
+                // This local lambda will live until this function returns because of
+                // lifetime extension related to how coroutines are implemented.
+                std::ref(lambda));
+    }
+
+private:
+    template <typename Func, typename... Args>
+    decltype(auto) maybe_invoke_with_scheduling_group(Func&& func, Args&&... args) {
+        return _maybe_sched_group.has_value()
+                ? seastar::with_scheduling_group(_maybe_sched_group.value(), std::forward<Func>(func),
+                        std::forward<Args>(args)...)
+                : std::forward<Func>(func)(std::forward<Args>(args)...);
+    }
 };
 
 
@@ -124,7 +155,6 @@ public:
             return func(host_id);
         };
 
-        // We use mutable to ensure using the right overload again.
         co_await maybe_invoke_with_scheduling_group(lister::scan_dir, _dir_path,
                 lister::dir_entry_types::of<seastar::directory_entry_type::directory>(),
                 // std::ref to leverage the small object optimization of std::function
