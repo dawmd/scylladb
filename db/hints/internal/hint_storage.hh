@@ -73,6 +73,11 @@ public:
     /// If it does not, create it. If it does, do nothing.
     seastar::future<> ensure_directory_existence() const;
 
+    /// Execute a passed callback for each @ref seastar::directory_entry corresponding
+    /// to the hint files managed by this object.
+    ///
+    /// This function is unsafe in the sense that it does not prevent other tasks
+    /// from interacting with the filesystem while this function is being executed.
     template <typename Func>
         requires std::invocable<Func, seastar::directory_entry>
     seastar::future<> for_each_hint_file(Func&& func) const {
@@ -139,6 +144,11 @@ public:
     ~shard_hint_storage() noexcept = default;
 
 public:
+    /// Execute a passed callback for each @ref host_id_type corresponding
+    /// to the hint directories managed by the shard this object belongs to.
+    ///
+    /// This function is unsafe in the sense that it does not prevent other tasks
+    /// from interacting with the filesystem while this function is being executed.
     template <typename Func>
         requires std::invocable<Func, host_id_type>
     seastar::future<> for_each_host_dir(Func&& func) const {
@@ -161,6 +171,8 @@ public:
                 std::ref(lambda));
     }
 
+    /// Create a new @ref host_hint_storage object corresponding to a given host
+    /// and managed by the shard this object (i.e. this shard_hint_storage) belongs to.
     host_hint_storage get_host_hint_storage_for(host_id_type host_id) const;
 
     const std::filesystem::path& path() const noexcept {
