@@ -115,6 +115,10 @@ public:
     ///
     /// This function is unsafe in the sense that it does not prevent other tasks
     /// from interacting with the filesystem while this function is being executed.
+    ///
+    /// Modifying the hint files in any "indirect" way MAY lead to undefined behavior.
+    /// Don't do that. Use @ref read_hints for reading the contents of the hints,
+    /// and @ref store_hint for adding a new hint.
     template <typename Func>
         requires std::invocable<Func, seastar::directory_entry>
     seastar::future<> for_each_hint_file(Func&& func) const {
