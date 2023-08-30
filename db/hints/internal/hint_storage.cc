@@ -13,7 +13,10 @@
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/file.hh>
 #include <seastar/core/file-types.hh>
+#include <seastar/core/future.hh>
+#include <seastar/core/lowres_clock.hh>
 #include <seastar/core/print.hh> // For seastar::format
+#include <seastar/core/scheduling.hh>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/smp.hh>
 #include <seastar/core/sstring.hh>
@@ -23,13 +26,18 @@
 #include <boost/range/adaptors.hpp>
 
 // Scylla includes.
+#include "db/commitlog/commitlog_entry.hh"
+#include "db/commitlog/replay_position.hh"
+#include "db/extensions.hh"
 #include "db/hints/internal/hint_logger.hh"
-#include "seastar/core/future.hh"
-#include "seastar/core/scheduling.hh"
 #include "utils/disk-error-handler.hh"
 #include "utils/lister.hh"
+#include "utils/runtime.hh"
 
 // STD.
+#include <cassert>
+#include <chrono>
+#include <exception>
 #include <filesystem>
 #include <functional>
 #include <list>
@@ -277,6 +285,145 @@ seastar::future<> rebalance_hints(seastar::sstring hints_directory) {
 ////////////////////////////////////////////////////////
 
 
+/// This class functions as a proxy between @ref host_hint_storage and @ref commitlog.
+///
+/// It introduces additional mechanisms like buffering. Commitlog wasn't written with
+/// runtime in mind (i.e. it didn't assume that the user may want to both read from
+/// and write to it at runtime), which results in several difficulties related to
+/// the semantics of Hinted Handoff. This wrapper is supposed to encapsulate necessary
+/// guarantees as well as simply make our life easier.
+class host_hint_storage::hint_commitlog final {
+private:
+    using clock_type = seastar::lowres_clock;
+    static_assert(noexcept(clock_type::now()), "clock_type::now() must be noexcept");
+
+    using time_point_type = typename clock_type::time_point;
+    using duration_type = typename clock_type::duration;
+
+    // We want to buffer active (i.e. still relevant) segments' names. Commitlog requires providing
+    // the name of the file you want to read. Although its API provides a way to obtain that
+    // information, it returns the names of ALL segments. We want to avoid that unnecessary
+    // additional work, so we'll buffer the names on your own.
+    using segment_list = std::list<seastar::sstring>;
+
+private:
+    host_hint_storage& _parent;
+    const extensions& _extensions;
+    // Replay position corresponding to the last successful write to the commitlog.
+    replay_position _last_written_rp;
+    // With the current implementation of commitlog, we're forced to create, delete and create
+    // commitlog instances to ensure that we can also read hints at runtime. It's related to
+    // buffering in commitlog. After flushing hints, this pointer will again be equal to `nullptr`.
+    std::unique_ptr<commitlog> _commitlog_ptr = nullptr;
+    time_point_type _next_flush_time_point;
+
+public:
+    hint_commitlog(host_hint_storage& parent, const extensions& exts) noexcept
+        : _parent{parent}
+        , _extensions{exts}
+        // TODO: Should this logic be deduplicated with what is in the commitlog?
+        , _last_written_rp{seastar::this_shard_id(),
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    runtime::get_boot_time().time_since_epoch()).count()}
+    {}
+    
+    ~hint_commitlog() noexcept = default;
+
+public:
+
+    const extensions& extensions_used() const noexcept {
+        return _extensions;
+    }
+
+    replay_position last_written_rp() const noexcept {
+        return _last_written_rp;
+    }
+
+private:
+    seastar::future<> flush_maybe() {
+        const auto current_time = clock_type::now();
+        if (current_time > _next_flush_time_point) {
+            try {
+                co_await flush_hints();
+                _next_flush_time_point = current_time + 
+            }
+        }
+    }
+
+    seastar::future<> flush_hints() {
+
+    }
+
+    seastar::future<> create_commitlog() {
+        assert(!_commitlog_ptr);
+
+        using commitlog_config = typename commitlog::config;
+        commitlog_config cfg;
+
+        cfg.sched_group = _parent._maybe_sched_group.value();
+        cfg.commit_log_location = _parent._host_dir_path.c_str();
+        cfg.commitlog_segment_size_in_mb = HINT_SEGMENT_SIZE_IN_MB;
+        cfg.commitlog_total_space_in_mb = MAX_HINTS_PER_HOST_SIZE_MB;
+        cfg.fname_prefix = HINT_FILENAME_PREFIX;
+        cfg.extensions = std::addressof(_extensions.get());
+
+        // HH leaves segments on disk after commitlog shutdown, and later reads
+        // them when commitlog is re-created. This is expected to happen regularly
+        // during standard HH workload, so no need to print a warning about it.
+        cfg.warn_about_segments_left_on_disk_after_shutdown = false;
+        // Allow going over the configured size limit of the commitlog
+        // (MAX_HINTS_PER_HOST_SIZE_MB). The commitlog will be more conservative
+        // with its disk usage when going over the limit.
+        // On the other hand, HH counts used space using the space_watchdog
+        // in resource_manager, so its redundant for the commitlog to apply
+        // a hard limit.
+        cfg.allow_going_over_size_limit = true;
+        // The API for waiting for hint replay relies on replay positions
+        // monotonically increasing. When there are no segments on disk,
+        // by default the commitlog will calculate the first segment ID
+        // based on the boot time. This may cause the following sequence
+        // of events to occur:
+        //
+        // 1. Node starts with empty hints queue
+        // 2. Some hints are written and some segments are created
+        // 3. All hints are replayed
+        // 4. Hint sync point is created
+        // 5. Commitlog instance gets re-created and resets it segment ID counter
+        // 6. New hint segment has the first ID as the first (deleted by now) segment
+        // 7. Waiting for the sync point commences but resolves immediately
+        //    before new hints are replayed - since point 5., `_last_written_rp`
+        //    and `_sent_upper_bound_rp` are not updated because RPs of new
+        //    hints are much lower than both of those marks.
+        //
+        // In order to prevent this situation, we override the base segment ID
+        // of the newly created commitlog instance - it should start with an ID
+        // which is larger than the segment ID of the RP of the last written hint.
+        cfg.base_segment_id = _last_written_rp.base_id();
+
+        _commitlog_ptr = std::make_unique<commitlog>(co_await commitlog::create_commitlog(std::move(cfg)));
+    }
+};
+
+
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+
+
+namespace {
+
+/// \brief Get the last modification time stamp for a given file.
+/// \param fname File name
+/// \return The last modification time stamp for \param fname.
+seastar::future<::timespec> get_last_file_modification(const std::string_view fname) {
+    seastar::file f = co_await seastar::open_file_dma(fname, seastar::open_flags::ro);
+    const auto st = co_await f.stat();
+    co_return st.st_mtim;
+}
+
+} // anonymous namespace
+
 host_hint_storage::host_hint_storage(const std::filesystem::path& shard_hint_storage_path,
         host_id_type host_id, std::optional<seastar::scheduling_group> maybe_sched_group)
     : _host_dir_path{shard_hint_storage_path / host_id.to_sstring()}
@@ -287,6 +434,107 @@ seastar::future<> host_hint_storage::ensure_directory_existence() const {
     return io_check([name = _host_dir_path.c_str()] {
         return seastar::recursive_touch_directory(name);
     });
+}
+
+seastar::future<> host_hint_storage::store_hint(schema_ptr s,
+        seastar::lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state)
+{
+    const auto gate_holder = seastar::gate::holder{_store_gate};
+
+    // `*this` is implicitly captured by reference even if the default capture is `=`.
+    co_await seastar::with_shared(_shared_mutex,
+            seastar::coroutine::lambda([=] () mutable -> seastar::future<> {
+        try {
+            commitlog& cl = co_await get_or_load();
+            commitlog_entry_writer cew{s, *fm, commitlog::force_sync::no};
+
+            rp_handle rph = co_await cl.add_entry(s->id(), cew,
+                    timeout_clock::now() + HINT_FILE_WRITE_TIMEOUT);
+            const auto rp = rph.release();
+            if (_last_written_rp < rp) {
+                _last_written_rp = rp;
+                // TODO: Change this logging.
+                manager_logger.debug("Updated last written position of {} to {}", _host_dir_path, rp);
+            }
+
+            // TODO: Change this logging.
+            manager_logger.trace("Hint to {} has been stored", _host_dir_path);
+            tracing::trace(tr_state, "Hint to {} has been stored", _host_dir_path);
+        } catch (...) {
+            std::exception_ptr eptr = std::current_exception();
+            manager_logger.trace("Failed to store a hint to {}: {}", _host_dir_path, eptr);
+            tracing::trace(tr_state, "Failed to store a hint to {}: {}", _host_dir_path, eptr);
+        }
+    }));
+}
+
+seastar::future<> host_hint_storage::read_hints(hint_reader_type callback) {
+    const auto last_file_mod = co_await get_last_file_modification(_)
+}
+
+seastar::future<std::reference_wrapper<commitlog>> host_hint_storage::get_or_load() {
+    if (!_commitlog_ptr) {
+        // This causes a deadlock...
+        co_await seastar::with_lock(_shared_mutex, [this] {
+            return create_commitlog(...).then([this] (commitlog cl) {
+                _commitlog_ptr = std::make_unique<commitlog>(std::move(cl));
+            });
+        });
+    }
+
+    co_return *_commitlog_ptr;
+}
+
+// Assumes the directory has already been created.
+seastar::future<commitlog> host_hint_storage::create_commitlog(const extensions& extens,
+        segment_id_type base_segment_id)
+{
+    using commitlog_config = typename commitlog::config;
+    commitlog_config cfg;
+
+    if (_maybe_sched_group) {
+        cfg.sched_group = _maybe_sched_group.value();
+    }
+    cfg.commit_log_location = _host_dir_path.c_str();
+    cfg.commitlog_segment_size_in_mb = HINT_SEGMENT_SIZE_IN_MB;
+    cfg.commitlog_total_space_in_mb = MAX_HINTS_PER_HOST_SIZE_MB;
+    cfg.fname_prefix = HINT_FILENAME_PREFIX;
+    cfg.extensions = std::addressof(extens);
+
+    // HH leaves segments on disk after commitlog shutdown, and later reads
+    // them when commitlog is re-created. This is expected to happen regularly
+    // during standard HH workload, so no need to print a warning about it.
+    cfg.warn_about_segments_left_on_disk_after_shutdown = false;
+    // Allow going over the configured size limit of the commitlog
+    // (MAX_HINTS_PER_HOST_SIZE_MB). The commitlog will be more conservative
+    // with its disk usage when going over the limit.
+    // On the other hand, HH counts used space using the space_watchdog
+    // in resource_manager, so its redundant for the commitlog to apply
+    // a hard limit.
+    cfg.allow_going_over_size_limit = true;
+    // The API for waiting for hint replay relies on replay positions
+    // monotonically increasing. When there are no segments on disk,
+    // by default the commitlog will calculate the first segment ID
+    // based on the boot time. This may cause the following sequence
+    // of events to occur:
+    //
+    // 1. Node starts with empty hints queue
+    // 2. Some hints are written and some segments are created
+    // 3. All hints are replayed
+    // 4. Hint sync point is created
+    // 5. Commitlog instance gets re-created and resets it segment ID counter
+    // 6. New hint segment has the first ID as the first (deleted by now) segment
+    // 7. Waiting for the sync point commences but resolves immediately
+    //    before new hints are replayed - since point 5., `_last_written_rp`
+    //    and `_sent_upper_bound_rp` are not updated because RPs of new
+    //    hints are much lower than both of those marks.
+    //
+    // In order to prevent this situation, we override the base segment ID
+    // of the newly created commitlog instance - it should start with an ID
+    // which is larger than the segment ID of the RP of the last written hint.
+    cfg.base_segment_id = base_segment_id;
+
+    co_return co_await commitlog::create_commitlog(std::move(cfg));
 }
 
 

@@ -12,7 +12,9 @@
 #include <seastar/core/file.hh>
 #include <seastar/core/file-types.hh>
 #include <seastar/core/future.hh>
+#include <seastar/core/gate.hh>
 #include <seastar/core/scheduling.hh>
+#include <seastar/core/shared_mutex.hh>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/sstring.hh>
 #include <seastar/core/with_scheduling_group.hh>
@@ -21,6 +23,7 @@
 // Scylla includes.
 #include "db/commitlog/commitlog.hh"
 #include "db/commitlog/commitlog_entry.hh"
+#include "db/commitlog/replay_position.hh"
 #include "db/hints/internal/common.hh"
 #include "mutation/frozen_mutation.hh"
 #include "schema/schema_fwd.hh"
@@ -55,7 +58,7 @@ inline const std::string HINT_FILENAME_PREFIX{"HintsLog" + commitlog::descriptor
 constexpr inline std::chrono::seconds HINT_FILE_WRITE_TIMEOUT = std::chrono::seconds(2);
 
 constexpr inline size_t HINT_SEGMENT_SIZE_IN_MB = 32;
-constexpr inline size_t MAX_HINTS_PER_HOST_SIZE_MB = 128; // 4 files, 32MB each
+constexpr inline size_t MAX_HINTS_PER_HOST_SIZE_MB = 128; // 4 files, 32 MB each
 constexpr inline size_t DEFAULT_PER_SHARD_CONCURRENCY_LIMIT = 8;
 
 
@@ -64,13 +67,16 @@ constexpr inline size_t DEFAULT_PER_SHARD_CONCURRENCY_LIMIT = 8;
 ///
 /// Its actions can be assigned to a specific scheduling group.
 class host_hint_storage {
+private:
+    /// A proxy functioning as an intermediate between this class and @ref commitlog.
+    class hint_commitlog;
 public:
     enum class hint_reading_status {
-        continue_reading,   // Continue reading hints, but don't mark the hint as resolved.
-                            // A resolved hint is a hint that can be forgotten by this node.
-        resolve_hint,       // Mark the current hint as resolved and continue reading.
-        resolve_and_stop,   // Mark the current hint as resolved and stop reading.
-        stop_reading        // Stop reading, but do not mark the current hint as resolved.
+        continue_reading = 1 << 0,  // Continue reading hints, but don't mark the hint as resolved.
+                                    // A resolved hint is a hint that can be forgotten by this node.
+        resolve_hint     = 1 << 1,  // Mark the current hint as resolved and continue reading.
+        resolve_and_stop = 1 << 2,  // Mark the current hint as resolved and stop reading.
+        stop_reading     = 1 << 3   // Stop reading, but do not mark the current hint as resolved.
     };
 
     using hint_read_type = frozen_mutation_and_schema;
@@ -83,6 +89,11 @@ private:
     // Scheduling group that I/O operations performed by this object should belong to.
     // If equal to `std::nullopt`, no scheduling group is set.
     std::optional<seastar::scheduling_group> _maybe_sched_group;
+    // The commitlog instance that stores the hints on the disk.
+    std::unique_ptr<hint_commitlog> _hint_commitlog_ptr = nullptr;
+    // Gate for accepting new hints.
+    seastar::gate _store_gate{};
+    seastar::shared_mutex _shared_mutex{};
 
 public:
     host_hint_storage(const std::filesystem::path& shard_hint_storage_path, host_id_type host_id,
@@ -161,6 +172,11 @@ private:
                         std::forward<Args>(args)...)
                 : std::forward<Func>(func)(std::forward<Args>(args)...);
     }
+
+    seastar::future<std::reference_wrapper<commitlog>> get_or_load();
+
+    seastar::future<commitlog> create_commitlog(const extensions& extens,
+            segment_id_type base_segment_id);
 };
 
 
