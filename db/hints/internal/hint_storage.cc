@@ -74,8 +74,6 @@ seastar::future<> scan_for_hints_dirs(const std::string_view hints_directory, Fu
 /// Complexity: O(N+K), where N is a total number of present hints' segments and
 ///                           K = <number of shards during the previous boot> * <number of end points for which hints where ever created>
 ///
-/// \note Should be called from a seastar::thread context.
-///
 /// \param hint_directory directory to scan
 /// \return a map: ep -> map: shard -> segments (full paths)
 seastar::future<hint_segments_map> get_current_hints_segments(const std::string_view hint_directory) {
@@ -242,8 +240,6 @@ seastar::future<> rebalance_segments(const std::string_view hint_directory, hint
 ///
 /// Complexity: O(S*E), where S is a number of shards during the previous boot and
 ///                           E is a number of end points for which hints where ever created.
-///
-/// Runs in seastar::async context
 ///
 /// \param hint_directory a root hints directory
 seastar::future<> remove_irrelevant_shards_directories(const std::string_view hint_directory) {
