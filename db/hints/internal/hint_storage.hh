@@ -13,13 +13,18 @@
 #include <seastar/core/file-types.hh>
 #include <seastar/core/future.hh>
 #include <seastar/core/scheduling.hh>
+#include <seastar/core/shared_ptr.hh>
 #include <seastar/core/sstring.hh>
 #include <seastar/core/with_scheduling_group.hh>
+#include <seastar/util/noncopyable_function.hh>
 
 // Scylla includes.
 #include "db/commitlog/commitlog.hh"
 #include "db/commitlog/commitlog_entry.hh"
 #include "db/hints/internal/common.hh"
+#include "mutation/frozen_mutation.hh"
+#include "schema/schema_fwd.hh"
+#include "tracing/trace_state.hh"
 #include "utils/lister.hh"
 #include "utils/loading_shared_values.hh"
 
@@ -55,6 +60,18 @@ constexpr inline std::chrono::seconds HINT_FILE_WRITE_TIMEOUT = std::chrono::sec
 ///
 /// Its actions can be assigned to a specific scheduling group.
 class host_hint_storage {
+public:
+    enum class hint_reading_status {
+        continue_reading,   // Continue reading hints, but don't mark the hint as resolved.
+                            // A resolved hint is a hint that can be forgotten by this node.
+        resolve_hint,       // Mark the current hint as resolved and continue reading.
+        resolve_and_stop,   // Mark the current hint as resolved and stop reading.
+        stop_reading        // Stop reading, but do not mark the current hint as resolved.
+    };
+
+    using hint_read_type = frozen_mutation_and_schema;
+    using hint_reader_type = seastar::noncopyable_function<seastar::future<hint_reading_status>(hint_read_type)>;
+
 private:
     // Path to the directory corresponding to this host on a specific shard.
     // In the usual configuration, it should be "{SCYLLA_WORKDIR}/{HINT_DIR}/<shard_id>/<host_id>".
@@ -72,6 +89,26 @@ public:
     /// Ensure the directory of hints managed by this object exists.
     /// If it does not, create it. If it does, do nothing.
     seastar::future<> ensure_directory_existence() const;
+
+    /// Store a hint on the disk corresponding to the host managed by this object.
+    seastar::future<> store_hint(schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
+            tracing::trace_state_ptr tr_state);
+    
+    /// Iterate over the stored hints. The callback should help this object manage storing
+    /// hints by returning appropriate values; see the @ref hint_reading_status type.
+    ///
+    /// Important note: the resolved hints are not necessarily erased from the disk.
+    ///
+    /// Consider the following scenario: the passed callback does NOT mark a hint as resolved,
+    /// and then it DOES mark another one that comes later as resolved. It is very likely
+    /// that the resolved hint WILL remain on the disk.
+    ///
+    /// The consequence of that is the user MAY see the same hint multiple times. This class
+    /// will try to manage them in the best way possible, but the caller cannot make any assumptions
+    /// about the lifetime of a hint.
+    ///
+    /// In practice, however, a contiguous prefix of resolved hints should never be browsed again.
+    seastar::future<> read_hints(hint_reader_type callback);
 
     /// Execute a passed callback for each @ref seastar::directory_entry corresponding
     /// to the hint files managed by this object.
