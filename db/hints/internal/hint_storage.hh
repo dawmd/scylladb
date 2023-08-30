@@ -69,6 +69,10 @@ public:
     ~host_hint_storage() noexcept = default;
 
 public:
+    /// Ensure the directory of hints managed by this object exists.
+    /// If it does not, create it. If it does, do nothing.
+    seastar::future<> ensure_directory_existence() const;
+
     template <typename Func>
         requires std::invocable<Func, seastar::directory_entry>
     seastar::future<> for_each_hint_file(Func&& func) const {

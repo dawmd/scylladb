@@ -283,6 +283,12 @@ host_hint_storage::host_hint_storage(const std::filesystem::path& shard_hint_sto
     , _maybe_sched_group{maybe_sched_group}
 {}
 
+seastar::future<> host_hint_storage::ensure_directory_existence() const {
+    return io_check([name = _host_dir_path.c_str()] {
+        return seastar::recursive_touch_directory(name);
+    });
+}
+
 
 ////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////
