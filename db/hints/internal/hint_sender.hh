@@ -223,7 +223,7 @@ private:
     /// \param natural_endpoints current replicas for the given mutation
     /// \return future that resolves when the operation is complete
     seastar::future<> do_send_one_mutation(frozen_mutation_and_schema m,
-            const std::span<gms::inet_address> natural_endpoints) noexcept;
+            std::span<const gms::inet_address> natural_endpoints) noexcept;
 
     /// \brief Send one mutation out.
     ///

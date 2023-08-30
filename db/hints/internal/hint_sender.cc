@@ -355,7 +355,7 @@ frozen_mutation_and_schema hint_sender::get_mutation(seastar::lw_shared_ptr<send
 }
 
 seastar::future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m,
-        const std::span<gms::inet_address> natural_endpoints) noexcept
+        std::span<const gms::inet_address> natural_endpoints) noexcept
 {
     // The fact that we send with CL::ALL in both cases below ensures that new hints are not going
     // to be generated as a result of hints sending.
