@@ -91,13 +91,26 @@ private:
 public:
     host_manager(const host_id_type& key, manager& shard_manager);
     host_manager(host_manager&&);
+
     ~host_manager() noexcept {
         assert(stopped());
     }
 
-    const host_id_type& host_id() const noexcept {
-        return _host_id;
-    }
+public:
+    /// \brief Start the timer.
+    void start();
+
+    /// \brief Waits till all writers complete and shuts down the hints store. Drains hints if needed.
+    ///
+    /// If "draining" is requested - sends all pending hints out.
+    ///
+    /// When hints are being drained we will not stop sending after a single hint sending has failed and will continue sending hints
+    /// till the end of the current segment. After that we will remove the current segment and move to the next one till
+    /// there isn't any segment left.
+    ///
+    /// \param should_drain is drain::yes - drain all pending hints
+    /// \return Ready future when all operations are complete
+    seastar::future<> stop(drain should_drain = drain::no) noexcept;
 
     /// \brief Get the corresponding hints_store object. Create it if needed.
     /// \note Must be called under the \ref _file_update_mutex.
@@ -118,21 +131,6 @@ public:
     ///
     /// \return Ready future when end point hints manager is initialized.
     seastar::future<> populate_segments_to_replay();
-
-    /// \brief Waits till all writers complete and shuts down the hints store. Drains hints if needed.
-    ///
-    /// If "draining" is requested - sends all pending hints out.
-    ///
-    /// When hints are being drained we will not stop sending after a single hint sending has failed and will continue sending hints
-    /// till the end of the current segment. After that we will remove the current segment and move to the next one till
-    /// there isn't any segment left.
-    ///
-    /// \param should_drain is drain::yes - drain all pending hints
-    /// \return Ready future when all operations are complete
-    seastar::future<> stop(drain should_drain = drain::no) noexcept;
-
-    /// \brief Start the timer.
-    void start();
 
     /// \return Number of in-flight (towards the file) hints.
     uint64_t hints_in_progress() const noexcept {
@@ -202,6 +200,10 @@ public:
                 .finally([lock_ptr = _file_update_mutex_ptr] {});
     }
 
+    const host_id_type& host_id() const noexcept {
+        return _host_id;
+    }
+    
     const std::filesystem::path& hints_dir() const noexcept {
         return _hints_dir;
     }
