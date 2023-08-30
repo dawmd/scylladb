@@ -71,7 +71,7 @@ public:
 public:
     template <typename Func>
         requires std::invocable<Func, seastar::directory_entry>
-    seastar::future<> for_each_hint_file(Func&& func) {
+    seastar::future<> for_each_hint_file(Func&& func) const {
         // We mark this lambda as mutable because `operator()(seastar::directory_entry)` of
         // the passed functor can be marked as const or there could be two overloads:
         // one for when it's const-qualified, and another for when it's not.
@@ -101,7 +101,7 @@ public:
 
 private:
     template <typename Func, typename... Args>
-    decltype(auto) maybe_invoke_with_scheduling_group(Func&& func, Args&&... args) {
+    decltype(auto) maybe_invoke_with_scheduling_group(Func&& func, Args&&... args) const {
         return _maybe_sched_group.has_value()
                 ? seastar::with_scheduling_group(_maybe_sched_group.value(), std::forward<Func>(func),
                         std::forward<Args>(args)...)
@@ -137,7 +137,7 @@ public:
 public:
     template <typename Func>
         requires std::invocable<Func, host_id_type>
-    seastar::future<> for_each_host_dir(Func&& func) {
+    seastar::future<> for_each_host_dir(Func&& func) const {
         // We mark this lambda as mutable because `operator()(host_id_type)` of the passed functor
         // can be marked as const or there could be two overloads: one for when it's const-qualified,
         // and another for when it's not. We want to use the right one.
@@ -166,10 +166,10 @@ public:
     std::optional<seastar::scheduling_group> scheduling_group() const noexcept {
         return _maybe_sched_group;
     }
-    
+
 private:
     template <typename Func, typename... Args>
-    decltype(auto) maybe_invoke_with_scheduling_group(Func&& func, Args&&... args) {
+    decltype(auto) maybe_invoke_with_scheduling_group(Func&& func, Args&&... args) const {
         return _maybe_sched_group.has_value()
                 ? seastar::with_scheduling_group(_maybe_sched_group.value(), std::forward<Func>(func),
                         std::forward<Args>(args)...)
