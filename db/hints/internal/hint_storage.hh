@@ -69,14 +69,6 @@ public:
     ~host_hint_storage() noexcept = default;
 
 public:
-    const std::filesystem::path& path() const noexcept {
-        return _host_dir_path;
-    }
-
-    std::optional<seastar::scheduling_group> scheduling_group() const noexcept {
-        return _maybe_sched_group;
-    }
-
     template <typename Func>
         requires std::invocable<Func, seastar::directory_entry>
     seastar::future<> for_each_hint_file(Func&& func) {
@@ -97,6 +89,14 @@ public:
                 // This local lambda will live until this function returns because of
                 // lifetime extension related to how coroutines are implemented.
                 std::ref(lambda));
+    }
+
+    const std::filesystem::path& path() const noexcept {
+        return _host_dir_path;
+    }
+
+    std::optional<seastar::scheduling_group> scheduling_group() const noexcept {
+        return _maybe_sched_group;
     }
 
 private:
@@ -135,14 +135,6 @@ public:
     ~shard_hint_storage() noexcept = default;
 
 public:
-    const std::filesystem::path& path() const noexcept {
-        return _dir_path;
-    }
-
-    std::optional<seastar::scheduling_group> scheduling_group() const noexcept {
-        return _maybe_sched_group;
-    }
-
     template <typename Func>
         requires std::invocable<Func, host_id_type>
     seastar::future<> for_each_host_dir(Func&& func) {
@@ -167,6 +159,14 @@ public:
 
     host_hint_storage get_host_hint_storage_for(host_id_type host_id) const;
 
+    const std::filesystem::path& path() const noexcept {
+        return _dir_path;
+    }
+
+    std::optional<seastar::scheduling_group> scheduling_group() const noexcept {
+        return _maybe_sched_group;
+    }
+    
 private:
     template <typename Func, typename... Args>
     decltype(auto) maybe_invoke_with_scheduling_group(Func&& func, Args&&... args) {
