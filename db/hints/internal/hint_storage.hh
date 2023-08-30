@@ -54,6 +54,10 @@ using hint_entry_reader = commitlog_entry_reader;
 inline const std::string HINT_FILENAME_PREFIX{"HintsLog" + commitlog::descriptor::SEPARATOR};
 constexpr inline std::chrono::seconds HINT_FILE_WRITE_TIMEOUT = std::chrono::seconds(2);
 
+constexpr inline size_t HINT_SEGMENT_SIZE_IN_MB = 32;
+constexpr inline size_t MAX_HINTS_PER_HOST_SIZE_MB = 128; // 4 files, 32MB each
+constexpr inline size_t DEFAULT_PER_SHARD_CONCURRENCY_LIMIT = 8;
+
 
 /// This class is responsible for managing hints corresponding to a specific host and local shard.
 /// Its main functionality is to store and read hints from the disk.
@@ -100,12 +104,12 @@ public:
     /// Important note: the resolved hints are not necessarily erased from the disk.
     ///
     /// Consider the following scenario: the passed callback does NOT mark a hint as resolved,
-    /// and then it DOES mark another one that comes later as resolved. It is very likely
+    /// and then it DOES mark another one that comes later as resolved. It is VERY LIKELY
     /// that the resolved hint WILL remain on the disk.
     ///
     /// The consequence of that is the user MAY see the same hint multiple times. This class
     /// will try to manage them in the best way possible, but the caller cannot make any assumptions
-    /// about the lifetime of a hint.
+    /// about the lifetime of a hint or how many times they will see it.
     ///
     /// In practice, however, a contiguous prefix of resolved hints should never be browsed again.
     seastar::future<> read_hints(hint_reader_type callback);

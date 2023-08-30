@@ -17,6 +17,7 @@
 
 // Scylla includes.
 #include "db/hints/internal/common.hh"
+#include "db/hints/internal/hint_storage.hh"
 #include "utils/small_vector.hh"
 #include "utils/updateable_value.hh"
 #include "enum_set.hh"
@@ -150,9 +151,9 @@ private:
 
 public:
     // TODO: Explain these.
-    static constexpr size_t HINT_SEGMENT_SIZE_IN_MB = 32;
-    static constexpr size_t MAX_HINTS_PER_HOST_SIZE_MB = 128; // 4 files, 32MB each
-    static constexpr size_t DEFAULT_PER_SHARD_CONCURRENCY_LIMIT = 8;
+    static constexpr size_t HINT_SEGMENT_SIZE_IN_MB = internal::HINT_SEGMENT_SIZE_IN_MB;
+    static constexpr size_t MAX_HINTS_PER_HOST_SIZE_MB = internal::MAX_HINTS_PER_HOST_SIZE_MB;
+    static constexpr size_t DEFAULT_PER_SHARD_CONCURRENCY_LIMIT = internal::DEFAULT_PER_SHARD_CONCURRENCY_LIMIT;
 
 public:
     resource_manager(size_t max_send_in_flight_memory,
