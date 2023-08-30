@@ -91,7 +91,9 @@ private:
 public:
     host_manager(const host_id_type& key, manager& shard_manager);
     host_manager(host_manager&&);
-    ~host_manager();
+    ~host_manager() noexcept {
+        assert(stopped());
+    }
 
     const host_id_type& host_id() const noexcept {
         return _host_id;

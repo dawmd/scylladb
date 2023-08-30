@@ -152,10 +152,6 @@ host_manager::host_manager(host_manager&& other)
     , _hints_in_progress{std::exchange(other._hints_in_progress, 0)}
 {}
 
-host_manager::~host_manager() {
-    assert(stopped());
-}
-
 seastar::future<hint_store_ptr> host_manager::get_or_load() {
     if (!_hint_store_anchor) {
         hint_store_ptr log_ptr = co_await _shard_manager.store_factory().get_or_load(_host_id,
