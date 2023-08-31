@@ -6,21 +6,25 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#include <exception>
-#include <unordered_set>
+#include "db/hints/sync_point.hh"
 
+// Seastar features.
 #include <seastar/core/simple-stream.hh>
 #include <seastar/core/smp.hh>
+#include <seastar/core/print.hh>
 
-#include "db/hints/sync_point.hh"
-#include "sync_point.hh"
+// Scylla includes.
 #include "idl/hinted_handoff.dist.hh"
 #include "idl/hinted_handoff.dist.impl.hh"
 #include "utils/base64.hh"
 #include "utils/xx_hasher.hh"
 
-namespace db {
-namespace hints {
+// STD.
+#include <exception>
+#include <unordered_set>
+
+namespace db::hints {
+
 // Sync points can be encoded in two formats: V1 and V2. V2 extends V1 by adding
 // a checksum. Currently, we use the V2 format, but sync points encoded in the V1
 // format still can be safely decoded.
@@ -50,15 +54,18 @@ namespace hints {
 //       Flattened representation was chosen in order to save space on
 //       vector lengths etc.
 
-static constexpr size_t version_size = sizeof(uint8_t);
-static constexpr size_t checksum_size = sizeof(uint64_t);
+namespace {
 
-static std::vector<sync_point::shard_rps> decode_one_type_v1(uint16_t shard_count, const per_manager_sync_point_v1& v1) {
+constexpr size_t version_size = sizeof(uint8_t);
+constexpr size_t checksum_size = sizeof(uint64_t);
+
+std::vector<sync_point::shard_rps> decode_one_type_v1(uint16_t shard_count, const per_manager_sync_point_v1& v1) {
     std::vector<sync_point::shard_rps> ret;
 
     if (size_t(shard_count) * v1.addresses.size() != v1.flattened_rps.size()) {
-        throw std::runtime_error(format("Could not decode the sync point - there should be {} rps in flattened_rps, but there are only {}",
-                size_t(shard_count) * v1.addresses.size(), v1.flattened_rps.size()));
+        throw std::runtime_error{
+                seastar::format("Could not decode the sync point - there should be {} rps in flattened_rps, but there are only {}",
+                size_t(shard_count) * v1.addresses.size(), v1.flattened_rps.size())};
     }
 
     ret.resize(std::max(unsigned(shard_count), smp::count));
@@ -79,44 +86,10 @@ static std::vector<sync_point::shard_rps> decode_one_type_v1(uint16_t shard_coun
     return ret;
 }
 
-static uint64_t calculate_checksum(const sstring_view s) {
+uint64_t calculate_checksum(const sstring_view s) {
     xx_hasher h;
     h.update(s.data(), s.size());
     return h.finalize_uint64();
-}
-
-sync_point sync_point::decode(sstring_view s) {
-    bytes raw = base64_decode(s);
-    if (raw.empty()) {
-        throw std::runtime_error("Could not decode the sync point - not a valid hex string");
-    }
-
-    sstring_view raw_s(reinterpret_cast<const char*>(raw.data()), raw.size());
-    seastar::simple_memory_input_stream in{raw_s.data(), raw_s.size()};
-
-    uint8_t version = ser::serializer<uint8_t>::read(in);
-    if (version == 2) {
-        if (raw_s.size() < version_size + checksum_size) {
-            throw std::runtime_error("Could not decode the sync point encoded in the V2 format - serialized blob is too short");
-        }
-
-        seastar::simple_memory_input_stream in_checksum{raw_s.end() - checksum_size, checksum_size};
-        uint64_t checksum = ser::serializer<uint64_t>::read(in_checksum);
-        if (checksum != calculate_checksum(raw_s.substr(0, raw_s.size() - checksum_size))) {
-            throw std::runtime_error("Could not decode the sync point encoded in the V2 format - wrong checksum");
-        }
-    }
-    else if (version != 1) {
-        throw std::runtime_error(format("Unsupported sync point format version: {}", int(version)));
-    }
-
-    sync_point_v1 v1 = ser::serializer<sync_point_v1>::read(in);
-
-    return sync_point{
-        v1.host_id,
-        decode_one_type_v1(v1.shard_count, v1.regular_sp),
-        decode_one_type_v1(v1.shard_count, v1.mv_sp),
-    };
 }
 
 static per_manager_sync_point_v1 encode_one_type_v1(unsigned shards, const std::vector<sync_point::shard_rps>& rps) {
@@ -154,7 +127,43 @@ static per_manager_sync_point_v1 encode_one_type_v1(unsigned shards, const std::
     return ret;
 }
 
-sstring sync_point::encode() const {
+} // anonymous namespace
+
+sync_point sync_point::decode(sstring_view s) {
+    bytes raw = base64_decode(s);
+    if (raw.empty()) {
+        throw std::runtime_error{"Could not decode the sync point - not a valid hex string"};
+    }
+
+    sstring_view raw_s{reinterpret_cast<const char*>(raw.data()), raw.size()};
+    seastar::simple_memory_input_stream in{raw_s.data(), raw_s.size()};
+
+    uint8_t version = ser::serializer<uint8_t>::read(in);
+    if (version == 2) {
+        if (raw_s.size() < version_size + checksum_size) {
+            throw std::runtime_error{"Could not decode the sync point encoded in the V2 format - serialized blob is too short"};
+        }
+
+        seastar::simple_memory_input_stream in_checksum{raw_s.end() - checksum_size, checksum_size};
+        uint64_t checksum = ser::serializer<uint64_t>::read(in_checksum);
+        if (checksum != calculate_checksum(raw_s.substr(0, raw_s.size() - checksum_size))) {
+            throw std::runtime_error{"Could not decode the sync point encoded in the V2 format - wrong checksum"};
+        }
+    }
+    else if (version != 1) {
+        throw std::runtime_error{seastar::format("Unsupported sync point format version: {}", int(version))};
+    }
+
+    sync_point_v1 v1 = ser::serializer<sync_point_v1>::read(in);
+
+    return sync_point{
+        v1.host_id,
+        decode_one_type_v1(v1.shard_count, v1.regular_sp),
+        decode_one_type_v1(v1.shard_count, v1.mv_sp),
+    };
+}
+
+seastar::sstring sync_point::encode() const {
     // Encode as v1 structure
     sync_point_v1 v1;
     v1.host_id = this->host_id;
@@ -173,7 +182,7 @@ sstring sync_point::encode() const {
     seastar::simple_memory_output_stream out{reinterpret_cast<char*>(serialized.data()), serialized.size()};
     ser::serializer<uint8_t>::write(out, 2);
     ser::serializer<sync_point_v1>::write(out, v1);
-    sstring_view serialized_s(reinterpret_cast<const char*>(serialized.data()), version_size + measure.size());
+    sstring_view serialized_s{reinterpret_cast<const char*>(serialized.data()), version_size + measure.size()};
     uint64_t checksum = calculate_checksum(serialized_s);
     ser::serializer<uint64_t>::write(out, checksum);
 
@@ -187,5 +196,4 @@ std::ostream& operator<<(std::ostream& out, const sync_point& sp) {
     return out;
 }
 
-}
-}
+} // namespace db::hints
