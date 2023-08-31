@@ -8,78 +8,83 @@
 
 #pragma once
 
-#include <unordered_set>
-#include <stdexcept>
-#include <iosfwd>
-#include <string_view>
-
+// Seastar features.
 #include <seastar/core/sstring.hh>
-#include "seastarx.hh"
+
+// Scylla includes.
+#include "db/hints/internal/common.hh"
+#include "locator/topology.hh"
+
+// STD.
+#include <iostream>
+#include <stdexcept>
+#include <string_view>
+#include <unordered_set>
 
 namespace gms {
-    class inet_address;
+class inet_address;
 } // namespace gms
 
-namespace locator { class topology; }
+namespace locator {
+class topology;
+} // namespace locator
 
-namespace db {
-namespace hints {
+namespace db::hints {
 
-// host_filter tells hints_manager towards which endpoints it is allowed to generate hints.
+// host_filter informs which hosts we should generate hints for.
 class host_filter final {
 private:
+    using host_id_type = internal::host_id_type;
+
     enum class enabled_kind {
         enabled_for_all,
         enabled_selectively,
-        disabled_for_all,
+        disabled_for_all
     };
-
-    enabled_kind _enabled_kind;
-    std::unordered_set<sstring> _dcs;
-
-    static std::string_view enabled_kind_to_string(host_filter::enabled_kind ek);
 
 public:
     struct enabled_for_all_tag {};
     struct disabled_for_all_tag {};
 
-    // Creates a filter that allows hints to all endpoints (default)
-    host_filter(enabled_for_all_tag tag = {});
+private:
+    enabled_kind _enabled_kind;
+    std::unordered_set<seastar::sstring> _dcs;
 
-    // Creates a filter that does not allow any hints.
+public:
+    /// Creates a filter that allows hints to all endpoints (default).
+    host_filter(enabled_for_all_tag = {});
+    /// Creates a filter that does not allow any hints.
     host_filter(disabled_for_all_tag);
+    /// Creates a filter that allows sending hints to specified DCs.
+    explicit host_filter(std::unordered_set<seastar::sstring> allowed_dcs);
 
-    // Creates a filter that allows sending hints to specified DCs.
-    explicit host_filter(std::unordered_set<sstring> allowed_dcs);
+public:
+    /// Parses hint filtering configuration from the hinted_handoff_enabled option.
+    static host_filter parse_from_config_string(seastar::sstring opt);
+    /// Parses hint filtering configuration from a list of DCs.
+    static host_filter parse_from_dc_list(seastar::sstring opt);
 
-    // Parses hint filtering configuration from the hinted_handoff_enabled option.
-    static host_filter parse_from_config_string(sstring opt);
+public:
+    bool can_hint_for(const locator::topology& topo, const host_id_type& host_id) const;
 
-    // Parses hint filtering configuration from a list of DCs.
-    static host_filter parse_from_dc_list(sstring opt);
-
-    bool can_hint_for(const locator::topology& topo, gms::inet_address ep) const;
-
-    inline const std::unordered_set<sstring>& get_dcs() const {
-        return _dcs;
-    }
-
-    bool operator==(const host_filter& other) const noexcept {
-        return _enabled_kind == other._enabled_kind
-                && _dcs == other._dcs;
-    }
-
-    inline bool is_enabled_for_all() const noexcept {
+    bool is_enabled_for_all() const noexcept {
         return _enabled_kind == enabled_kind::enabled_for_all;
     }
-
-    inline bool is_disabled_for_all() const noexcept {
+    bool is_disabled_for_all() const noexcept {
         return _enabled_kind == enabled_kind::disabled_for_all;
     }
 
-    sstring to_configuration_string() const;
+    seastar::sstring to_configuration_string() const;
+    
+    const std::unordered_set<seastar::sstring>& get_dcs() const {
+        return _dcs;
+    }
 
+    bool operator==(const host_filter& other) const noexcept = default;
     friend std::ostream& operator<<(std::ostream& os, const host_filter& f);
+
+private:
+    static std::string_view enabled_kind_to_string_view(enabled_kind);
 };
 
 std::istream& operator>>(std::istream& is, host_filter& f);
@@ -89,5 +94,4 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-}
-}
+} // namespace db::hints
