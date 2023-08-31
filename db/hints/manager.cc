@@ -10,7 +10,6 @@
 #include "db/hints/manager.hh"
 
 // Seastar features.
-#include <exception>
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/gate.hh>
@@ -20,20 +19,26 @@
 #include <seastar/coroutine/parallel_for_each.hh>
 
 // Boost features.
-#include <boost/range/adaptors.hpp>
+#include <boost/range/adaptor/filtered.hpp>
+#include <boost/range/adaptor/map.hpp>
+#include <boost/range/adaptor/transformed.hpp>
+#include <boost/range/iterator_range_core.hpp>
 
 // Scylla includes.
+#include "db/hints/internal/common.hh"
 #include "db/hints/internal/hint_logger.hh"
 #include "db/hints/internal/hint_storage.hh"
 #include "db/extensions.hh"
 #include "db/timeout_clock.hh"
 #include "gms/gossiper.hh"
+#include "gms/inet_address.hh"
 #include "gms/versioned_value.hh"
 #include "locator/abstract_replication_strategy.hh"
 #include "mutation/mutation_partition_view.hh"
 #include "replica/database.hh"
 #include "seastar/core/file-types.hh"
 #include "service/storage_proxy.hh"
+#include "utils/UUID.hh"
 #include "utils/directories.hh"
 #include "utils/div_ceil.hh"
 #include "utils/error_injection.hh"
@@ -46,11 +51,11 @@
 
 // STD.
 #include <algorithm>
+#include <exception>
 #include <filesystem>
 #include <ranges>
 #include <span>
 
-using namespace std::literals::chrono_literals;
 using namespace db::hints::internal;
 
 namespace fs = std::filesystem;
@@ -206,7 +211,7 @@ seastar::future<> manager::start(seastar::shared_ptr<service::storage_proxy> pro
     constexpr auto directory_type = seastar::directory_entry_type::directory;
     return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_type>(),
             [this] (fs::path datadir, seastar::directory_entry de) {
-        host_id_type ep = host_id_type{de.name};
+        host_id_type ep = host_id_type{utils::UUID{de.name}};
         if (!check_dc_for(ep)) {
             return seastar::make_ready_future<>();
         }
@@ -238,12 +243,13 @@ seastar::future<> manager::stop() {
     });
 }
 
-bool manager::can_hint_for(host_id_type ep) const noexcept {
-    if (utils::fb_utilities::is_me(ep)) {
+bool manager::can_hint_for(host_id_type host_id) const noexcept {
+    const auto token_ptr = _proxy_anchor->get_token_metadata_ptr();
+    if (token_ptr->get_my_id() == host_id) {
         return false;
     }
 
-    auto it = _host_managers.find(ep);
+    auto it = _host_managers.find(host_id);
     if (it != _host_managers.end() && (it->second.stopping() || !it->second.can_hint())) {
         return false;
     }
@@ -253,36 +259,38 @@ bool manager::can_hint_for(host_id_type ep) const noexcept {
     //
     // In the worst case there's going to be (_max_size_of_hints_in_progress + N - 1) in-flight hints,
     // where N is the total number Nodes in the cluster.
-    if (_stats.size_of_hints_in_progress > max_size_of_hints_in_progress && hints_in_progress_for(ep) > 0) {
+    if (_stats.size_of_hints_in_progress > max_size_of_hints_in_progress && hints_in_progress_for(host_id) > 0) {
         manager_logger.trace("size_of_hints_in_progress {} hints_in_progress_for({}) {}",
-                _stats.size_of_hints_in_progress, ep, hints_in_progress_for(ep));
+                _stats.size_of_hints_in_progress, host_id, hints_in_progress_for(host_id));
         return false;
     }
 
     // check that the destination DC is "hintable"
-    if (!check_dc_for(ep)) {
-        manager_logger.trace("{}'s DC is not hintable", ep);
+    if (!check_dc_for(host_id)) {
+        manager_logger.trace("{}'s DC is not hintable", host_id);
         return false;
     }
 
     // check if the end point has been down for too long
-    if (local_gossiper().get_endpoint_downtime(ep) > _max_hint_window_us) {
+    const std::optional<gms::inet_address> maybe_ep = token_ptr->get_endpoint_for_host_id(host_id);
+    assert(maybe_ep.has_value());
+    if (local_gossiper().get_endpoint_downtime(*maybe_ep) > _max_hint_window_us) {
         manager_logger.trace("{} is down for {}, not hinting",
-                ep, local_gossiper().get_endpoint_downtime(ep));
+                *maybe_ep, local_gossiper().get_endpoint_downtime(*maybe_ep));
         return false;
     }
 
     return true;
 }
 
-bool manager::check_dc_for(host_id_type ep) const noexcept {
+bool manager::check_dc_for(host_id_type host_id) const noexcept {
     try {
         const auto& topology = _proxy_anchor->get_token_metadata_ptr()->get_topology();
         // If target's DC is not a "hintable" DCs - don't hint.
         // If there is an end point manager then DC has already been checked and found to be ok.
         return _host_filter.is_enabled_for_all() ||
-                manages_host(ep) ||
-               _host_filter.can_hint_for(topology, ep);
+                manages_host(host_id) ||
+               _host_filter.can_hint_for(topology, host_id);
     } catch (...) {
         // if we failed to check the DC - block this hint
         return false;
@@ -312,18 +320,19 @@ bool manager::store_hint(host_id_type ep, schema_ptr s, seastar::lw_shared_ptr<c
     }
 }
 
-void manager::drain_for(gms::inet_address endpoint) {
+void manager::drain_for(host_id_type host_id) {
     if (!started() || stopping() || draining_all()) {
         return;
     }
 
-    manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", endpoint);
+    manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", host_id);
 
     // Future is waited on indirectly in `stop()` (via `_draining_hosts_gate`).
-    (void) seastar::with_gate(_draining_hosts_gate, [this, endpoint] {
-        return seastar::with_semaphore(drain_lock(), 1, [this, endpoint] {
-            return seastar::futurize_invoke([this, endpoint] {
-                if (utils::fb_utilities::is_me(endpoint)) {
+    (void) seastar::with_gate(_draining_hosts_gate, [this, host_id] {
+        return seastar::with_semaphore(drain_lock(), 1, [this, host_id] {
+            return seastar::futurize_invoke([this, host_id] {
+                const auto token_ptr = _proxy_anchor->get_token_metadata_ptr();
+                if (token_ptr->get_my_id() == host_id) {
                     set_draining_all();
 
                     // TODO: When std::ranges::values_view is available, replace Boost's adaptor with it.
@@ -338,31 +347,31 @@ void manager::drain_for(gms::inet_address endpoint) {
                         _host_managers.clear();
                     });
                 } else {
-                    auto host_manager_it = _host_managers.find(endpoint);
+                    auto host_manager_it = _host_managers.find(host_id);
                     if (host_manager_it != _host_managers.end()) {
                         auto& hman = host_manager_it->second;
 
-                        return hman.stop(drain::yes).finally([this, endpoint, &hman] {
+                        return hman.stop(drain::yes).finally([this, host_id, &hman] {
                             return hman.with_file_update_mutex([&hman] {
                                 return seastar::remove_file(hman.hints_dir().c_str());
-                            }).finally([this, endpoint] {
-                                _host_managers.erase(endpoint);
+                            }).finally([this, host_id] {
+                                _host_managers.erase(host_id);
                             });
                         });
                     }
 
                     return seastar::make_ready_future<>();
                 }
-            }).handle_exception([endpoint] (auto eptr) {
-                manager_logger.error("Exception when draining {}: {}", endpoint, eptr);
+            }).handle_exception([host_id] (auto eptr) {
+                manager_logger.error("Exception when draining {}: {}", host_id, eptr);
             });
         });
-    }).finally([endpoint] {
-        manager_logger.trace("drain_for: finished draining {}", endpoint);
+    }).finally([host_id] {
+        manager_logger.trace("drain_for: finished draining {}", host_id);
     });
 }
 
-sync_point::shard_rps manager::calculate_current_sync_point(std::span<const gms::inet_address> target_hosts) const {
+sync_point::shard_rps manager::calculate_current_sync_point(std::span<const host_id_type> target_hosts) const {
     sync_point::shard_rps rps;
     for (auto addr : target_hosts) {
         auto it = _host_managers.find(addr);
@@ -372,6 +381,24 @@ sync_point::shard_rps manager::calculate_current_sync_point(std::span<const gms:
         }
     }
     return rps;
+}
+
+sync_point::shard_rps manager::calculate_current_sync_point(
+        const std::vector<old_host_id_type>& target_eps) const
+{
+    const auto token_ptr = _proxy_anchor->get_token_metadata_ptr();
+    const std::vector<host_id_type> target_hosts = boost::copy_range<std::vector<host_id_type>>(
+            target_eps |
+            boost::adaptors::transformed([&] (old_host_id_type ep) {
+                return token_ptr->get_host_id_if_known(ep);
+            }) |
+            boost::adaptors::filtered([] (std::optional<host_id_type> maybe_host_id) noexcept {
+                return maybe_host_id.has_value();
+            }) |
+            boost::adaptors::transformed([] (std::optional<host_id_type> maybe_host_id) {
+                return std::move(maybe_host_id).value();
+            }));
+    return calculate_current_sync_point(target_hosts);
 }
 
 seastar::future<> manager::wait_for_sync_point(seastar::abort_source& as,
@@ -421,14 +448,23 @@ seastar::future<> manager::wait_for_sync_point(seastar::abort_source& as,
     }
 }
 
-bool manager::too_many_in_flight_hints_for(host_id_type ep) const noexcept {
+bool manager::too_many_in_flight_hints_for(host_id_type host_id) const noexcept {
     // There is no need to check the DC here because if there is an in-flight hint
     // for this end point then this means that its DC has already been checked
     // and found to be ok.
+    const auto token_ptr = _proxy_anchor->get_token_metadata_ptr();
+    const host_id_type my_host_id = token_ptr->get_my_id();
+    const std::optional<gms::inet_address> maybe_ep = token_ptr->get_endpoint_for_host_id(host_id);
+    
+    // assert(maybe_ep.has_value());
+    if (!maybe_ep) {
+        return false;
+    }
+
     return _stats.size_of_hints_in_progress > max_size_of_hints_in_progress &&
-            !utils::fb_utilities::is_me(ep) &&
-            hints_in_progress_for(ep) > 0 &&
-            local_gossiper().get_endpoint_downtime(ep) <= _max_hint_window_us;
+            my_host_id != host_id &&
+            hints_in_progress_for(host_id) > 0 &&
+            local_gossiper().get_endpoint_downtime(*maybe_ep) <= _max_hint_window_us;
 }
 
 seastar::future<> manager::change_host_filter(host_filter filter) {
@@ -457,14 +493,14 @@ seastar::future<> manager::change_host_filter(host_filter filter) {
         // for some of them
         co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_type>(),
                 [this] (fs::path datadir, seastar::directory_entry de) {
-            const auto ep = host_id_type{de.name};
+            const auto host_id = host_id_type{utils::UUID{de.name}};
             const auto& topology = _proxy_anchor->get_token_metadata_ptr()->get_topology();
 
-            if (_host_managers.contains(ep) || !_host_filter.can_hint_for(topology, ep)) {
+            if (_host_managers.contains(host_id) || !_host_filter.can_hint_for(topology, host_id)) {
                 return seastar::make_ready_future<>();
             }
 
-            return get_host_manager(ep).populate_segments_to_replay();
+            return get_host_manager(host_id).populate_segments_to_replay();
         });
     } catch (...) {
         // Bring back the old filter. The finally() block will cause us to stop
@@ -525,6 +561,16 @@ void manager::forbid_hints_for_hosts_with_pending_hints() {
 
 seastar::future<> manager::rebalance(seastar::sstring hints_directory) {
     co_await rebalance_hints(std::move(hints_directory));
+}
+
+host_id_type manager::convert_to_host_id(old_host_id_type ep) const {
+    const auto token_metadata_ptr = _proxy_anchor->get_token_metadata_ptr();
+    assert(token_metadata_ptr);
+    const std::optional<host_id_type> maybe_host_id = token_metadata_ptr->get_host_id_if_known(ep);
+    if (!maybe_host_id) [[unlikely]] {
+        throw unknown_endpoint{};
+    }
+    return *maybe_host_id;
 }
 
 seastar::future<> manager::compute_hints_dir_device_id() {

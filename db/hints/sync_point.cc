@@ -14,6 +14,7 @@
 #include <seastar/core/print.hh>
 
 // Scylla includes.
+#include "db/hints/internal/common.hh"
 #include "idl/hinted_handoff.dist.hh"
 #include "idl/hinted_handoff.dist.impl.hh"
 #include "utils/base64.hh"
@@ -62,16 +63,16 @@ constexpr size_t checksum_size = sizeof(uint64_t);
 std::vector<sync_point::shard_rps> decode_one_type_v1(uint16_t shard_count, const per_manager_sync_point_v1& v1) {
     std::vector<sync_point::shard_rps> ret;
 
-    if (size_t(shard_count) * v1.addresses.size() != v1.flattened_rps.size()) {
+    if (size_t(shard_count) * v1.host_ids.size() != v1.flattened_rps.size()) {
         throw std::runtime_error{
                 seastar::format("Could not decode the sync point - there should be {} rps in flattened_rps, but there are only {}",
-                size_t(shard_count) * v1.addresses.size(), v1.flattened_rps.size())};
+                size_t(shard_count) * v1.host_ids.size(), v1.flattened_rps.size())};
     }
 
     ret.resize(std::max(unsigned(shard_count), smp::count));
 
     auto rps_it = v1.flattened_rps.begin();
-    for (const auto addr : v1.addresses) {
+    for (const auto addr : v1.host_ids) {
         uint16_t shard;
         for (shard = 0; shard < shard_count; shard++) {
             ret[shard].emplace(addr, *rps_it++);
@@ -96,22 +97,22 @@ static per_manager_sync_point_v1 encode_one_type_v1(unsigned shards, const std::
     per_manager_sync_point_v1 ret;
 
     // Gather all addresses, from all shards
-    std::unordered_set<gms::inet_address> all_addrs;
+    std::unordered_set<internal::host_id_type> all_host_ids;
     for (const auto& shard_rps : rps) {
         for (const auto& p : shard_rps) {
-            all_addrs.insert(p.first);
+            all_host_ids.insert(p.first);
         }
     }
 
-    ret.flattened_rps.reserve(size_t(shards) * all_addrs.size());
+    ret.flattened_rps.reserve(size_t(shards) * all_host_ids.size());
 
     // Encode into v1 struct
-    // For each address, we encode a replay position for all shards.
+    // For each host_id, we encode a replay position for all shards.
     // If there is no replay position for a shard, we use a zero replay position.
-    for (const auto addr : all_addrs) {
-        ret.addresses.push_back(addr);
+    for (const auto host_id : all_host_ids) {
+        ret.host_ids.push_back(host_id);
         for (const auto& shard_rps : rps) {
-            auto it = shard_rps.find(addr);
+            auto it = shard_rps.find(host_id);
             if (it != shard_rps.end()) {
                 ret.flattened_rps.push_back(it->second);
             } else {

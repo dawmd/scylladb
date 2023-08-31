@@ -305,13 +305,17 @@ bool hint_sender::can_send() noexcept {
     }
 
     try {
-        if (_gossiper.is_alive(_host_id)) {
+        const auto token_ptr = _proxy.get_token_metadata_ptr();
+        const std::optional<gms::inet_address> maybe_ep = token_ptr->get_endpoint_for_host_id(_host_id);
+        assert(maybe_ep.has_value());
+
+        if (_gossiper.is_alive(*maybe_ep)) {
             _state.remove(state::host_left_ring);
             return true;
         } else {
             if (!_state.contains(state::host_left_ring)) {
                 _state.set_if<state::host_left_ring>(
-                        !_db.get_token_metadata().is_normal_token_owner(_host_id));
+                        !_db.get_token_metadata().is_normal_token_owner(*maybe_ep));
             }
             // send the hints out if the destination Node is part of the ring - we will send to all new replicas in this case
             return _state.contains(state::host_left_ring);
@@ -357,11 +361,15 @@ frozen_mutation_and_schema hint_sender::get_mutation(seastar::lw_shared_ptr<send
 seastar::future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m,
         std::span<const gms::inet_address> natural_endpoints) noexcept
 {
+    const auto token_ptr = _proxy.get_token_metadata_ptr();
+    const std::optional<gms::inet_address> maybe_ep = token_ptr->get_endpoint_for_host_id(_host_id);
+    assert(maybe_ep.has_value());
+
     // The fact that we send with CL::ALL in both cases below ensures that new hints are not going
     // to be generated as a result of hints sending.
-    if (std::ranges::find(natural_endpoints, _host_id) != natural_endpoints.end()) {
+    if (std::ranges::find(natural_endpoints, *maybe_ep) != natural_endpoints.end()) {
         manager_logger.trace("Sending directly to {}", _host_id);
-        return _proxy.send_hint_to_endpoint(std::move(m), _host_id);
+        return _proxy.send_hint_to_endpoint(std::move(m), *maybe_ep);
     } else {
         manager_logger.trace("Endpoints set has changed and {} is no longer a replica. Mutating from scratch...",
                 _host_id);

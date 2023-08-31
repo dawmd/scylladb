@@ -6,20 +6,20 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#include "gms/inet_address_serializer.hh"
+#include "db/hints/internal/common.hh"
 #include "db/hints/sync_point.hh"
+#include "gms/inet_address_serializer.hh"
 
 #include "idl/replay_position.idl.hh"
 #include "idl/uuid.idl.hh"
 
 namespace db {
-
 namespace hints {
 
 // Contains per-endpoint and per-shard information about replay positions
 // for a particular type of hint queues (regular mutation hints or MV update hints)
 struct per_manager_sync_point_v1 {
-    std::vector<gms::inet_address> addresses;
+    std::vector<db::hints::internal::host_id_type> host_ids;
     std::vector<db::replay_position> flattened_rps;
 };
 
@@ -34,6 +34,5 @@ struct sync_point_v1 {
     db::hints::per_manager_sync_point_v1 mv_sp;
 };
 
-}
-
-}
+} // namespace hints
+} // namespace db

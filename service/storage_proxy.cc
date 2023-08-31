@@ -3033,7 +3033,7 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
 
     auto all = boost::range::join(natural_endpoints, pending_endpoints);
 
-    if (cannot_hint(all, type)) {
+    if (_hints_manager.started() && cannot_hint(all, type)) {
         get_stats().writes_failed_due_to_too_many_in_flight_hints++;
         // avoid OOMing due to excess hints.  we need to do this check even for "live" nodes, since we can
         // still generate hints for those if it's overloaded or simply dead but not yet known-to-be-dead.
@@ -3754,7 +3754,9 @@ mutation storage_proxy::get_batchlog_mutation_for(const std::vector<mutation>& m
 template<typename Range>
 bool storage_proxy::cannot_hint(const Range& targets, db::write_type type) const {
     // if hints are disabled we "can always hint" since there's going to be no hint generated in this case
-    return hints_enabled(type) && boost::algorithm::any_of(targets, std::bind(&db::hints::manager::too_many_in_flight_hints_for, &_hints_manager, std::placeholders::_1));
+    return hints_enabled(type) && boost::algorithm::any_of(targets, [this]<typename T>(T&& target) {
+        return _hints_manager.too_many_in_flight_hints_for(std::forward<T>(target));
+    });
 }
 
 future<> storage_proxy::send_to_endpoint(
@@ -6352,10 +6354,12 @@ future<> storage_proxy::change_hints_host_filter(db::hints::host_filter new_filt
     co_await _hints_directory_initializer.ensure_rebalanced();
     // This function is idempotent
     co_await _hints_resource_manager.register_manager(_hints_manager);
+    assert(_hints_manager.started());
     co_await _hints_manager.change_host_filter(std::move(new_filter));
 }
 
 const db::hints::host_filter& storage_proxy::get_hints_host_filter() const {
+    assert(_hints_manager.started());
     return _hints_manager.get_host_filter();
 }
 

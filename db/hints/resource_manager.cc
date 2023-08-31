@@ -130,15 +130,15 @@ void space_watchdog::on_timer() {
                     // not hintable).
                     // If exists - let's take a file update lock so that files are not changed under our feet. Otherwise, simply
                     // continue to enumeration - there is no one to change them.
-                    const gms::inet_address ep = de.name;
+                    const host_id_type host_id = host_id_type{utils::UUID{de.name}};
 
-                    if (shard_manager.manages_host(ep)) {
-                        return shard_manager.with_file_update_mutex(ep, 
-                                [this, &shard_manager, dir = std::move(dir), ep_name = std::move(de.name)] () mutable {
-                            return scan_one_host_dir(dir / ep_name, shard_manager, host_id_type(ep_name));
+                    if (shard_manager.manages_host(host_id)) {
+                        return shard_manager.with_file_update_mutex(host_id, 
+                                [this, &shard_manager, dir = dir / de.name, host_id] () mutable {
+                            return scan_one_host_dir(dir, shard_manager, host_id);
                         });
                     } else {
-                        return scan_one_host_dir(dir / de.name, shard_manager, host_id_type(de.name));
+                        return scan_one_host_dir(dir / de.name, shard_manager, host_id);
                     }
                 }).get();
         }

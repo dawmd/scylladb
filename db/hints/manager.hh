@@ -10,6 +10,7 @@
 #pragma once
 
 // Seastar features.
+#include <exception>
 #include <seastar/core/gate.hh>
 #include <seastar/core/sharded.hh>
 #include <seastar/core/timer.hh>
@@ -34,6 +35,7 @@
 #include <map>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
@@ -81,11 +83,18 @@ public:
     seastar::future<> ensure_rebalanced();
 };
 
+struct unknown_endpoint : public std::exception {
+    const char *what() const noexcept {
+        return "Unknown mapping from gms::inet_address to locator::host_id";
+    }
+};
+
 class manager {
 private:
     using stats = internal::hint_stats;
     using drain = internal::drain;
     using host_id_type = internal::host_id_type;
+    using old_host_id_type = internal::old_host_id_type;
 
     using node_to_hint_store_factory_type = internal::node_to_hint_store_factory_type;
     using hint_store_ptr = internal::hint_store_ptr;
@@ -159,15 +168,29 @@ public:
     /// \brief Check if a hint may be generated to the give end point
     /// \param ep end point to check
     /// \return true if we should generate the hint to the given end point if it becomes unavailable
-    bool can_hint_for(host_id_type ep) const noexcept;
+    bool can_hint_for(host_id_type host_id) const noexcept;
+    bool can_hint_for(old_host_id_type ep) const {
+        const auto host_id = convert_to_host_id(ep);
+        return can_hint_for(host_id);
+    }
 
     /// \brief Check if DC \param ep belongs to is "hintable"
     /// \param ep End point identificator
     /// \return TRUE if hints are allowed to be generated to \param ep.
-    bool check_dc_for(host_id_type ep) const noexcept;
+    bool check_dc_for(host_id_type host_id) const noexcept;
+    bool check_dc_for(old_host_id_type ep) const {
+        const auto host_id = convert_to_host_id(ep);
+        return check_dc_for(host_id);
+    }
 
-    bool store_hint(gms::inet_address ep, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
+    bool store_hint(host_id_type host_id, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
             tracing::trace_state_ptr tr_state) noexcept;
+    bool store_hint(old_host_id_type ep, schema_ptr s, seastar::lw_shared_ptr<const frozen_mutation> fm,
+            tracing::trace_state_ptr tr_state)
+    {
+        const auto host_id = convert_to_host_id(ep);
+        return store_hint(host_id, s, fm, tr_state);
+    }
 
     /// \brief Initiate the draining when we detect that the node has left the cluster.
     ///
@@ -178,10 +201,15 @@ public:
     /// corresponding host_manager objects.
     ///
     /// \param endpoint node that left the cluster
-    void drain_for(gms::inet_address endpoint);
+    void drain_for(host_id_type host_id);
+    void drain_for(old_host_id_type ep) {
+        const auto host_id = convert_to_host_id(ep);
+        return drain_for(host_id);
+    }
 
     /// \brief Returns a set of replay positions for hint queues towards endpoints from the `target_hosts`.
-    sync_point::shard_rps calculate_current_sync_point(std::span<const gms::inet_address> target_hosts) const;
+    sync_point::shard_rps calculate_current_sync_point(std::span<const host_id_type> target_hosts) const;
+    sync_point::shard_rps calculate_current_sync_point(const std::vector<old_host_id_type>& target_hosts) const;
 
     /// \brief Waits until hint replay reach replay positions described in `rps`.
     seastar::future<> wait_for_sync_point(seastar::abort_source& as, const sync_point::shard_rps& rps);
@@ -200,7 +228,15 @@ public:
     ///
     /// \param ep end point to check
     /// \return TRUE if we are allowed to generate hint to the given end point but there are too many in-flight hints
-    bool too_many_in_flight_hints_for(host_id_type ep) const noexcept;
+    bool too_many_in_flight_hints_for(host_id_type host_id) const noexcept;
+    bool too_many_in_flight_hints_for(old_host_id_type ep) const {
+        try {
+            const auto host_id = convert_to_host_id(ep);
+            return too_many_in_flight_hints_for(host_id);
+        } catch (const unknown_endpoint&) {
+            return false;
+        }
+    }
 
     /// \brief Changes the host_filter currently used, stopping and starting host_managers relevant to the new host_filter.
     /// \param filter the new host_filter
@@ -223,18 +259,26 @@ public:
     }
 
     /// \brief Get the number of in-flight (to the disk) hints to a given end point.
-    /// \param ep End point identificator
-    /// \return Number of hints in-flight to \param ep.
-    uint64_t hints_in_progress_for(host_id_type ep) const noexcept {
-        auto it = _host_managers.find(ep);
+    /// \param host_id End point identificator
+    /// \return Number of hints in-flight to \param host_id.
+    uint64_t hints_in_progress_for(host_id_type host_id) const noexcept {
+        auto it = _host_managers.find(host_id);
         if (it == _host_managers.end()) {
             return 0;
         }
         return it->second.hints_in_progress();
     }
+    uint64_t hints_in_progress_for(old_host_id_type ep) const {
+        const auto host_id = convert_to_host_id(ep);
+        return hints_in_progress_for(host_id);
+    }
 
     void add_host_with_pending_hints(host_id_type key) {
         _hosts_with_pending_hints.insert(key);
+    }
+    void add_host_with_pending_hints(old_host_id_type ep) {
+        const auto host_id = convert_to_host_id(ep);
+        return add_host_with_pending_hints(host_id);
     }
 
     void clear_hosts_with_pending_hints() {
@@ -244,6 +288,10 @@ public:
 
     bool has_host_with_pending_hints(host_id_type key) const {
         return _hosts_with_pending_hints.contains(key);
+    }
+    bool has_host_with_pending_hints(old_host_id_type ep) const {
+        const auto host_id = convert_to_host_id(ep);
+        return has_host_with_pending_hints(host_id);
     }
 
     size_t host_managers_size() const {
@@ -270,6 +318,12 @@ public:
         _state.set(state::replay_allowed);
     }
 
+    bool manages_host(host_id_type host_id) const noexcept;
+    bool manages_host(old_host_id_type ep) const {
+        const auto host_id = convert_to_host_id(ep);
+        return manages_host(host_id);
+    }
+
     /// \brief Safely runs a given functor under the file_update_mutex of a specified \ref host_manager.
     ///
     /// Runs a given functor under the file_update_mutex of the given host_manager instance.
@@ -283,6 +337,11 @@ public:
     template <typename Func>
     decltype(auto) with_file_update_mutex(host_id_type host_id, Func&& func) {
         return _host_managers.at(host_id).with_file_update_mutex(std::forward<Func>(func));
+    }
+    template <typename Func>
+    decltype(auto) with_file_update_mutex(old_host_id_type ep, Func&& func) {
+        const auto host_id = convert_to_host_id(ep);
+        return with_file_update_mutex(host_id, std::forward<Func>(func));
     }
 
     /// \brief Rebalance hints segments among all present shards.
@@ -300,7 +359,13 @@ public:
     /// \return A future that resolves when the operation is complete.
     static seastar::future<> rebalance(seastar::sstring hints_directory);
 
+    bool started() const noexcept {
+        return _state.contains(state::started);
+    }
+
 private:
+    host_id_type convert_to_host_id(old_host_id_type ep) const;
+
     seastar::future<> compute_hints_dir_device_id();
 
     node_to_hint_store_factory_type& store_factory() noexcept {
@@ -320,7 +385,6 @@ private:
     }
 
     host_manager& get_host_manager(host_id_type ep);
-    bool manages_host(host_id_type ep) const noexcept;
 
     void update_backlog(size_t backlog, size_t max_backlog);
 
@@ -330,10 +394,6 @@ private:
 
     void set_stopping() noexcept {
         _state.set(state::stopping);
-    }
-
-    bool started() const noexcept {
-        return _state.contains(state::started);
     }
 
     void set_started() noexcept {

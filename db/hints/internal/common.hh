@@ -13,6 +13,7 @@
 
 // Scylla includes.
 #include "gms/inet_address.hh"
+#include "locator/host_id.hh"
 
 // STD.
 #include <cstdint>
@@ -21,7 +22,9 @@ namespace db::hints {
 namespace internal {
 
 // Type identifying host a specific subset of hints should be sent to.
-using host_id_type = gms::inet_address;
+using host_id_type = locator::host_id;
+// Previous type identifying hosts. Used for compatibility with the older API.
+using old_host_id_type = gms::inet_address;
 
 // Tag specifying if hint sending should enter the so-called "drain mode".
 // If it should, that means that if a failure while sending a hint occurs,

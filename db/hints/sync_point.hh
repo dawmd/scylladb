@@ -54,7 +54,7 @@ public:
 // Contains per-endpoint and per-shard information about replay positions
 // for a particular type of hint queues (regular mutation hints or MV update hints)
 struct per_manager_sync_point_v1 {
-    std::vector<internal::host_id_type> addresses;
+    std::vector<internal::host_id_type> host_ids;
     std::vector<db::replay_position> flattened_rps;
 };
 
