@@ -18,6 +18,7 @@
 #include <seastar/core/print.hh> // For seastar::format
 #include <seastar/core/scheduling.hh>
 #include <seastar/core/seastar.hh>
+#include <seastar/core/semaphore.hh>
 #include <seastar/core/smp.hh>
 #include <seastar/core/sstring.hh>
 #include <seastar/core/thread.hh>
@@ -180,13 +181,13 @@ seastar::future<> rebalance_segments_for(const std::string_view ep, size_t segme
 seastar::future<> rebalance_segments(const std::string_view hint_directory, hint_segments_map& segments_map) {
     // Count how many hints segments to each destination we have.
     std::unordered_map<seastar::sstring, size_t> per_ep_hints;
-    for (auto& ep_info : segments_map) {
-        per_ep_hints[ep_info.first] = boost::accumulate(
-                ep_info.second |
+    for (const auto& [ip, host_segment_map] : segments_map) {
+        per_ep_hints[ip] = boost::accumulate(
+                host_segment_map |
                 boost::adaptors::map_values |
                 boost::adaptors::transformed(std::mem_fn(&std::list<fs::path>::size)),
                 size_t(0));
-        manager_logger.trace("{}: total files: {}", ep_info.first, per_ep_hints[ep_info.first]);
+        manager_logger.trace("{}: total files: {}", ip, per_ep_hints[ip]);
     }
 
     // Create a map of lists of segments that we will move (for each destination end point):
@@ -226,7 +227,7 @@ seastar::future<> rebalance_segments(const std::string_view hint_directory, hint
     // them to corresponding lists in the segments_map AND actually move segments to
     // the corresponding shard's sub-directory till the requested segments_per_shard level
     // is reached (see more details in the description of rebalance_segments_for()).
-    for (auto& [ep, N] : per_ep_hints) {
+    for (const auto& [ep, N] : per_ep_hints) {
         size_t q = N / smp::count;
         size_t r = N - q * smp::count;
         auto& current_segments_to_move = segments_to_move[ep];
@@ -307,18 +308,24 @@ private:
     using segment_list = std::list<seastar::sstring>;
 
 private:
-    host_hint_storage& _parent;
-    const extensions& _extensions;
+    std::reference_wrapper<const host_hint_storage> _parent;
+    std::reference_wrapper<const extensions> _extensions;
+
     // Replay position corresponding to the last successful write to the commitlog.
+    // It is used when recreating a commitlog instance. See the method: `create_commitlog`.
     replay_position _last_written_rp;
+    // List of the names of active segments.
+    segment_list _segment_list;
     // With the current implementation of commitlog, we're forced to create, delete and create
     // commitlog instances to ensure that we can also read hints at runtime. It's related to
     // buffering in commitlog. After flushing hints, this pointer will again be equal to `nullptr`.
     std::unique_ptr<commitlog> _commitlog_ptr = nullptr;
+
+    seastar::semaphore _mutex{1};
     time_point_type _next_flush_time_point;
 
 public:
-    hint_commitlog(host_hint_storage& parent, const extensions& exts) noexcept
+    hint_commitlog(const host_hint_storage& parent, const extensions& exts) noexcept
         : _parent{parent}
         , _extensions{exts}
         // TODO: Should this logic be deduplicated with what is in the commitlog?
@@ -330,13 +337,15 @@ public:
     ~hint_commitlog() noexcept = default;
 
 public:
+    template <typename... Args>
+    seastar::future<> add_entry(Args&&... args) {
+        commitlog& cl = co_await get_or_create_commitlog();
+        rp_handle rph = co_await cl.add_entry(std::forward<Args>(args)...);
+        _last_written_rp = std::max(_last_written_rp, rph.release());
+    }
 
     const extensions& extensions_used() const noexcept {
         return _extensions;
-    }
-
-    replay_position last_written_rp() const noexcept {
-        return _last_written_rp;
     }
 
 private:
@@ -354,14 +363,25 @@ private:
 
     }
 
+    seastar::future<std::reference_wrapper<commitlog>> get_or_create_commitlog() {
+        // To avoid deadlock in case multiple fibers simultaneously realise
+        // that there is no commitlog instance at the moment.
+        const auto lock = seastar::get_units(_mutex, 1);
+        // Unlikely because we flush relatively rarely.
+        if (!_commitlog_ptr) [[unlikely]] {
+            co_await create_commitlog();
+        }
+        co_return *_commitlog_ptr;
+    }
+
     seastar::future<> create_commitlog() {
         assert(!_commitlog_ptr);
 
         using commitlog_config = typename commitlog::config;
         commitlog_config cfg;
 
-        cfg.sched_group = _parent._maybe_sched_group.value();
-        cfg.commit_log_location = _parent._host_dir_path.c_str();
+        cfg.sched_group = _parent.get()._maybe_sched_group.value();
+        cfg.commit_log_location = _parent.get()._host_dir_path.c_str();
         cfg.commitlog_segment_size_in_mb = HINT_SEGMENT_SIZE_IN_MB;
         cfg.commitlog_total_space_in_mb = MAX_HINTS_PER_HOST_SIZE_MB;
         cfg.fname_prefix = HINT_FILENAME_PREFIX;
