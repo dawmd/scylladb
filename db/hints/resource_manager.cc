@@ -47,6 +47,8 @@ seastar::future<bool> is_mountpoint(const std::filesystem::path& path) {
 
     const fs::path parent_path = path.parent_path();
 
+    // Do not change this order. `path` is taken as a reference, so it may have become
+    // destroyed if it's not immediately passed along.
     const auto device_id_1 = co_await get_device_id(path);
     const auto device_id_2 = co_await get_device_id(parent_path);
 
