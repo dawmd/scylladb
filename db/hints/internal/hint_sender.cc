@@ -459,7 +459,8 @@ bool hint_sender::send_one_file(const seastar::sstring& fname) {
     try {
         using buffer_and_replay_position = typename commitlog::buffer_and_replay_position;
         commitlog::read_log_file(fname, HINT_FILENAME_PREFIX,
-                [this, secs_since_file_mod, &fname, ctx_ptr] (buffer_and_replay_position buf_rp) -> seastar::future<> {
+                seastar::coroutine::lambda([this, secs_since_file_mod, &fname, ctx_ptr]
+                        (buffer_and_replay_position buf_rp) -> seastar::future<> {
             auto& buf = buf_rp.buffer;
             auto& rp = buf_rp.position;
 
@@ -495,7 +496,7 @@ bool hint_sender::send_one_file(const seastar::sstring& fname) {
                     break;
                 }
             };
-        }, _last_not_complete_rp.pos, &_db.extensions()).get();
+        }), _last_not_complete_rp.pos, &_db.extensions()).get();
     } catch (commitlog::segment_error& ex) {
         manager_logger.error("{}: {}. Dropping...", fname, ex.what());
         ctx_ptr->segment_replay_failed = false;
