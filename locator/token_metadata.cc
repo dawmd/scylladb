@@ -552,6 +552,7 @@ std::optional<inet_address> token_metadata_impl::get_endpoint_for_host_id(host_i
     if (const auto* node = _topology.find_node(host_id)) [[likely]] {
         return node->endpoint();
     } else {
+        tlogger.info("\n\tNot found a node for {}\n", host_id);
         return std::nullopt;
     }
 }
@@ -874,6 +875,7 @@ future<> topology_change_info::clear_gently() {
 
 token_metadata::token_metadata(std::unique_ptr<token_metadata_impl> impl)
     : _impl(std::move(impl)) {
+        tlogger.trace("UniquePtr constr: {}", (void*) std::addressof(*_impl));
 }
 
 token_metadata::token_metadata(config cfg)
@@ -883,7 +885,10 @@ token_metadata::token_metadata(config cfg)
 token_metadata::~token_metadata() = default;
 
 
-token_metadata::token_metadata(token_metadata&&) noexcept = default;
+token_metadata::token_metadata(token_metadata&& other) noexcept {
+    _impl = std::move(other._impl);
+        tlogger.trace("UniquePtr constr: {}", (void*) std::addressof(*_impl));
+}
 
 token_metadata& token_metadata::token_metadata::operator=(token_metadata&&) noexcept = default;
 
@@ -1102,6 +1107,7 @@ token_metadata::clone_after_all_left() const noexcept {
 }
 
 future<> token_metadata::clear_gently() noexcept {
+    // assert(false);
     return _impl->clear_gently();
 }
 

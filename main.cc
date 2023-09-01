@@ -1128,6 +1128,14 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
               return make_ready_future<>();
           }).get();
 
+          proxy.invoke_on_all([] (auto& prox) {
+            const auto token_ptr = prox.get_token_metadata_ptr();
+            const auto mhid = token_ptr->get_my_id();
+            const auto maybe_ep = token_ptr->get_endpoint_for_host_id(mhid);
+            startlog.info("\n\tMain address of token is {}. My host id is {} and my maybe endpoint is {}\n", (void*) std::addressof(*token_ptr), mhid, maybe_ep);
+            return make_ready_future<>();
+          }).get();
+
             netw::messaging_service::config mscfg;
 
             mscfg.id = cfg->host_id;
@@ -1506,6 +1514,13 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                 api::unset_server_stream_manager(ctx).get();
             });
 
+            proxy.invoke_on_all([] (auto& prox) {
+                const auto token_ptr = prox.get_token_metadata_ptr();
+                const auto mhid = token_ptr->get_my_id();
+                const auto maybe_ep = token_ptr->get_endpoint_for_host_id(mhid);
+                startlog.info("\n\tMain address of token is {}. My host id is {} and my maybe endpoint is {}\n", (void*) std::addressof(*token_ptr), mhid, maybe_ep);
+                return make_ready_future<>();
+            }).get();
             supervisor::notify("starting hinted handoff manager");
             if (!hinted_handoff_enabled.is_disabled_for_all()) {
                 hints_dir_initializer.ensure_rebalanced().get();

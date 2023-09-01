@@ -569,6 +569,11 @@ host_id_type manager::convert_to_host_id(old_host_id_type ep) const {
     const std::optional<host_id_type> maybe_host_id = token_metadata_ptr->get_host_id_if_known(ep);
     if (maybe_host_id) [[likely]] {
         return *maybe_host_id;
+    } else {
+        const auto mhid = token_metadata_ptr->get_my_id();
+        const auto mip = token_metadata_ptr->get_endpoint_for_host_id(mhid);
+        manager_logger.info("\n\tToken metadata pointer is {}. My host is {}, my IP is {}, and the given IP is {}\n", (void*) std::addressof(*token_metadata_ptr), mhid, mip, ep);
+        [[maybe_unused]] volatile int _ = *((volatile int*)0);
     }
     return _gossiper_anchor->get_host_id(ep);
 }

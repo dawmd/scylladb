@@ -60,6 +60,8 @@ std::string node::to_string(node::state s) {
 }
 
 future<> topology::clear_gently() noexcept {
+    // assert(false);
+    tlogger.error("CLEARING GENTLY");
     _this_node = nullptr;
     co_await utils::clear_gently(_dc_endpoints);
     co_await utils::clear_gently(_dc_racks);
@@ -78,6 +80,7 @@ topology::topology(config cfg)
 {
     tlogger.trace("topology[{}]: constructing using config: endpoint={} dc={} rack={}", fmt::ptr(this),
             cfg.this_endpoint, cfg.local_dc_rack.dc, cfg.local_dc_rack.rack);
+    tlogger.error("WHEN TOPOLOGY STARTS: {} and {}", _nodes_by_endpoint, _nodes_by_host_id);
 }
 
 topology::topology(topology&& o) noexcept
@@ -95,7 +98,9 @@ topology::topology(topology&& o) noexcept
     , _datacenters(std::move(o._datacenters))
 {
     assert(_shard == this_shard_id());
-    tlogger.trace("topology[{}]: move from [{}]", fmt::ptr(this), fmt::ptr(&o));
+    tlogger.trace("topology[{}]: move from [{}]\n"
+            "\tNodes by host id: {}\n"
+            "\tNodes by ip: {}", fmt::ptr(this), fmt::ptr(&o), _nodes_by_host_id, _nodes_by_endpoint);
 
     for (auto& n : _nodes) {
         if (n) {
@@ -306,6 +311,7 @@ void topology::index_node(const node* node) {
     // 2. Other nodes may be introduced via gossip with their endpoint only first
     //    and their host_id is updated later on.
     if (node->host_id()) {
+        tlogger.trace("Adding node by id: {}, ep = {}", node->host_id(), node->endpoint());
         auto [nit, inserted_host_id] = _nodes_by_host_id.emplace(node->host_id(), node);
         if (!inserted_host_id) {
             on_internal_error(tlogger, format("topology[{}]: {}: node already exists", fmt::ptr(this), debug_format(node)));
@@ -318,6 +324,7 @@ void topology::index_node(const node* node) {
                 _nodes_by_endpoint.erase(node->endpoint());
             } else if (!node->is_leaving() && !node->left()) {
                 if (node->host_id()) {
+                    tlogger.trace("ERASING HOST ID {}", node->host_id());
                     _nodes_by_host_id.erase(node->host_id());
                 }
                 on_internal_error(tlogger, format("topology[{}]: {}: node endpoint already mapped to {}", fmt::ptr(this), debug_format(node), debug_format(eit->second)));
@@ -377,6 +384,7 @@ void topology::unindex_node(const node* node) {
     }
     auto host_it = _nodes_by_host_id.find(node->host_id());
     if (host_it != _nodes_by_host_id.end() && host_it->second == node) {
+        tlogger.trace("Unindexing node by host id {}", host_it->second->host_id());
         _nodes_by_host_id.erase(host_it);
     }
     auto ep_it = _nodes_by_endpoint.find(node->endpoint());
@@ -409,6 +417,7 @@ node_holder topology::pop_node(const node* node) {
 // Finds a node by its host_id
 // Returns nullptr if not found
 const node* topology::find_node(host_id id) const noexcept {
+    tlogger.trace("Trying to find a node of id {}", id);
     auto it = _nodes_by_host_id.find(id);
     if (it != _nodes_by_host_id.end()) {
         return it->second;

@@ -6337,6 +6337,9 @@ future<> storage_proxy::start_hints_manager(shared_ptr<gms::gossiper> g) {
     return f.then([this] {
         return _hints_resource_manager.register_manager(_hints_for_views_manager);
     }).then([this, g = std::move(g)] () mutable {
+        const auto hid = get_token_metadata_ptr()->get_my_id();
+        const auto ep = get_token_metadata_ptr()->get_endpoint_for_host_id(hid);
+        slogger.error("BEFORE STARTING HINT MANAGER, hid = {}, ep = {}", hid, ep);
         return _hints_resource_manager.start(shared_from_this(), std::move(g));
     });
 }

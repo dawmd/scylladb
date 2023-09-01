@@ -300,6 +300,7 @@ future<> storage_service::topology_state_load(cdc::generation_service& cdc_gen_s
 #ifdef SEASTAR_DEBUG
     static bool running = false;
     assert(!running); // The function is not re-entrant
+    slogger.error("Hello from running");
     auto d = defer([] {
         running = false;
     });
@@ -353,6 +354,11 @@ future<> storage_service::topology_state_load(cdc::generation_service& cdc_gen_s
     }
 
     co_await mutate_token_metadata(seastar::coroutine::lambda([this, &id2ip, &am] (mutable_token_metadata_ptr tmptr) -> future<> {
+        // assert(false);
+        const auto hid_ = tmptr->get_my_id();
+        const auto ep_ = tmptr->get_endpoint_for_host_id(hid_);
+
+        slogger.error("TMPTR before that: hid = {}, ep = {}, addr = {}", hid_, ep_, (void*) std::addressof(*tmptr));
         co_await tmptr->clear_gently(); // drop previous state
 
         tmptr->set_version(_topology_state_machine._topology.version);
@@ -475,6 +481,10 @@ future<> storage_service::topology_state_load(cdc::generation_service& cdc_gen_s
         if (_db.local().get_config().check_experimental(db::experimental_features_t::feature::TABLETS)) {
             tmptr->set_tablets(co_await replica::read_tablet_metadata(*_qp));
         }
+
+        const auto hid = tmptr->get_my_id();
+        const auto ep = tmptr->get_endpoint_for_host_id(hid);
+        slogger.error("TMPTR after that: hid = {}, ep = {}, addr = {}", hid, ep, (void*) std::addressof(*tmptr));
     }));
 
     // We don't load gossiper endpoint states in storage_service::join_cluster
@@ -493,9 +503,12 @@ future<> storage_service::topology_state_load(cdc::generation_service& cdc_gen_s
         slogger.debug("topology_state_load: current CDC generation ID: {}", *gen_id);
         co_await cdc_gen_svc.handle_cdc_generation(*gen_id);
     }
+
+    slogger.error("KONIEC");
 }
 
 future<> storage_service::topology_transition(cdc::generation_service& cdc_gen_svc) {
+    // assert(false);
     assert(this_shard_id() == 0);
     co_await topology_state_load(cdc_gen_svc); // reload new state
 
