@@ -567,10 +567,10 @@ host_id_type manager::convert_to_host_id(old_host_id_type ep) const {
     const auto token_metadata_ptr = _proxy_anchor->get_token_metadata_ptr();
     assert(token_metadata_ptr);
     const std::optional<host_id_type> maybe_host_id = token_metadata_ptr->get_host_id_if_known(ep);
-    if (!maybe_host_id) [[unlikely]] {
-        throw unknown_endpoint{};
+    if (maybe_host_id) [[likely]] {
+        return *maybe_host_id;
     }
-    return *maybe_host_id;
+    return _gossiper_anchor->get_host_id(ep);
 }
 
 seastar::future<> manager::compute_hints_dir_device_id() {

@@ -28,6 +28,7 @@
 #include "db/hints/resource_manager.hh"
 #include "gms/gossiper.hh"
 #include "gms/inet_address.hh"
+#include "locator/token_metadata.hh"
 #include "replica/database.hh"
 #include "schema/schema_fwd.hh"
 #include "service/storage_proxy.hh"
@@ -61,6 +62,32 @@ seastar::future<::timespec> get_last_file_modification(const std::string_view fn
     seastar::file f = co_await seastar::open_file_dma(fname, seastar::open_flags::ro);
     const auto st = co_await f.stat();
     co_return st.st_mtim;
+}
+
+[[maybe_unused]] host_id_type convert_to_host_id(service::storage_proxy& proxy, gms::gossiper& gossiper,
+        old_host_id_type old_host_id)
+{
+    const locator::token_metadata_ptr token_ptr = proxy.get_token_metadata_ptr();
+    assert(token_ptr);
+    const std::optional<host_id_type> maybe_host_id = token_ptr->get_host_id_if_known(old_host_id);
+    if (maybe_host_id.has_value()) {
+        return *maybe_host_id;
+    }
+    return gossiper.get_host_id(old_host_id);
+}
+
+old_host_id_type convert_to_old_host_id(service::storage_proxy& proxy, gms::gossiper& gossiper,
+        host_id_type host_id)
+{
+    const locator::token_metadata_ptr token_ptr = proxy.get_token_metadata_ptr();
+    assert(token_ptr);
+    const std::optional<old_host_id_type> maybe_ep = token_ptr->get_endpoint_for_host_id(host_id);
+    if (maybe_ep.has_value()) {
+        return *maybe_ep;
+    }
+    const auto ep_set = gossiper.get_nodes_with_host_id(host_id);
+    assert(!ep_set.empty());
+    return *ep_set.begin();
 }
 
 } // anonymous namespace
@@ -305,17 +332,15 @@ bool hint_sender::can_send() noexcept {
     }
 
     try {
-        const auto token_ptr = _proxy.get_token_metadata_ptr();
-        const std::optional<gms::inet_address> maybe_ep = token_ptr->get_endpoint_for_host_id(_host_id);
-        assert(maybe_ep.has_value());
+        const auto ep = convert_to_old_host_id(_proxy, _gossiper, _host_id);
 
-        if (_gossiper.is_alive(*maybe_ep)) {
+        if (_gossiper.is_alive(ep)) {
             _state.remove(state::host_left_ring);
             return true;
         } else {
             if (!_state.contains(state::host_left_ring)) {
                 _state.set_if<state::host_left_ring>(
-                        !_db.get_token_metadata().is_normal_token_owner(*maybe_ep));
+                        !_db.get_token_metadata().is_normal_token_owner(ep));
             }
             // send the hints out if the destination Node is part of the ring - we will send to all new replicas in this case
             return _state.contains(state::host_left_ring);
@@ -361,15 +386,13 @@ frozen_mutation_and_schema hint_sender::get_mutation(seastar::lw_shared_ptr<send
 seastar::future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m,
         std::span<const gms::inet_address> natural_endpoints) noexcept
 {
-    const auto token_ptr = _proxy.get_token_metadata_ptr();
-    const std::optional<gms::inet_address> maybe_ep = token_ptr->get_endpoint_for_host_id(_host_id);
-    assert(maybe_ep.has_value());
+    const auto ep = convert_to_old_host_id(_proxy, _gossiper, _host_id);
 
     // The fact that we send with CL::ALL in both cases below ensures that new hints are not going
     // to be generated as a result of hints sending.
-    if (std::ranges::find(natural_endpoints, *maybe_ep) != natural_endpoints.end()) {
+    if (std::ranges::find(natural_endpoints, ep) != natural_endpoints.end()) {
         manager_logger.trace("Sending directly to {}", _host_id);
-        return _proxy.send_hint_to_endpoint(std::move(m), *maybe_ep);
+        return _proxy.send_hint_to_endpoint(std::move(m), ep);
     } else {
         manager_logger.trace("Endpoints set has changed and {} is no longer a replica. Mutating from scratch...",
                 _host_id);
