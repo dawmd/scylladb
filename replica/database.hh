@@ -422,6 +422,7 @@ private:
 
     lw_shared_ptr<memtable_list> make_memory_only_memtable_list();
     lw_shared_ptr<memtable_list> make_memtable_list(compaction_group& cg);
+    lw_shared_ptr<memtable_list> make_hint_memtable_list(compaction_group& cg);
 
     compaction_manager& _compaction_manager;
     sstables::compaction_strategy _compaction_strategy;
@@ -453,6 +454,7 @@ private:
     bool _compaction_disabled_by_user = false;
     bool _tombstone_gc_enabled = true;
     utils::phased_barrier _flush_barrier;
+    utils::phased_barrier _hint_flush_barrier;
     std::vector<view_ptr> _views;
 
     std::unique_ptr<cell_locker> _counter_cell_locks; // Memory-intensive; allocate only when needed.
@@ -1136,6 +1138,7 @@ private:
     // The function never fails.
     // It either succeeds eventually after retrying or aborts.
     future<> seal_active_memtable(compaction_group& cg, flush_permit&&) noexcept;
+    future<> seal_active_hint_memtable(compaction_group& cg, flush_permit&&) noexcept;
 
     void check_valid_rp(const db::replay_position&) const;
 public:

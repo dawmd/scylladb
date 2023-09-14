@@ -1962,6 +1962,7 @@ future<> database::apply_in_memory(const mutation& m, column_family& cf, db::rp_
 }
 
 future<> database::apply_hint_in_memory(const frozen_mutation& m, schema_ptr m_schema, db::rp_handle&& h, db::timeout_clock::time_point timeout) {
+    dblog.warn("database: APPLY HINT IN MEMORY");
     auto& cf = find_column_family(m.column_family_id());
 
     data_listeners().on_write(m_schema, m);
@@ -2204,6 +2205,7 @@ future<> database::do_apply_hint(schema_ptr s, const frozen_mutation& m,
         tracing::trace_state_ptr tr_state, db::timeout_clock::time_point timeout,
         db::commitlog::force_sync sync, db::per_partition_rate_limit::info rate_limit_info)
 {
+    dblog.warn("database: DO APPLY HINT");
     ++_stats->total_writes;
     // assume failure until proven otherwise
     auto update_writes_failed = defer([&] { ++_stats->total_writes_failed; });
@@ -2329,6 +2331,7 @@ future<> database::apply(schema_ptr s, const frozen_mutation& m, tracing::trace_
 }
 
 future<> database::apply_hint(schema_ptr s, const frozen_mutation& m, tracing::trace_state_ptr tr_state, db::timeout_clock::time_point timeout) {
+    dblog.warn("database: APPLY HINT");
     if (dblog.is_enabled(logging::log_level::trace)) {
         dblog.trace("apply hint {}", m.pretty_printer(s));
     }

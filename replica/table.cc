@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#include <iterator>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/maybe_yield.hh>
@@ -366,9 +367,14 @@ future<std::vector<locked_cell>> table::lock_counter_cells(const mutation& m, db
 }
 
 std::vector<memtable*> table::active_memtables() {
-    return boost::copy_range<std::vector<memtable*>>(compaction_groups() | boost::adaptors::transformed([] (const compaction_group_ptr& cg) {
+    auto r1 = boost::copy_range<std::vector<memtable*>>(compaction_groups() | boost::adaptors::transformed([] (const compaction_group_ptr& cg) {
         return &cg->memtables()->active_memtable();
     }));
+    auto r2 = boost::copy_range<std::vector<memtable*>>(compaction_groups() | boost::adaptors::transformed([] (const compaction_group_ptr& cg) {
+        return &cg->hint_memtables()->active_memtable();
+    }));
+    r1.insert(r1.end(), std::make_move_iterator(r2.begin()), std::make_move_iterator(r2.end()));
+    return r1;
 }
 
 api::timestamp_type compaction_group::min_memtable_timestamp() const {
@@ -924,6 +930,140 @@ table::seal_active_memtable(compaction_group& cg, flush_permit&& flush_permit) n
             throw std::bad_alloc();
         });
         op = _flush_barrier.start();
+
+        // no exceptions allowed (nor expected) from this point on
+        _stats.pending_flushes++;
+        _config.cf_stats->pending_memtables_flushes_count++;
+        _config.cf_stats->pending_memtables_flushes_bytes += memtable_size;
+        return make_ready_future<>();
+    });
+
+    auto undo_stats = std::make_optional(deferred_action([this, memtable_size] () noexcept {
+        _stats.pending_flushes--;
+        _config.cf_stats->pending_memtables_flushes_count--;
+        _config.cf_stats->pending_memtables_flushes_bytes -= memtable_size;
+    }));
+
+    co_await with_retry([&] () -> future<> {
+        // Reacquiring the write permit might be needed if retrying flush
+        if (!permit.has_sstable_write_permit()) {
+            tlogger.debug("seal_active_memtable: reacquiring write permit");
+            utils::get_local_injector().inject("table_seal_active_memtable_reacquire_write_permit", []() {
+                throw std::bad_alloc();
+            });
+            permit = co_await std::move(permit).reacquire_sstable_write_permit();
+        }
+        auto write_permit = permit.release_sstable_write_permit();
+
+        utils::get_local_injector().inject("table_seal_active_memtable_try_flush", []() {
+            throw std::system_error(ENOSPC, std::system_category(), "Injected error");
+        });
+        co_return co_await this->try_flush_memtable_to_sstable(cg, old, std::move(write_permit));
+    });
+
+    undo_stats.reset();
+
+    if (_commitlog) {
+        _commitlog->discard_completed_segments(_schema->id(), old->get_and_discard_rp_set());
+    }
+    co_await std::move(previous_flush);
+    // keep `op` alive until after previous_flush resolves
+
+    // FIXME: release commit log
+    // FIXME: provide back-pressure to upper layers
+}
+
+future<>
+table::seal_active_hint_memtable(compaction_group& cg, flush_permit&& flush_permit) noexcept {
+    auto old = cg.hint_memtables()->back();
+    tlogger.debug("Sealing active memtable of {}.{}, partitions: {}, occupancy: {}", _schema->ks_name(), _schema->cf_name(), old->partition_count(), old->occupancy());
+
+    if (old->empty()) {
+        tlogger.debug("Memtable is empty");
+        co_return co_await _hint_flush_barrier.advance_and_await();
+    }
+
+    auto permit = std::move(flush_permit);
+    auto r = exponential_backoff_retry(100ms, 10s);
+    // Try flushing for around half an hour (30 minutes every 10 seconds)
+    int default_retries = 30 * 60 / 10;
+    int allowed_retries = default_retries;
+    std::optional<utils::phased_barrier::operation> op;
+    size_t memtable_size;
+    future<> previous_flush = make_ready_future<>();
+
+    auto with_retry = [&] (std::function<future<>()> func) -> future<> {
+        for (;;) {
+            std::exception_ptr ex;
+            try {
+                co_return co_await func();
+            } catch (...) {
+                ex = std::current_exception();
+                _config.cf_stats->failed_memtables_flushes_count++;
+
+                auto should_retry = [](auto* ep) {
+                    int ec = ep->code().value();
+                    return ec == ENOSPC || ec == EDQUOT;
+                };
+                if (try_catch<std::bad_alloc>(ex)) {
+                    // There is a chance something else will free the memory, so we can try again
+                    allowed_retries--;
+                } else if (auto ep = try_catch<std::system_error>(ex)) {
+                    allowed_retries = should_retry(ep) ? default_retries : 0;
+                } else if (auto ep = try_catch<storage_io_error>(ex)) {
+                    allowed_retries = should_retry(ep) ? default_retries : 0;
+                } else {
+                    allowed_retries = 0;
+                }
+
+                if (allowed_retries <= 0) {
+                    // At this point we don't know what has happened and it's better to potentially
+                    // take the node down and rely on commitlog to replay.
+                    //
+                    // FIXME: enter maintenance mode when available.
+                    // since replaying the commitlog with a corrupt mutation
+                    // may end up in an infinite crash loop.
+                    tlogger.error("Memtable flush failed due to: {}. Aborting, at {}", ex, current_backtrace());
+                    std::abort();
+                }
+            }
+            if (_async_gate.is_closed()) {
+                tlogger.warn("Memtable flush failed due to: {}. Dropped due to shutdown", ex);
+                co_await std::move(previous_flush);
+                co_await coroutine::return_exception_ptr(std::move(ex));
+            }
+            tlogger.warn("Memtable flush failed due to: {}. Will retry in {}ms", ex, r.sleep_time().count());
+            co_await r.retry();
+        }
+    };
+
+    co_await with_retry([&] {
+        tlogger.debug("seal_active_memtable: adding memtable");
+        utils::get_local_injector().inject("table_seal_active_memtable_add_memtable", []() {
+            throw std::bad_alloc();
+        });
+
+        cg.hint_memtables()->add_memtable();
+
+        // no exceptions allowed (nor expected) from this point on
+        _stats.memtable_switch_count++;
+        [&] () noexcept {
+            // This will set evictable occupancy of the old memtable region to zero, so that
+            // this region is considered last for flushing by dirty_memory_manager::flush_when_needed().
+            // If we don't do that, the flusher may keep picking up this memtable list for flushing after
+            // the permit is released even though there is not much to flush in the active memtable of this list.
+            old->region().ground_evictable_occupancy();
+            memtable_size = old->occupancy().total_space();
+        }();
+        return make_ready_future<>();
+    });
+
+    co_await with_retry([&] {
+        previous_flush = _hint_flush_barrier.advance_and_await();
+        utils::get_local_injector().inject("table_seal_active_memtable_start_op", []() {
+            throw std::bad_alloc();
+        });
+        op = _hint_flush_barrier.start();
 
         // no exceptions allowed (nor expected) from this point on
         _stats.pending_flushes++;
@@ -1613,6 +1753,15 @@ table::make_memtable_list(compaction_group& cg) {
     return make_lw_shared<memtable_list>(std::move(seal), std::move(get_schema), _config.dirty_memory_manager, _stats, _config.memory_compaction_scheduling_group);
 }
 
+lw_shared_ptr<memtable_list>
+table::make_hint_memtable_list(compaction_group& cg) {
+    auto seal = [this, &cg] (flush_permit&& permit) {
+        return seal_active_hint_memtable(cg, std::move(permit));
+    };
+    auto get_schema = [this] { return schema(); };
+    return make_lw_shared<memtable_list>(std::move(seal), std::move(get_schema), _config.dirty_memory_manager, _stats, _config.memory_compaction_scheduling_group);
+}
+
 compaction_group::compaction_group(table& t, size_t group_id, dht::token_range token_range)
     : _t(t)
     , _table_state(std::make_unique<table_state>(t, *this))
@@ -1620,7 +1769,15 @@ compaction_group::compaction_group(table& t, size_t group_id, dht::token_range t
     , _token_range(std::move(token_range))
     , _compaction_strategy_state(compaction::compaction_strategy_state::make(_t._compaction_strategy))
     , _memtables(_t._config.enable_disk_writes ? _t.make_memtable_list(*this) : _t.make_memory_only_memtable_list())
-    , _hint_memtables(_t._config.enable_disk_writes ? _t.make_memtable_list(*this) : _t.make_memory_only_memtable_list())
+    , _hint_memtables(_t._config.enable_disk_writes ? _t.make_hint_memtable_list(*this) : _t.make_memory_only_memtable_list())
+    // Be careful when moving! `this` must be constant!
+    , _hint_timer([this] {
+        if (_hint_memtables->can_flush()) {
+            (void) _hint_memtables->flush().then([] {
+                tlogger.warn("Hints have been flushed");
+            });
+        }
+    })
     , _main_sstables(make_lw_shared<sstables::sstable_set>(t._compaction_strategy.make_sstable_set(t.schema())))
     , _maintenance_sstables(t.make_maintenance_sstable_set())
 {
@@ -2401,6 +2558,7 @@ void table::do_apply(compaction_group& cg, db::rp_handle&& h, Args&&... args) {
 
 template<typename... Args>
 void table::do_apply_hint(compaction_group& cg, db::rp_handle&& h, Args&&... args) {
+    tlogger.warn("table: DO APPLY HINT");
     if (_async_gate.is_closed()) {
         on_internal_error(tlogger, "Table async_gate is closed");
     }
@@ -2416,6 +2574,9 @@ void table::do_apply_hint(compaction_group& cg, db::rp_handle&& h, Args&&... arg
         _failed_counter_applies_to_memtable++;
         throw;
     }
+    const auto now = compaction_group::hint_clock_type::now();
+    cg.rearm_hint_timer(now + 10s);
+    tlogger.warn("\n\tHINT HAS BEEN APPLIED\n");
     _stats.writes.mark(lc);
 }
 
@@ -2864,8 +3025,11 @@ table::as_mutation_source_excluding_staging() const {
 std::vector<mutation_source> table::select_memtables_as_mutation_sources(dht::token token) const {
     auto& cg = compaction_group_for_token(token);
     std::vector<mutation_source> mss;
-    mss.reserve(cg.memtables()->size());
+    mss.reserve(cg.memtables()->size() + cg.hint_memtables()->size());
     for (auto& mt : *cg.memtables()) {
+        mss.emplace_back(mt->as_data_source());
+    }
+    for (auto& mt : *cg.hint_memtables()) {
         mss.emplace_back(mt->as_data_source());
     }
     return mss;

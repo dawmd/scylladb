@@ -12,6 +12,7 @@
 #include "compaction/compaction_descriptor.hh"
 #include "compaction/compaction_backlog_manager.hh"
 #include "compaction/compaction_strategy_state.hh"
+#include "seastar/core/lowres_clock.hh"
 #include "sstables/sstable_set.hh"
 #include "compaction/compaction_fwd.hh"
 
@@ -30,6 +31,9 @@ using enable_backlog_tracker = bool_class<class enable_backlog_tracker_tag>;
 // Usually, a table T in shard S will own a single compaction group. With compaction_group, a
 // table T will be able to own as many groups as it wishes.
 class compaction_group {
+public:
+    using hint_clock_type = lowres_clock;
+private:
     table& _t;
     class table_state;
     std::unique_ptr<table_state> _table_state;
@@ -43,6 +47,7 @@ class compaction_group {
     // applying mutations corresponding to incoming hints from the other ones. We want
     // to, for example, limit I/O for hints this way. Hints tend to overload nodes otherwise.
     lw_shared_ptr<memtable_list> _hint_memtables;
+    timer<hint_clock_type> _hint_timer;
     // SSTable set which contains all non-maintenance sstables
     lw_shared_ptr<sstables::sstable_set> _main_sstables;
     // Holds SSTables created by maintenance operations, which need reshaping before integration into the main set
@@ -94,6 +99,10 @@ public:
 
     lw_shared_ptr<memtable_list>& memtables() noexcept;
     lw_shared_ptr<memtable_list>& hint_memtables() noexcept;
+
+    void rearm_hint_timer(hint_clock_type::time_point until) noexcept {
+        _hint_timer.rearm(until);
+    }
 
     size_t memtable_count() const noexcept;
     // Returns minimum timestamp from memtable list
