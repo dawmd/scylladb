@@ -1620,6 +1620,7 @@ compaction_group::compaction_group(table& t, size_t group_id, dht::token_range t
     , _token_range(std::move(token_range))
     , _compaction_strategy_state(compaction::compaction_strategy_state::make(_t._compaction_strategy))
     , _memtables(_t._config.enable_disk_writes ? _t.make_memtable_list(*this) : _t.make_memory_only_memtable_list())
+    , _hint_memtables(_t._config.enable_disk_writes ? _t.make_memtable_list(*this) : _t.make_memory_only_memtable_list())
     , _main_sstables(make_lw_shared<sstables::sstable_set>(t._compaction_strategy.make_sstable_set(t.schema())))
     , _maintenance_sstables(t.make_maintenance_sstable_set())
 {
@@ -1728,6 +1729,9 @@ logalloc::occupancy_stats table::occupancy() const {
     logalloc::occupancy_stats res;
     for (const compaction_group_ptr& cg : compaction_groups()) {
         for (auto& m : *cg->memtables()) {
+            res += m->region().occupancy();
+        }
+        for (auto&m : *cg->hint_memtables()) {
             res += m->region().occupancy();
         }
     }
@@ -1938,6 +1942,10 @@ lw_shared_ptr<memtable_list>& compaction_group::memtables() noexcept {
     return _memtables;
 }
 
+lw_shared_ptr<memtable_list>& compaction_group::hint_memtables() noexcept {
+    return _hint_memtables;
+}
+
 size_t compaction_group::memtable_count() const noexcept {
     return _memtables->size();
 }
@@ -2047,6 +2055,9 @@ void table::set_schema(schema_ptr s) {
 
     for (const compaction_group_ptr& cg : compaction_groups()) {
         for (auto& m: *cg->memtables()) {
+            m->set_schema(s);
+        }
+        for (auto &m : *cg->hint_memtables()) {
             m->set_schema(s);
         }
     }
@@ -2388,6 +2399,26 @@ void table::do_apply(compaction_group& cg, db::rp_handle&& h, Args&&... args) {
     _stats.writes.mark(lc);
 }
 
+template<typename... Args>
+void table::do_apply_hint(compaction_group& cg, db::rp_handle&& h, Args&&... args) {
+    if (_async_gate.is_closed()) {
+        on_internal_error(tlogger, "Table async_gate is closed");
+    }
+
+    utils::latency_counter lc;
+    _stats.writes.set_latency(lc);
+    db::replay_position rp = h;
+    check_valid_rp(rp);
+    try {
+        cg.hint_memtables()->active_memtable().apply(std::forward<Args>(args)..., std::move(h));
+        _highest_rp = std::max(_highest_rp, rp);
+    } catch (...) {
+        _failed_counter_applies_to_memtable++;
+        throw;
+    }
+    _stats.writes.mark(lc);
+}
+
 future<> table::apply(const mutation& m, db::rp_handle&& h, db::timeout_clock::time_point timeout) {
     return dirty_memory_region_group().run_when_memory_available([this, &m, h = std::move(h)] () mutable {
         do_apply(compaction_group_for_token(m.token()), std::move(h), m);
@@ -2403,6 +2434,16 @@ future<> table::apply(const frozen_mutation& m, schema_ptr m_schema, db::rp_hand
 
     return dirty_memory_region_group().run_when_memory_available([this, &m, m_schema = std::move(m_schema), h = std::move(h)]() mutable {
         do_apply(compaction_group_for_key(m.key(), m_schema), std::move(h), m, m_schema);
+    }, timeout);
+}
+
+future<> table::apply_hint(const frozen_mutation& m, schema_ptr m_schema, db::rp_handle&& h, db::timeout_clock::time_point timeout) {
+    if (_virtual_writer) [[unlikely]] {
+        return (*_virtual_writer)(m);
+    }
+
+    return dirty_memory_region_group().run_when_memory_available([this, &m, m_schema = std::move(m_schema), h = std::move(h)]() mutable {
+        do_apply_hint(compaction_group_for_key(m.key(), m_schema), std::move(h), m, m_schema);
     }, timeout);
 }
 

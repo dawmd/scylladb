@@ -39,6 +39,10 @@ class compaction_group {
     compaction::compaction_strategy_state _compaction_strategy_state;
     // Holds list of memtables for this group
     lw_shared_ptr<memtable_list> _memtables;
+    // Separate memtable list for hints. The puporse of the division is to be able to isolate
+    // applying mutations corresponding to incoming hints from the other ones. We want
+    // to, for example, limit I/O for hints this way. Hints tend to overload nodes otherwise.
+    lw_shared_ptr<memtable_list> _hint_memtables;
     // SSTable set which contains all non-maintenance sstables
     lw_shared_ptr<sstables::sstable_set> _main_sstables;
     // Holds SSTables created by maintenance operations, which need reshaping before integration into the main set
@@ -89,6 +93,8 @@ public:
     void set_compaction_strategy_state(compaction::compaction_strategy_state compaction_strategy_state) noexcept;
 
     lw_shared_ptr<memtable_list>& memtables() noexcept;
+    lw_shared_ptr<memtable_list>& hint_memtables() noexcept;
+
     size_t memtable_count() const noexcept;
     // Returns minimum timestamp from memtable list
     api::timestamp_type min_memtable_timestamp() const;

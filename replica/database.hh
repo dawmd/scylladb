@@ -417,6 +417,8 @@ private:
 
     template<typename... Args>
     void do_apply(compaction_group& cg, db::rp_handle&&, Args&&... args);
+    template<typename... Args>
+    void do_apply_hint(compaction_group& cg, db::rp_handle&&, Args&&... args);
 
     lw_shared_ptr<memtable_list> make_memory_only_memtable_list();
     lw_shared_ptr<memtable_list> make_memtable_list(compaction_group& cg);
@@ -812,6 +814,7 @@ public:
 
     future<> apply(const frozen_mutation& m, schema_ptr m_schema, db::rp_handle&& h, db::timeout_clock::time_point tmo);
     future<> apply(const mutation& m, db::rp_handle&& h, db::timeout_clock::time_point tmo);
+    future<> apply_hint(const frozen_mutation& m, schema_ptr m_schema, db::rp_handle&& h, db::timeout_clock::time_point tmo);
 
     // Returns at most "cmd.limit" rows
     // The saved_querier parameter is an input-output parameter which contains
@@ -1457,6 +1460,8 @@ public:
     future<> apply_in_memory(const frozen_mutation& m, schema_ptr m_schema, db::rp_handle&&, db::timeout_clock::time_point timeout);
     future<> apply_in_memory(const mutation& m, column_family& cf, db::rp_handle&&, db::timeout_clock::time_point timeout);
 
+    future<> apply_hint_in_memory(const frozen_mutation& m, schema_ptr m_schema, db::rp_handle&&, db::timeout_clock::time_point timeout);
+
     drain_progress get_drain_progress() const noexcept {
         return _drain_progress;
     }
@@ -1484,6 +1489,10 @@ private:
 
     future<mutation> do_apply_counter_update(column_family& cf, const frozen_mutation& fm, schema_ptr m_schema, db::timeout_clock::time_point timeout,
                                              tracing::trace_state_ptr trace_state);
+
+    future<> do_apply_hint(schema_ptr, const frozen_mutation&, tracing::trace_state_ptr tr_state,
+            db::timeout_clock::time_point timeout, db::commitlog_force_sync sync,
+            db::per_partition_rate_limit::info rate_limit_info);
 
     template<typename Future>
     Future update_write_metrics(Future&& f);

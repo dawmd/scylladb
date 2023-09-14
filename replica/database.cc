@@ -1961,6 +1961,16 @@ future<> database::apply_in_memory(const mutation& m, column_family& cf, db::rp_
     });
 }
 
+future<> database::apply_hint_in_memory(const frozen_mutation& m, schema_ptr m_schema, db::rp_handle&& h, db::timeout_clock::time_point timeout) {
+    auto& cf = find_column_family(m.column_family_id());
+
+    data_listeners().on_write(m_schema, m);
+
+    return with_gate(cf.async_gate(), [&m, m_schema = std::move(m_schema), h = std::move(h), &cf, timeout] () mutable -> future<> {
+        return cf.apply_hint(m, std::move(m_schema), std::move(h), timeout);
+    });
+}
+
 future<mutation> database::apply_counter_update(schema_ptr s, const frozen_mutation& m, db::timeout_clock::time_point timeout, tracing::trace_state_ptr trace_state) {
     if (timeout <= db::timeout_clock::now()) {
         update_write_metrics_for_timed_out_write();
@@ -2190,6 +2200,96 @@ future<> database::do_apply(schema_ptr s, const frozen_mutation& m, tracing::tra
     update_writes_failed.cancel();
 }
 
+future<> database::do_apply_hint(schema_ptr s, const frozen_mutation& m,
+        tracing::trace_state_ptr tr_state, db::timeout_clock::time_point timeout,
+        db::commitlog::force_sync sync, db::per_partition_rate_limit::info rate_limit_info)
+{
+    ++_stats->total_writes;
+    // assume failure until proven otherwise
+    auto update_writes_failed = defer([&] { ++_stats->total_writes_failed; });
+
+    // I'm doing a nullcheck here since the init code path for db etc
+    // is a little in flux and commitlog is created only when db is
+    // initied from datadir.
+    auto uuid = m.column_family_id();
+    auto& cf = find_column_family(uuid);
+
+    if (!std::holds_alternative<std::monostate>(rate_limit_info) && can_apply_per_partition_rate_limit(*s, db::operation_type::write)) {
+        auto table_limit = *s->per_partition_rate_limit_options().get_max_writes_per_second();
+        auto& write_label = cf.get_rate_limiter_label_for_writes();
+        auto token = dht::token::to_int64(dht::get_token(*s, m.key()));
+        if (_rate_limiter.account_operation(write_label, token, table_limit, rate_limit_info) == db::rate_limiter::can_proceed::no) {
+            ++_stats->total_writes_rate_limited;
+            co_await coroutine::return_exception(replica::rate_limit_exception());
+        }
+    }
+
+    sync = sync || db::commitlog::force_sync(s->wait_for_sync_to_commitlog());
+
+    // Signal to view building code that a write is in progress,
+    // so it knows when new writes start being sent to a new view.
+    auto op = cf.write_in_progress();
+
+    row_locker::lock_holder lock;
+    if (!cf.views().empty()) {
+        if (!_view_update_generator) {
+            co_await coroutine::return_exception(std::runtime_error("view update generator not plugged to push updates"));
+        }
+
+        auto lock_f = co_await coroutine::as_future(cf.push_view_replica_updates(_view_update_generator, s, m, timeout, std::move(tr_state), get_reader_concurrency_semaphore()));
+        if (lock_f.failed()) {
+            auto ex = lock_f.get_exception();
+            if (is_timeout_exception(ex)) {
+                ++_stats->total_writes_timedout;
+            }
+            co_await coroutine::return_exception_ptr(std::move(ex));
+        }
+        lock = lock_f.get();
+    }
+
+    // purposefully manually "inlined" apply_with_commitlog call here to reduce # coroutine
+    // frames.
+    db::rp_handle h;
+    auto cl = cf.commitlog();
+    if (cl != nullptr && cf.durable_writes()) {
+        std::exception_ptr ex;
+        try {
+            commitlog_entry_writer cew(s, m, sync);
+            auto f_h = co_await coroutine::as_future(cf.commitlog()->add_entry(uuid, cew, timeout));
+            if (!f_h.failed()) {
+                h = f_h.get();
+            } else {
+                ex = f_h.get_exception();
+            }
+        } catch (...) {
+            ex = std::current_exception();
+        }
+        if (ex) {
+            if (is_timeout_exception(ex)) {
+                ++_stats->total_writes_timedout;
+                ex = wrap_commitlog_add_error<wrapped_timed_out_error>(cf.schema(), m, std::move(ex));
+            } else {
+                ex = wrap_commitlog_add_error<>(s, m, std::move(ex));
+            }
+            co_await coroutine::exception(std::move(ex));
+        }
+    }
+    auto f = co_await coroutine::as_future(this->apply_hint_in_memory(m, s, std::move(h), timeout));
+    if (f.failed()) {
+      auto ex = f.get_exception();
+      if (try_catch<mutation_reordered_with_truncate_exception>(ex)) {
+        // This mutation raced with a truncate, so we can just drop it.
+        dblog.debug("replay_position reordering detected");
+        co_return;
+      } else if (is_timeout_exception(ex)) {
+        ++_stats->total_writes_timedout;
+      }
+      co_await coroutine::return_exception_ptr(std::move(ex));
+    }
+    // Success, prevent incrementing failure counter
+    update_writes_failed.cancel();
+}
+
 template<typename Future>
 Future database::update_write_metrics(Future&& f) {
     return f.then_wrapped([s = _stats] (auto f) {
@@ -2236,7 +2336,7 @@ future<> database::apply_hint(schema_ptr s, const frozen_mutation& m, tracing::t
         on_internal_error(dblog, format("attempted to apply hint using not synced schema of {}.{}, version={}", s->ks_name(), s->cf_name(), s->version()));
     }
     return with_scheduling_group(_dbcfg.streaming_scheduling_group, [this, s = std::move(s), &m, tr_state = std::move(tr_state), timeout] () mutable {
-        return _apply_stage(this, std::move(s), seastar::cref(m), std::move(tr_state), timeout, db::commitlog::force_sync::no, std::monostate{});
+        return do_apply_hint(std::move(s), seastar::cref(m), std::move(tr_state), timeout, db::commitlog::force_sync::no, std::monostate{});
     });
 }
 
