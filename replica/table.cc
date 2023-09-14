@@ -1788,6 +1788,8 @@ future<> compaction_group::stop() noexcept {
     try {
         // FIXME: make memtable_list::flush() noexcept too.
         return _memtables->flush().finally([this] {
+            return _hint_memtables->flush();
+        }).finally([this] {
             return _t._compaction_manager.remove(as_table_state());
         });
     } catch (...) {
@@ -2575,7 +2577,7 @@ void table::do_apply_hint(compaction_group& cg, db::rp_handle&& h, Args&&... arg
         throw;
     }
     const auto now = compaction_group::hint_clock_type::now();
-    cg.rearm_hint_timer(now + 10s);
+    cg.rearm_hint_timer(now + 100ms);
     tlogger.warn("\n\tHINT HAS BEEN APPLIED\n");
     _stats.writes.mark(lc);
 }
