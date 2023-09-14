@@ -372,6 +372,7 @@ public:
         utils::updateable_value<bool> compaction_enforce_min_threshold{false};
         bool enable_dangerous_direct_import_of_cassandra_counters = false;
         replica::dirty_memory_manager* dirty_memory_manager = &default_dirty_memory_manager;
+        replica::dirty_memory_manager* hint_dirty_memory_manager = &default_dirty_memory_manager;
         reader_concurrency_semaphore* streaming_read_concurrency_semaphore;
         reader_concurrency_semaphore* compaction_concurrency_semaphore;
         replica::cf_stats* cf_stats = nullptr;
@@ -1203,6 +1204,7 @@ public:
         utils::updateable_value<bool> compaction_enforce_min_threshold{false};
         bool enable_dangerous_direct_import_of_cassandra_counters = false;
         replica::dirty_memory_manager* dirty_memory_manager = &default_dirty_memory_manager;
+        replica
         reader_concurrency_semaphore* streaming_read_concurrency_semaphore;
         reader_concurrency_semaphore* compaction_concurrency_semaphore;
         replica::cf_stats* cf_stats = nullptr;
@@ -1387,6 +1389,7 @@ private:
 
     dirty_memory_manager _system_dirty_memory_manager;
     dirty_memory_manager _dirty_memory_manager;
+    dirty_memory_manager _hint_dirty_memory_manager;
 
     database_config _dbcfg;
     backlog_controller::scheduling_group _flush_sg;

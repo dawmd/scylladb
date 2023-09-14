@@ -317,7 +317,8 @@ database::database(const db::config& cfg, database_config dbcfg, service::migrat
     , _cfg(cfg)
     // Allow system tables a pool of 10 MB memory to write, but never block on other regions.
     , _system_dirty_memory_manager(*this, 10 << 20, cfg.unspooled_dirty_soft_limit(), default_scheduling_group())
-    , _dirty_memory_manager(*this, dbcfg.available_memory * 0.50, cfg.unspooled_dirty_soft_limit(), dbcfg.statement_scheduling_group)
+    , _dirty_memory_manager(*this, dbcfg.available_memory * 0.45, cfg.unspooled_dirty_soft_limit(), dbcfg.statement_scheduling_group)
+    , _hint_dirty_memory_manager(*this, dbcfg.available_memory * 0.05, cfg.unspooled_dirty_soft_limit(), dbcfg.statement_scheduling_group)
     , _dbcfg(dbcfg)
     , _flush_sg(dbcfg.memtable_scheduling_group)
     , _memtable_controller(make_flush_controller(_cfg, _flush_sg, [this, limit = float(_dirty_memory_manager.throttle_threshold())] {

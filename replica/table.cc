@@ -2090,11 +2090,13 @@ future<std::unordered_map<sstring, table::snapshot_details>> table::get_snapshot
 }
 
 future<> compaction_group::flush() {
-    return _memtables->flush();
+    return _memtables->flush().then([this] {
+        return _hint_memtables->flush();
+    });
 }
 
 bool compaction_group::can_flush() const {
-    return _memtables->can_flush();
+    return _memtables->can_flush() || _hint_memtables->can_flush();
 }
 
 lw_shared_ptr<memtable_list>& compaction_group::memtables() noexcept {
@@ -2128,9 +2130,16 @@ future<> compaction_group::clear_memtables() {
         for (auto& t : *_memtables) {
             _t.commitlog()->discard_completed_segments(_t.schema()->id(), t->get_and_discard_rp_set());
         }
+        for (auto& t : *_hint_memtables) {
+            _t.commitlog()->discard_completed_segments(_t.schema()->id(), t->get_and_discard_rp_set());
+        }
     }
     auto old_memtables = _memtables->clear_and_add();
     for (auto& smt : old_memtables) {
+        co_await smt->clear_gently();
+    }
+    auto old_hint_memtables = _hint_memtables->clear_and_add();
+    for (auto& smt : old_hint_memtables) {
         co_await smt->clear_gently();
     }
 }
