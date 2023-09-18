@@ -583,9 +583,22 @@ private:
             unsigned shard, storage_proxy::response_id_type response_id,
             rpc::optional<std::optional<tracing::trace_info>> trace_info,
             rpc::optional<fencing_token> fence) {
-        return receive_mutation_handler(_sp._hints_write_smp_service_group, cinfo, t, std::move(in),
-            std::move(forward), std::move(reply_to), shard, response_id, std::move(trace_info),
-            std::monostate(), fence);
+        tracing::trace_state_ptr trace_state_ptr;
+        auto src_addr = netw::messaging_service::get_source(cinfo);
+
+        auto schema_version = in.schema_version();
+        return handle_write(src_addr, t, schema_version, std::move(in), forward, reply_to, shard, response_id,
+                trace_info ? *trace_info : std::nullopt,
+                fence.value_or(fencing_token{}),
+                /* apply_fn */ [src_ip = src_addr.addr] (shared_ptr<storage_proxy>& p, tracing::trace_state_ptr tr_state, schema_ptr s, const frozen_mutation& m,
+                        clock_type::time_point timeout, fencing_token fence) {
+                    return p->apply_fence(p->mutate_hint(std::move(s), m, std::move(tr_state), timeout), fence, src_ip);
+                },
+                /* forward_fn */ [this, trace_state_ptr] (shared_ptr<storage_proxy>& p, netw::messaging_service::msg_addr addr, clock_type::time_point timeout, const frozen_mutation& m,
+                        gms::inet_address reply_to, unsigned shard, response_id_type response_id,
+                        const std::optional<tracing::trace_info>& trace_info, fencing_token fence) {
+                    return send_hint_mutation(addr, timeout, trace_state_ptr, m, {}, reply_to, shard, response_id, std::monostate{}, fence);
+                });
     }
 
     future<rpc::no_wait_type> handle_paxos_learn(
@@ -3861,19 +3874,6 @@ future<> storage_proxy::send_to_endpoint(
 }
 
 future<> storage_proxy::send_hint_to_endpoint(frozen_mutation_and_schema fm_a_s, locator::effective_replication_map_ptr ermp, gms::inet_address target) {
-    if (!_features.hinted_handoff_separate_connection) {
-        return send_to_endpoint(
-                std::make_unique<shared_mutation>(std::move(fm_a_s)),
-                std::move(ermp),
-                std::move(target),
-                { },
-                db::write_type::SIMPLE,
-                tracing::trace_state_ptr(),
-                get_stats(),
-                allow_hints::no,
-                is_cancellable::yes);
-    }
-
     return send_to_endpoint(
             std::make_unique<hint_mutation>(std::move(fm_a_s)),
             std::move(ermp),

@@ -8,6 +8,7 @@
 
 #include "log.hh"
 #include "replica/database_fwd.hh"
+#include "seastar/coroutine/switch_to.hh"
 #include "utils/lister.hh"
 #include "replica/database.hh"
 #include <seastar/core/future-util.hh>
@@ -2205,6 +2206,13 @@ future<> database::do_apply(schema_ptr s, const frozen_mutation& m, tracing::tra
     update_writes_failed.cancel();
 }
 
+future<> database::do_apply_hint(schema_ptr s, const frozen_mutation& m, tracing::trace_state_ptr tr_state,
+        db::timeout_clock::time_point timeout, db::commitlog::force_sync sync)
+{
+    // We are in the streaming scheduling group when entering this coroutine.
+    
+}
+
 template<typename Future>
 Future database::update_write_metrics(Future&& f) {
     return f.then_wrapped([s = _stats] (auto f) {
@@ -2250,9 +2258,8 @@ future<> database::apply_hint(schema_ptr s, const frozen_mutation& m, tracing::t
     if (!s->is_synced()) {
         on_internal_error(dblog, format("attempted to apply hint using not synced schema of {}.{}, version={}", s->ks_name(), s->cf_name(), s->version()));
     }
-    return with_scheduling_group(_dbcfg.streaming_scheduling_group, [this, s = std::move(s), &m, tr_state = std::move(tr_state), timeout] () mutable {
-        return _apply_stage(this, std::move(s), seastar::cref(m), std::move(tr_state), timeout, db::commitlog::force_sync::no, std::monostate{});
-    });
+    co_await coroutine::switch_to{_dbcfg.streaming_scheduling_group};
+    co_await do_apply_hint(std::move(s), seastar::cref(m), std::move(tr_state), timeout, db::commitlog::force_sync::no);
 }
 
 keyspace::config
