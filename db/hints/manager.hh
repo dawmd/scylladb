@@ -591,6 +591,7 @@ public:
     /// \param ep End point identificator
     /// \return Number of hints in-flight to \param ep.
     uint64_t hints_in_progress_for(ep_key_type ep) const noexcept {
+        check_ep(ep, __func__);
         auto it = find_ep_manager(ep);
         if (it == ep_managers_end()) {
             return 0;
@@ -599,6 +600,7 @@ public:
     }
 
     void add_ep_with_pending_hints(ep_key_type key) {
+        check_ep(key, __func__);
         _eps_with_pending_hints.insert(key);
     }
 
@@ -663,6 +665,7 @@ public:
     static future<> rebalance(fs::path hints_directory);
 
 private:
+    void check_ep(gms::inet_address, std::string_view) const;
     future<> compute_hints_dir_device_id();
 
     /// \brief Scan the given hints directory and build the map of all present hints segments.
@@ -765,10 +768,11 @@ private:
         _state.set(state::stopping);
     }
 
+public:
     bool started() const noexcept {
         return _state.contains(state::started);
     }
-
+private:
     void set_started() noexcept {
         _state.set(state::started);
     }
@@ -781,7 +785,7 @@ private:
         _state.set(state::draining_all);
     }
 
-    bool draining_all() noexcept {
+    bool draining_all() const noexcept {
         return _state.contains(state::draining_all);
     }
 

@@ -1664,6 +1664,7 @@ future<> repair_service::do_decommission_removenode_with_repair(locator::token_m
             // leaving_node might or might not be 'leaving'. If it was not leaving (that is, removenode
             // command was used), it is still present in temp and must be removed.
             if (temp.is_normal_token_owner(leaving_node)) {
+                rlogger.warn("repair_service::do_decommission_removenode_with_repair(), ep: {}, current address: {}", leaving_node, (void*)this);
                 temp.remove_endpoint(leaving_node);
             }
             std::unordered_map<dht::token_range, repair_neighbors> range_sources;

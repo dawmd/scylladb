@@ -377,6 +377,7 @@ future<> storage_service::topology_state_load() {
     }
 
     co_await mutate_token_metadata(seastar::coroutine::lambda([this, &id2ip, &am] (mutable_token_metadata_ptr tmptr) -> future<> {
+        slogger.warn("Before clearing gently: {}", tmptr.get()->get_topology());
         co_await tmptr->clear_gently(); // drop previous state
 
         tmptr->set_version(_topology_state_machine._topology.version);
@@ -505,6 +506,8 @@ future<> storage_service::topology_state_load() {
         if (_db.local().get_config().check_experimental(db::experimental_features_t::feature::TABLETS)) {
             tmptr->set_tablets(co_await replica::read_tablet_metadata(*_qp));
         }
+
+        slogger.warn("End of clear gently lambda: {}", tmptr.get()->get_topology());
     }));
 
     // We don't load gossiper endpoint states in storage_service::join_cluster
@@ -3184,6 +3187,7 @@ future<> storage_service::handle_state_bootstrap(inet_address endpoint, gms::per
         if (!tmptr->is_leaving(endpoint)) {
             slogger.info("Node {} state jump to bootstrap", endpoint);
         }
+        slogger.warn("storage_service::handle_state_bootstrap({}), &tmptr->topo: {}, current address: {}", endpoint, (void*)std::addressof(tmptr.get()->get_topology()), (void*)this);
         tmptr->remove_endpoint(endpoint);
     }
 
@@ -3214,6 +3218,7 @@ future<> storage_service::handle_state_normal(inet_address endpoint, gms::permit
     std::unordered_set<inet_address> endpoints_to_remove;
 
     auto do_remove_node = [&] (gms::inet_address node) {
+        slogger.warn("storage_service::handle_state_normal({})::do_remove_node({}), &tmptr->topo: {}, current address: {}", endpoint, node, (void*)std::addressof(tmptr.get()->get_topology()), (void*)this);
         tmptr->remove_endpoint(node);
         endpoints_to_remove.insert(node);
     };
@@ -3546,6 +3551,7 @@ future<> storage_service::on_remove(gms::inet_address endpoint, gms::permit_id p
     slogger.debug("endpoint={} on_remove: permit_id={}", endpoint, pid);
     auto tmlock = co_await get_token_metadata_lock();
     auto tmptr = co_await get_mutable_token_metadata_ptr();
+    slogger.warn("storage_service::on_remove({}), &tmptr->topo: {}, current address: {}", endpoint, (void*)std::addressof(tmptr.get()->get_topology()), (void*)this);
     tmptr->remove_endpoint(endpoint);
     co_await update_topology_change_info(tmptr, ::format("on_remove {}", endpoint));
     co_await replicate_to_all_cores(std::move(tmptr));
@@ -3958,6 +3964,7 @@ future<> storage_service::check_for_endpoint_collision(std::unordered_set<gms::i
 }
 
 future<> storage_service::remove_endpoint(inet_address endpoint, gms::permit_id pid) {
+    slogger.warn("storage_service::remove_endpoint({})", endpoint);
     co_await _gossiper.remove_endpoint(endpoint, pid);
     try {
         co_await _sys_ks.local().remove_endpoint(endpoint);
@@ -4638,6 +4645,7 @@ future<> storage_service::raft_removenode(locator::host_id host_id, std::list<lo
 }
 
 future<> storage_service::removenode(locator::host_id host_id, std::list<locator::host_id_or_endpoint> ignore_nodes_params) {
+    slogger.warn("storage_service::removenode({})::1", host_id);
     return run_with_api_lock(sstring("removenode"), [host_id, ignore_nodes_params = std::move(ignore_nodes_params)] (storage_service& ss) mutable {
         return seastar::async([&ss, host_id, ignore_nodes_params = std::move(ignore_nodes_params)] () mutable {
             if (ss._raft_topology_change_enabled) {
@@ -4649,6 +4657,7 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
             auto uuid = ctl.uuid();
             const auto& tmptr = ctl.tmptr;
             auto endpoint_opt = tmptr->get_endpoint_for_host_id(host_id);
+            slogger.warn("storage_service::removenode({})::2, maybe_ep: {}", host_id, endpoint_opt);
             assert(ss._group0);
             auto raft_id = raft::server_id{host_id.uuid()};
             bool raft_available = ss._group0->wait_for_raft().get();
@@ -5286,6 +5295,7 @@ storage_service::get_changed_ranges_for_leaving(locator::vnode_effective_replica
     // endpoint might or might not be 'leaving'. If it was not leaving (that is, removenode
     // command was used), it is still present in temp and must be removed.
     if (temp.is_normal_token_owner(endpoint)) {
+        slogger.warn("storage_service::get_changed_ranges_for_leaving(), &temp.topo: {}, ep: {}, current address: {}", (void*)std::addressof(temp.get_topology()), endpoint, (void*)this);
         temp.remove_endpoint(endpoint);
     }
 
@@ -5422,9 +5432,11 @@ future<> storage_service::removenode_with_stream(gms::inet_address leaving_node,
 future<> storage_service::excise(std::unordered_set<token> tokens, inet_address endpoint, gms::permit_id pid) {
     slogger.info("Removing tokens {} for {}", tokens, endpoint);
     // FIXME: HintedHandOffManager.instance.deleteHintsForEndpoint(endpoint);
+    slogger.warn("storage_service::excise({})::1, current address: {}", endpoint, (void*)this);
     co_await remove_endpoint(endpoint, pid);
     auto tmlock = std::make_optional(co_await get_token_metadata_lock());
     auto tmptr = co_await get_mutable_token_metadata_ptr();
+    slogger.warn("storage_service::excise({})::2, &tmptr->topo: {}, current address: {}", endpoint, (void*)std::addressof(tmptr.get()->get_topology()), (void*)this);
     tmptr->remove_endpoint(endpoint);
     tmptr->remove_bootstrap_tokens(tokens);
 
@@ -5445,6 +5457,7 @@ future<> storage_service::leave_ring() {
     co_await _sys_ks.local().set_bootstrap_state(db::system_keyspace::bootstrap_state::NEEDS_BOOTSTRAP);
     co_await mutate_token_metadata([this] (mutable_token_metadata_ptr tmptr) {
         auto endpoint = get_broadcast_address();
+        slogger.warn("storage_service::leave_ring(), &tmptr->topo: {}, ep: {}, current address: {}", (void*)std::addressof(tmptr.get()->get_topology()), endpoint, (void*)this);
         tmptr->remove_endpoint(endpoint);
         return update_topology_change_info(std::move(tmptr), ::format("leave_ring {}", endpoint));
     });
@@ -5491,6 +5504,7 @@ void storage_service::add_expire_time_if_found(inet_address endpoint, int64_t ex
     if (expire_time != 0L) {
         using clk = gms::gossiper::clk;
         auto time = clk::time_point(clk::duration(expire_time));
+        slogger.warn("storage_service::add_expire_time_if_found({}, {})", endpoint, expire_time);
         _gossiper.add_expire_time_for_endpoint(endpoint, time);
     }
 }

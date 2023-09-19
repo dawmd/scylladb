@@ -34,6 +34,18 @@
 #include "utils/runtime.hh"
 #include "utils/error_injection.hh"
 
+#define check_raw(ip, func)                                                                                             \
+    manager_logger.warn("Check got IP {} in {} [started: {}; replay_allowed: {}; draining_all: {}; stopping: {}] \n"    \
+                        "Topology: {}.\nTopology address: {}", ip, func, started(), replay_allowed(), draining_all(),   \
+                        stopping(), _proxy_anchor->get_token_metadata_ptr()->get_topology(),                            \
+                        (void*)std::addressof(_proxy_anchor->get_token_metadata_ptr()->get_topology()));                \
+    assert(started());                                                                                                  \
+    assert(_proxy_anchor->get_token_metadata_ptr()->get_topology().this_node() != nullptr                               \
+            || _proxy_anchor->get_token_metadata_ptr()->get_topology().find_node(ep) != nullptr                         \
+            || _proxy_anchor->get_token_metadata_ptr()->get_host_id_if_known(ep).has_value())
+
+#define check(ip) check_raw(ip, __func__)
+
 using namespace std::literals::chrono_literals;
 
 namespace db {
@@ -365,6 +377,7 @@ inline bool manager::have_ep_manager(ep_key_type ep) const noexcept {
 }
 
 bool manager::store_hint(ep_key_type ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept {
+    check(ep);
     if (stopping() || draining_all() || !started() || !can_hint_for(ep)) {
         manager_logger.trace("Can't store a hint to {}", ep);
         ++_stats.dropped;
@@ -603,12 +616,15 @@ const column_mapping& manager::end_point_hints_manager::sender::get_column_mappi
 }
 
 bool manager::too_many_in_flight_hints_for(ep_key_type ep) const noexcept {
+    check(ep);
+
     // There is no need to check the DC here because if there is an in-flight hint for this end point then this means that
     // its DC has already been checked and found to be ok.
     return _stats.size_of_hints_in_progress > max_size_of_hints_in_progress && !utils::fb_utilities::is_me(ep) && hints_in_progress_for(ep) > 0 && local_gossiper().get_endpoint_downtime(ep) <= _max_hint_window_us;
 }
 
 bool manager::can_hint_for(ep_key_type ep) const noexcept {
+    check(ep);
     if (utils::fb_utilities::is_me(ep)) {
         return false;
     }
@@ -687,6 +703,7 @@ future<> manager::change_host_filter(host_filter filter) {
 }
 
 bool manager::check_dc_for(ep_key_type ep) const noexcept {
+    check(ep);
     try {
         // If target's DC is not a "hintable" DCs - don't hint.
         // If there is an end point manager then DC has already been checked and found to be ok.
@@ -1432,6 +1449,10 @@ future<> directory_initializer::ensure_rebalanced() {
     return smp::submit_to(0, [impl = this->_impl] () mutable {
         return impl->ensure_rebalanced().then([impl] {});
     });
+}
+
+void manager::check_ep(gms::inet_address ep, std::string_view func) const {
+    check_raw(ep, func);
 }
 
 }

@@ -213,6 +213,7 @@ public:
      * @return new token metadata
      */
     future<std::unique_ptr<token_metadata_impl>> clone_after_all_left() const noexcept {
+        fmt::print(stderr, "ERROR: token_metadata_impl::clone_after_all_left(), current address: {}", (void*)this);
         return clone_only_token_map(false).then([this] (std::unique_ptr<token_metadata_impl> all_left_metadata) {
             for (auto endpoint : _leaving_endpoints) {
                 all_left_metadata->remove_endpoint(endpoint);
@@ -633,6 +634,7 @@ bool token_metadata_impl::is_any_node_being_replaced() const {
 }
 
 void token_metadata_impl::remove_endpoint(inet_address endpoint) {
+    tlogger.warn("token_metadata_impl::remove_endpoint({}), current address: {}", endpoint, (void*)this);
     remove_by_value(_bootstrap_tokens, endpoint);
     remove_by_value(_token_to_endpoint_map, endpoint);
     _normal_token_owners.erase(endpoint);
@@ -752,6 +754,7 @@ future<> token_metadata_impl::update_topology_change_info(dc_rack_fn& get_dc_rac
                 if (replace_from == replace_to) {
                     replace_with_same_endpoint = true;
                 } else {
+                    tlogger.warn("token_metadata_impl::update_topology_change_info()::1, ep: {}, current address: {}", replace_from, (void*)this);
                     target_token_metadata->remove_endpoint(replace_from);
                 }
             }
@@ -766,6 +769,7 @@ future<> token_metadata_impl::update_topology_change_info(dc_rack_fn& get_dc_rac
         }
         // apply leaving endpoints
         for (const auto& endpoint: _leaving_endpoints) {
+            tlogger.warn("token_metadata_impl::update_topology_change_info()::2, ep: {}, current address: {}", endpoint, (void*)this);
             target_token_metadata->remove_endpoint(endpoint);
         }
         target_token_metadata->sort_tokens();
@@ -781,6 +785,7 @@ future<> token_metadata_impl::update_topology_change_info(dc_rack_fn& get_dc_rac
         base_token_metadata = co_await clone_only_token_map(false);
         for (const auto& [replace_from, replace_to]: _replacing_endpoints) {
             if (replace_from == replace_to) {
+                    tlogger.warn("token_metadata_impl::update_topology_change_info()::3, ep: {}, current address: {}", replace_from, (void*)this);
                 base_token_metadata->remove_endpoint(replace_from);
             }
         }
@@ -1049,6 +1054,7 @@ token_metadata::del_leaving_endpoint(inet_address endpoint) {
 
 void
 token_metadata::remove_endpoint(inet_address endpoint) {
+    tlogger.warn("token_metadata::remove_endpoint({}), current address: {}", endpoint, (void*)this);
     _impl->remove_endpoint(endpoint);
     _impl->sort_tokens();
 }

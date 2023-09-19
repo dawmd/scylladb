@@ -682,6 +682,7 @@ future<> gossiper::force_remove_endpoint(inet_address endpoint, permit_id pid) {
 }
 
 future<> gossiper::remove_endpoint(inet_address endpoint, permit_id pid) {
+    logger.warn("gossiper::remove_endpoint({})", endpoint);
     auto permit = co_await lock_endpoint(endpoint, pid);
     pid = permit.id();
 
@@ -749,6 +750,7 @@ future<> gossiper::do_status_check() {
             && !_just_removed_endpoints.contains(endpoint)
             && ((now - update_timestamp) > fat_client_timeout)) {
             logger.info("FatClient {} has been silent for {}ms, removing from gossip", endpoint, fat_client_timeout.count());
+            logger.warn("gossiper::do_status_check(): ep: {}", endpoint);
             co_await remove_endpoint(endpoint, pid); // will put it in _just_removed_endpoints to respect quarantine delay
             co_await evict_from_membership(endpoint, pid); // can get rid of the state immediately
         }
@@ -1276,6 +1278,7 @@ future<> gossiper::advertise_token_removed(inet_address endpoint, locator::host_
     auto permit = co_await lock_endpoint(endpoint, pid);
     pid = permit.id();
     auto eps = get_endpoint_state(endpoint);
+    logger.warn("gossiper::advertise_token_removed({}, {}), ep_state: {}", endpoint, host_id, eps);
     eps.update_timestamp(); // make sure we don't evict it too soon
     eps.get_heart_beat_state().force_newer_generation_unsafe();
     auto expire_time = compute_expire_time();

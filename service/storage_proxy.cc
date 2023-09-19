@@ -2847,6 +2847,9 @@ storage_proxy::storage_proxy(distributed<replica::database>& db, storage_proxy::
     slogger.trace("hinted DCs: {}", cfg.hinted_handoff_enabled.to_configuration_string());
     _hints_manager.register_metrics("hints_manager");
     _hints_for_views_manager.register_metrics("hints_for_views_manager");
+    slogger.warn("storage_proxy::storage_proxy(), &topo: {}, topo: {}",
+            (void*) std::addressof(_db.local().get_token_metadata().get_topology()),
+            _db.local().get_token_metadata().get_topology());
 }
 
 struct storage_proxy::remote& storage_proxy::remote() {
@@ -3014,8 +3017,10 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
     inet_address_vector_replica_set natural_endpoints = erm->get_natural_endpoints_without_node_being_replaced(token);
     inet_address_vector_topology_change pending_endpoints = erm->get_pending_endpoints(token);
 
-    slogger.trace("creating write handler for token: {} natural: {} pending: {}", token, natural_endpoints, pending_endpoints);
+    slogger.warn("creating write handler for token: {} natural: {} pending: {}", token, natural_endpoints, pending_endpoints);
     tracing::trace(tr_state, "Creating write handler for token: {} natural: {} pending: {}", token, natural_endpoints ,pending_endpoints);
+
+    slogger.warn("storage_proxy::create_write_response_handler_helper(), &erm->topology: {}, erm->topology: {}", (void*)std::addressof(erm->get_topology()), erm->get_topology());
 
     const bool coordinator_in_replica_set = std::find(natural_endpoints.begin(), natural_endpoints.end(),
             utils::fb_utilities::get_broadcast_address()) != natural_endpoints.end();
@@ -3759,7 +3764,7 @@ mutation storage_proxy::do_get_batchlog_mutation_for(schema_ptr schema, const st
 template<typename Range>
 bool storage_proxy::cannot_hint(const Range& targets, db::write_type type) const {
     // if hints are disabled we "can always hint" since there's going to be no hint generated in this case
-    return hints_enabled(type) && boost::algorithm::any_of(targets, std::bind(&db::hints::manager::too_many_in_flight_hints_for, &_hints_manager, std::placeholders::_1));
+    return hints_enabled(type) && _hints_manager.started() && boost::algorithm::any_of(targets, std::bind(&db::hints::manager::too_many_in_flight_hints_for, &_hints_manager, std::placeholders::_1));
 }
 
 future<> storage_proxy::send_to_endpoint(

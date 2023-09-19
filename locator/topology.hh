@@ -176,13 +176,18 @@ public:
     future<> clear_gently() noexcept;
 
 public:
-    const config& get_config() const noexcept { return _cfg; }
+    const config& get_config() const noexcept {
+        fmt::print(stderr, "ERROR: topology::get_config()\n");    
+        return _cfg;
+    }
 
     void set_host_id_cfg(host_id this_host_id) {
+        fmt::print(stderr, "ERROR: topology::set_host_id_cfg()\n");
         _cfg.this_host_id = this_host_id;
     }
 
     const node* this_node() const noexcept {
+        fmt::print(stderr, "ERROR: topology::this_node()\n");
         return _this_node;
     }
 
@@ -209,6 +214,7 @@ public:
     const node* find_node(host_id id) const noexcept;
 
     const node& get_node(host_id id) const {
+        fmt::print(stderr, "ERROR: topology::get_node()\n");
         auto n = find_node(id);
         if (!n) {
             throw_with_backtrace<std::runtime_error>(format("Node {} not found in topology", id));
@@ -260,6 +266,7 @@ public:
     const std::unordered_map<sstring,
                            std::unordered_set<inet_address>>&
     get_datacenter_endpoints() const {
+        fmt::print(stderr, "ERROR: topology::get_datacenter_endpoints()\n");
         return _dc_endpoints;
     }
 
@@ -267,20 +274,24 @@ public:
                        std::unordered_map<sstring,
                                           std::unordered_set<inet_address>>>&
     get_datacenter_racks() const {
+        fmt::print(stderr, "ERROR: topology::get_datacenter_racks()\n");
         return _dc_racks;
     }
 
     const std::unordered_set<sstring>& get_datacenters() const noexcept {
+        fmt::print(stderr, "ERROR: topology::get_datacenters()\n");
         return _datacenters;
     }
 
     // Get dc/rack location of this node
     const endpoint_dc_rack& get_location() const noexcept {
+        fmt::print(stderr, "ERROR: topology::get_location()\n");
         return _this_node ? _this_node->dc_rack() : _cfg.local_dc_rack;
     }
     // Get dc/rack location of a node identified by host_id
     // The specified node must exist.
     const endpoint_dc_rack& get_location(host_id id) const {
+        fmt::print(stderr, "ERROR: topology::get_location()\n");
         return find_node(id)->dc_rack();
     }
     // Get dc/rack location of a node identified by endpoint
@@ -289,42 +300,51 @@ public:
 
     // Get datacenter of this node
     const sstring& get_datacenter() const noexcept {
+        fmt::print(stderr, "ERROR: topology::get_datacenter()\n");
         return get_location().dc;
     }
     // Get datacenter of a node identified by host_id
     // The specified node must exist.
     const sstring& get_datacenter(host_id id) const {
+        fmt::print(stderr, "ERROR: topology::get_datacenter()\n");
         return get_location(id).dc;
     }
     // Get datacenter of a node identified by endpoint
     // The specified node must exist.
     const sstring& get_datacenter(inet_address ep) const {
+        fmt::print(stderr, "ERROR: topology::get_datacenter()\n");
         return get_location(ep).dc;
     }
 
     // Get rack of this node
     const sstring& get_rack() const noexcept {
+        fmt::print(stderr, "ERROR: topology::get_rack()\n");
         return get_location().rack;
     }
     // Get rack of a node identified by host_id
     // The specified node must exist.
     const sstring& get_rack(host_id id) const {
+        fmt::print(stderr, "ERROR: topology::get_rack()\n");
         return get_location(id).rack;
     }
     // Get rack of a node identified by endpoint
     // The specified node must exist.
     const sstring& get_rack(inet_address ep) const {
+        fmt::print(stderr, "ERROR: topology::get_rack()\n");
         return get_location(ep).rack;
     }
 
     auto get_local_dc_filter() const noexcept {
+        fmt::print(stderr, "ERROR: topology::get_local_dc_filter()\n");
         return [ this, local_dc = get_datacenter() ] (inet_address ep) {
+        fmt::print(stderr, "ERROR: topology::get_local_dc_filter()::lambda\n");
             return get_datacenter(ep) == local_dc;
         };
     };
 
     template <std::ranges::range Range>
     inline size_t count_local_endpoints(const Range& endpoints) const {
+        fmt::print(stderr, "ERROR: topology::count_local_endpoints()\n");
         return std::count_if(endpoints.begin(), endpoints.end(), get_local_dc_filter());
     }
 
@@ -348,6 +368,7 @@ private:
     node_holder pop_node(const node* node);
 
     static node* make_mutable(const node* nptr) {
+        fmt::print(stderr, "ERROR: topology::make_mutable()\n");
         return const_cast<node*>(nptr);
     }
 
@@ -391,6 +412,7 @@ private:
     void calculate_datacenters();
 
     const std::unordered_map<inet_address, const node*>& get_nodes_by_endpoint() const noexcept {
+        fmt::print(stderr, "ERROR: topology::get_nodes_by_endpoint()\n");
         return _nodes_by_endpoint;
     };
 

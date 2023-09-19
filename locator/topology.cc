@@ -35,17 +35,22 @@ node::node(const locator::topology* topology, locator::host_id id, inet_address 
     , _shard_count(std::move(shard_count))
     , _is_this_node(is_this_node)
     , _idx(idx)
-{}
+{
+    tlogger.warn("node::node. Current address is {}", (void*)this);
+}
 
 node_holder node::make(const locator::topology* topology, locator::host_id id, inet_address endpoint, endpoint_dc_rack dc_rack, state state, shard_id shard_count, node::this_node is_this_node, node::idx_type idx) {
+    tlogger.warn("node::make");
     return std::make_unique<node>(topology, std::move(id), std::move(endpoint), std::move(dc_rack), std::move(state), shard_count, is_this_node, idx);
 }
 
 node_holder node::clone() const {
+    tlogger.warn("node::clone. Current address is {}", (void*)this);
     return make(nullptr, host_id(), endpoint(), dc_rack(), get_state(), get_shard_count(), is_this_node());
 }
 
 std::string node::to_string(node::state s) {
+    tlogger.warn("node::to_string");
     switch (s) {
     case state::none:           return "none";
     case state::bootstrapping:  return "bootstrapping";
@@ -60,6 +65,7 @@ std::string node::to_string(node::state s) {
 }
 
 future<> topology::clear_gently() noexcept {
+    tlogger.warn("node::node. Current address is {}", (void*)this);
     _this_node = nullptr;
     co_await utils::clear_gently(_dc_endpoints);
     co_await utils::clear_gently(_dc_racks);
@@ -76,6 +82,7 @@ topology::topology(config cfg)
         , _cfg(cfg)
         , _sort_by_proximity(!cfg.disable_proximity_sorting)
 {
+    tlogger.warn("topology::topology. Current address is {}", (void*)this);
     tlogger.trace("topology[{}]: constructing using config: endpoint={} dc={} rack={}", fmt::ptr(this),
             cfg.this_endpoint, cfg.local_dc_rack.dc, cfg.local_dc_rack.rack);
 }
@@ -94,6 +101,7 @@ topology::topology(topology&& o) noexcept
     , _sort_by_proximity(o._sort_by_proximity)
     , _datacenters(std::move(o._datacenters))
 {
+    tlogger.warn("topology::topology. Current address is {}", (void*)this);
     assert(_shard == this_shard_id());
     tlogger.trace("topology[{}]: move from [{}]", fmt::ptr(this), fmt::ptr(&o));
 
@@ -105,6 +113,7 @@ topology::topology(topology&& o) noexcept
 }
 
 topology& topology::operator=(topology&& o) noexcept {
+    tlogger.warn("topology::operator=&&. Current address is {}.", (void*)this);
     if (this != &o) {
         this->~topology();
         new (this) topology(std::move(o));
@@ -113,6 +122,7 @@ topology& topology::operator=(topology&& o) noexcept {
 }
 
 future<topology> topology::clone_gently() const {
+    tlogger.warn("topology::clone_gently. Current address is {}", (void*)this);
     topology ret(_cfg);
     tlogger.debug("topology[{}]: clone_gently to {} from shard {}", fmt::ptr(this), fmt::ptr(&ret), _shard);
     for (const auto& nptr : _nodes) {
@@ -126,6 +136,7 @@ future<topology> topology::clone_gently() const {
 }
 
 std::string topology::debug_format(const node* node) {
+    tlogger.warn("topology::debug_format");
     if (!node) {
         return format("node={}", fmt::ptr(node));
     }
@@ -134,6 +145,7 @@ std::string topology::debug_format(const node* node) {
 }
 
 const node* topology::add_node(host_id id, const inet_address& ep, const endpoint_dc_rack& dr, node::state state, shard_id shard_count) {
+    tlogger.warn("topology::add_node. Current address is {}", (void*)this);
     if (dr.dc.empty() || dr.rack.empty()) {
         on_internal_error(tlogger, "Node must have valid dc and rack");
     }
@@ -141,6 +153,7 @@ const node* topology::add_node(host_id id, const inet_address& ep, const endpoin
 }
 
 bool topology::is_configured_this_node(const node& n) const {
+    tlogger.warn("topology::is_configured_this_node. Current address is {}", (void*)this);
     if (_cfg.this_host_id && n.host_id()) { // Selection by host_id
         return _cfg.this_host_id == n.host_id();
     }
@@ -151,6 +164,7 @@ bool topology::is_configured_this_node(const node& n) const {
 }
 
 const node* topology::add_node(node_holder nptr) {
+    tlogger.warn("topology::add_node. Current address is {}", (void*)this);
     const node* node = nptr.get();
 
     if (nptr->topology() != this) {
@@ -193,6 +207,7 @@ const node* topology::add_node(node_holder nptr) {
 }
 
 const node* topology::update_node(node* node, std::optional<host_id> opt_id, std::optional<inet_address> opt_ep, std::optional<endpoint_dc_rack> opt_dr, std::optional<node::state> opt_st, std::optional<shard_id> opt_shard_count) {
+    tlogger.warn("topology::update_node. Current address is {}", (void*)this);
     if (tlogger.is_enabled(log_level::debug)) {
         tlogger.debug("topology[{}]: update_node: {}: to: host_id={} endpoint={} dc={} rack={} state={}, at {}", fmt::ptr(this), debug_format(node),
             opt_id ? format("{}", *opt_id) : "unchanged",
@@ -282,6 +297,7 @@ const node* topology::update_node(node* node, std::optional<host_id> opt_id, std
 }
 
 bool topology::remove_node(host_id id) {
+    tlogger.warn("topology::remove_node. Current address is {}", (void*)this);
     auto node = find_node(id);
     tlogger.debug("topology[{}]: remove_node: host_id={}: {}", fmt::ptr(this), id, debug_format(node));
     if (node) {
@@ -292,10 +308,12 @@ bool topology::remove_node(host_id id) {
 }
 
 void topology::remove_node(const node* node) {
+    tlogger.warn("topology::remove_node. Current address is {}", (void*)this);
     pop_node(node);
 }
 
 void topology::index_node(const node* node) {
+    tlogger.warn("topology::index_node. Current address is {}", (void*)this);
     if (tlogger.is_enabled(log_level::trace)) {
         tlogger.trace("topology[{}]: index_node: {}, at {}", fmt::ptr(this), debug_format(node), current_backtrace());
     }
@@ -346,6 +364,7 @@ void topology::index_node(const node* node) {
 }
 
 void topology::unindex_node(const node* node) {
+    tlogger.warn("topology::unindex_node. Current address is {}", (void*)this);
     if (tlogger.is_enabled(log_level::trace)) {
         tlogger.trace("topology[{}]: unindex_node: {}, at {}", fmt::ptr(this), debug_format(node), current_backtrace());
     }
@@ -392,6 +411,7 @@ void topology::unindex_node(const node* node) {
 }
 
 node_holder topology::pop_node(const node* node) {
+    tlogger.warn("topology::pop_node. Current address is {}", (void*)this);
     if (tlogger.is_enabled(log_level::trace)) {
         tlogger.trace("topology[{}]: pop_node: {}, at {}", fmt::ptr(this), debug_format(node), current_backtrace());
     }
@@ -412,6 +432,7 @@ node_holder topology::pop_node(const node* node) {
 // Finds a node by its host_id
 // Returns nullptr if not found
 const node* topology::find_node(host_id id) const noexcept {
+    tlogger.warn("topology::find_node. Current address is {}", (void*)this);
     auto it = _nodes_by_host_id.find(id);
     if (it != _nodes_by_host_id.end()) {
         return it->second;
@@ -422,6 +443,7 @@ const node* topology::find_node(host_id id) const noexcept {
 // Finds a node by its endpoint
 // Returns nullptr if not found
 const node* topology::find_node(const inet_address& ep) const noexcept {
+    tlogger.warn("topology::find_node. Current address is {}", (void*)this);
     auto it = _nodes_by_endpoint.find(ep);
     if (it != _nodes_by_endpoint.end()) {
         return it->second;
@@ -432,6 +454,7 @@ const node* topology::find_node(const inet_address& ep) const noexcept {
 // Finds a node by its index
 // Returns nullptr if not found
 const node* topology::find_node(node::idx_type idx) const noexcept {
+    tlogger.warn("topology::find_node. Current address is {}", (void*)this);
     if (std::cmp_greater_equal(idx, _nodes.size())) {
         return nullptr;
     }
@@ -440,6 +463,7 @@ const node* topology::find_node(node::idx_type idx) const noexcept {
 
 const node* topology::add_or_update_endpoint(inet_address ep, std::optional<host_id> opt_id, std::optional<endpoint_dc_rack> opt_dr, std::optional<node::state> opt_st, std::optional<shard_id> shard_count)
 {
+    tlogger.warn("topology::add_or_update_endpoint. Current address is {}", (void*)this);
     if (tlogger.is_enabled(log_level::trace)) {
         tlogger.trace("topology[{}]: add_or_update_endpoint: ep={} host_id={} dc={} rack={} state={} shards={}, at {}", fmt::ptr(this),
             ep, opt_id.value_or(host_id::create_null_id()), opt_dr.value_or(endpoint_dc_rack{}).dc, opt_dr.value_or(endpoint_dc_rack{}).rack, opt_st.value_or(node::state::none), shard_count,
@@ -460,6 +484,7 @@ const node* topology::add_or_update_endpoint(inet_address ep, std::optional<host
 
 bool topology::remove_endpoint(inet_address ep)
 {
+    tlogger.warn("topology::remove_endpoint({}). Current address is {}", ep, (void*)this);
     auto node = find_node(ep);
     tlogger.debug("topology[{}]: remove_endpoint: endpoint={}: {}", fmt::ptr(this), ep, debug_format(node));
     if (node) {
@@ -470,12 +495,14 @@ bool topology::remove_endpoint(inet_address ep)
 }
 
 bool topology::has_node(host_id id) const noexcept {
+    tlogger.warn("topology::has_node. Current address is {}", (void*)this);
     auto node = find_node(id);
     tlogger.trace("topology[{}]: has_node: host_id={}: {}", fmt::ptr(this), id, debug_format(node));
     return bool(node);
 }
 
 bool topology::has_node(inet_address ep) const noexcept {
+    tlogger.warn("topology::has_node. Current address is {}", (void*)this);
     auto node = find_node(ep);
     tlogger.trace("topology[{}]: has_node: endpoint={}: node={}", fmt::ptr(this), ep, debug_format(node));
     return bool(node);
@@ -483,10 +510,12 @@ bool topology::has_node(inet_address ep) const noexcept {
 
 bool topology::has_endpoint(inet_address ep) const
 {
+    tlogger.warn("topology::has_endpoint. Current address is {}", (void*)this);
     return has_node(ep);
 }
 
 const endpoint_dc_rack& topology::get_location(const inet_address& ep) const {
+    tlogger.warn("topology::get_location. Current address is {}", (void*)this);
     if (auto node = find_node(ep)) {
         return node->dc_rack();
     }
@@ -500,11 +529,12 @@ const endpoint_dc_rack& topology::get_location(const inet_address& ep) const {
     // FIXME -- this shouldn't happen. After topology is stable and is
     // correctly populated with endpoints, this should be replaced with
     // on_internal_error()
-    tlogger.warn("Requested location for node {} not in topology. backtrace {}", ep, current_backtrace());
+    tlogger.warn("Requested location for node {} not in topology. backtrace {}. Current address is {}", (void*)this, ep, current_backtrace());
     return endpoint_dc_rack::default_location;
 }
 
 void topology::sort_by_proximity(inet_address address, inet_address_vector_replica_set& addresses) const {
+    tlogger.warn("topology::sort_by_proximity. Current address is {}", (void*)this);
     if (_sort_by_proximity) {
         std::sort(addresses.begin(), addresses.end(), [this, &address](inet_address& a1, inet_address& a2) {
             return compare_endpoints(address, a1, a2) < 0;
@@ -513,6 +543,7 @@ void topology::sort_by_proximity(inet_address address, inet_address_vector_repli
 }
 
 std::weak_ordering topology::compare_endpoints(const inet_address& address, const inet_address& a1, const inet_address& a2) const {
+    tlogger.warn("topology::compare_endpoints. Current address is {}", (void*)this);
     const auto& loc = get_location(address);
     const auto& loc1 = get_location(a1);
     const auto& loc2 = get_location(a2);
@@ -535,6 +566,7 @@ std::weak_ordering topology::compare_endpoints(const inet_address& address, cons
 }
 
 void topology::for_each_node(std::function<void(const node*)> func) const {
+    tlogger.warn("topology::for_each_node. Current address is {}", (void*)this);
     for (const auto& np : _nodes) {
         if (np) {
             func(np.get());
