@@ -35,6 +35,20 @@
 #include "utils/error_injection.hh"
 #include "db/hints/internal/hint_logger.hh"
 
+#define check_raw(ip, func)                                                                                             \
+    assert(started());                                                                                                  \
+    assert(_proxy_anchor->get_token_metadata_ptr()->get_topology().this_node() != nullptr                               \
+            || _proxy_anchor->get_token_metadata_ptr()->get_topology().find_node(ip) != nullptr                         \
+            || _proxy_anchor->get_token_metadata_ptr()->get_host_id_if_known(ip).has_value())
+
+#define check_raw2(ip, func)                                                                                            \
+    assert(_proxy_anchor->get_token_metadata_ptr()->get_topology().this_node() != nullptr                               \
+            || _proxy_anchor->get_token_metadata_ptr()->get_topology().find_node(ip) != nullptr                         \
+            || _proxy_anchor->get_token_metadata_ptr()->get_host_id_if_known(ip).has_value())
+
+#define check(ip) check_raw(ip, __func__)
+#define check2(ip) check_raw2(ip, __func__)
+
 using namespace std::literals::chrono_literals;
 
 namespace db {
@@ -106,10 +120,10 @@ future<> manager::start(shared_ptr<service::storage_proxy> proxy_ptr, shared_ptr
     _gossiper_anchor = std::move(gossiper_ptr);
     return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(), [this] (fs::path datadir, directory_entry de) {
         endpoint_id ep = endpoint_id(de.name);
-        if (!check_dc_for(ep)) {
+        if (!check_dc_for2(ep)) {
             return make_ready_future<>();
         }
-        return get_ep_manager(ep).populate_segments_to_replay();
+        return get_ep_manager2(ep).populate_segments_to_replay();
     }).then([this] {
         return compute_hints_dir_device_id();
     }).then([this] {
@@ -166,6 +180,9 @@ void manager::forbid_hints_for_eps_with_pending_hints() {
 }
 
 sync_point::shard_rps manager::calculate_current_sync_point(const std::vector<endpoint_id>& target_eps) const {
+    for (const auto& ep : target_eps) {
+        check(ep);
+    }
     sync_point::shard_rps rps;
     for (auto addr : target_eps) {
         auto it = _ep_managers.find(addr);
@@ -224,6 +241,19 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
 }
 
 hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep) {
+    check(ep);
+    auto it = find_ep_manager(ep);
+    if (it == ep_managers_end()) {
+        manager_logger.trace("Creating an ep_manager for {}", ep);
+        hint_endpoint_manager& ep_man = _ep_managers.emplace(ep, hint_endpoint_manager(ep, *this)).first->second;
+        ep_man.start();
+        return ep_man;
+    }
+    return it->second;
+}
+
+hint_endpoint_manager& manager::get_ep_manager2(endpoint_id ep) {
+    check2(ep);
     auto it = find_ep_manager(ep);
     if (it == ep_managers_end()) {
         manager_logger.trace("Creating an ep_manager for {}", ep);
@@ -239,6 +269,7 @@ inline bool manager::have_ep_manager(endpoint_id ep) const noexcept {
 }
 
 bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept {
+    check(ep);
     if (stopping() || draining_all() || !started() || !can_hint_for(ep)) {
         manager_logger.trace("Can't store a hint to {}", ep);
         ++_stats.dropped;
@@ -260,12 +291,14 @@ bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const froze
 }
 
 bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
+    check(ep);
     // There is no need to check the DC here because if there is an in-flight hint for this end point then this means that
     // its DC has already been checked and found to be ok.
     return _stats.size_of_hints_in_progress > max_size_of_hints_in_progress && !utils::fb_utilities::is_me(ep) && hints_in_progress_for(ep) > 0 && local_gossiper().get_endpoint_downtime(ep) <= _max_hint_window_us;
 }
 
 bool manager::can_hint_for(endpoint_id ep) const noexcept {
+    check(ep);
     if (utils::fb_utilities::is_me(ep)) {
         return false;
     }
@@ -344,6 +377,20 @@ future<> manager::change_host_filter(host_filter filter) {
 }
 
 bool manager::check_dc_for(endpoint_id ep) const noexcept {
+    check(ep);
+    try {
+        // If target's DC is not a "hintable" DCs - don't hint.
+        // If there is an end point manager then DC has already been checked and found to be ok.
+        return _host_filter.is_enabled_for_all() || have_ep_manager(ep) ||
+               _host_filter.can_hint_for(_proxy_anchor->get_token_metadata_ptr()->get_topology(), ep);
+    } catch (...) {
+        // if we failed to check the DC - block this hint
+        return false;
+    }
+}
+
+bool manager::check_dc_for2(endpoint_id ep) const noexcept {
+    check2(ep);
     try {
         // If target's DC is not a "hintable" DCs - don't hint.
         // If there is an end point manager then DC has already been checked and found to be ok.
@@ -356,6 +403,7 @@ bool manager::check_dc_for(endpoint_id ep) const noexcept {
 }
 
 void manager::drain_for(endpoint_id endpoint) {
+    check(endpoint);
     if (!started() || stopping() || draining_all()) {
         return;
     }
@@ -493,6 +541,10 @@ future<> directory_initializer::ensure_rebalanced() {
     return smp::submit_to(0, [impl = this->_impl] () mutable {
         return impl->ensure_rebalanced().then([impl] {});
     });
+}
+
+void manager::check_ep(gms::inet_address ep, std::string_view func) const noexcept {
+    check_raw(ep, func);
 }
 
 }

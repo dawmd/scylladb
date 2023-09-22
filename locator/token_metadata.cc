@@ -636,7 +636,7 @@ void token_metadata_impl::remove_endpoint(inet_address endpoint) {
     remove_by_value(_bootstrap_tokens, endpoint);
     remove_by_value(_token_to_endpoint_map, endpoint);
     _normal_token_owners.erase(endpoint);
-    _topology.remove_endpoint(endpoint);
+    // _topology.remove_endpoint(endpoint);
     _leaving_endpoints.erase(endpoint);
     del_replacing_endpoint(endpoint);
     invalidate_cached_rings();

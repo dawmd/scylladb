@@ -21,6 +21,7 @@
 #include <seastar/core/lowres_clock.hh>
 #include <seastar/core/shared_mutex.hh>
 #include <seastar/core/abort_source.hh>
+#include "gms/inet_address.hh"
 #include "inet_address_vectors.hh"
 #include "db/commitlog/commitlog.hh"
 #include "utils/loading_shared_values.hh"
@@ -170,6 +171,7 @@ public:
     /// \param ep End point identificator
     /// \return TRUE if hints are allowed to be generated to \param ep.
     bool check_dc_for(endpoint_id ep) const noexcept;
+    bool check_dc_for2(endpoint_id ep) const noexcept;
 
     /// \brief Checks if hints are disabled for all endpoints
     /// \return TRUE if hints are disabled.
@@ -186,6 +188,7 @@ public:
     /// \param ep End point identificator
     /// \return Number of hints in-flight to \param ep.
     uint64_t hints_in_progress_for(endpoint_id ep) const noexcept {
+        check_ep(ep, __func__);
         auto it = find_ep_manager(ep);
         if (it == ep_managers_end()) {
             return 0;
@@ -194,6 +197,7 @@ public:
     }
 
     void add_ep_with_pending_hints(endpoint_id key) {
+        check_ep(key, __func__);
         _eps_with_pending_hints.insert(key);
     }
 
@@ -262,6 +266,7 @@ private:
     }
 
     hint_endpoint_manager& get_ep_manager(endpoint_id ep);
+    hint_endpoint_manager& get_ep_manager2(endpoint_id ep);
     bool have_ep_manager(endpoint_id ep) const noexcept;
 
 public:
@@ -279,6 +284,7 @@ public:
 private:
     void update_backlog(size_t backlog, size_t max_backlog);
 
+public:
     bool stopping() const noexcept {
         return _state.contains(state::stopping);
     }
@@ -303,9 +309,12 @@ private:
         _state.set(state::draining_all);
     }
 
-    bool draining_all() noexcept {
+    bool draining_all() const noexcept {
         return _state.contains(state::draining_all);
     }
+
+private:
+    void check_ep(gms::inet_address, std::string_view) const noexcept;
 
 public:
     ep_managers_map_type::iterator find_ep_manager(endpoint_id ep_key) noexcept {
