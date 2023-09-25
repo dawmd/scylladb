@@ -448,6 +448,52 @@ void manager::drain_for(endpoint_id endpoint) {
     });
 }
 
+future<> manager::drain_forf(endpoint_id endpoint) {
+    if (!started() || stopping() || draining_all()) {
+        return make_ready_future<>();
+    }
+    check(endpoint);
+
+    manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", endpoint);
+
+    // Future is waited on indirectly in `stop()` (via `_draining_eps_gate`).
+    return with_gate(_draining_eps_gate, [this, endpoint] {
+        return with_semaphore(drain_lock(), 1, [this, endpoint] {
+            return futurize_invoke([this, endpoint] () {
+                if (utils::fb_utilities::is_me(endpoint)) {
+                    set_draining_all();
+                    return parallel_for_each(_ep_managers, [] (auto& pair) {
+                        return pair.second.stop(drain::yes).finally([&pair] {
+                            return with_file_update_mutex(pair.second, [&pair] {
+                                return remove_file(pair.second.hints_dir().c_str());
+                            });
+                        });
+                    }).finally([this] {
+                        _ep_managers.clear();
+                    });
+                } else {
+                    ep_managers_map_type::iterator ep_manager_it = find_ep_manager(endpoint);
+                    if (ep_manager_it != ep_managers_end()) {
+                        return ep_manager_it->second.stop(drain::yes).finally([this, endpoint, &ep_man = ep_manager_it->second] {
+                            return with_file_update_mutex(ep_man, [&ep_man] {
+                                return remove_file(ep_man.hints_dir().c_str());
+                            }).finally([this, endpoint] {
+                                _ep_managers.erase(endpoint);
+                            });
+                        });
+                    }
+
+                    return make_ready_future<>();
+                }
+            }).handle_exception([endpoint] (auto eptr) {
+                manager_logger.error("Exception when draining {}: {}", endpoint, eptr);
+            });
+        });
+    }).finally([endpoint] {
+        manager_logger.trace("drain_for: finished draining {}", endpoint);
+    });
+}
+
 void manager::update_backlog(size_t backlog, size_t max_backlog) {
     if (backlog < max_backlog) {
         allow_hints();

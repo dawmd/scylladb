@@ -6472,8 +6472,14 @@ future<> storage_proxy::wait_for_hint_sync_point(const db::hints::sync_point spo
 void storage_proxy::on_join_cluster(const gms::inet_address& endpoint) {};
 
 void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {
-    _hints_manager.drain_for(endpoint);
-    _hints_for_views_manager.drain_for(endpoint);
+    const auto my_ip = get_token_metadata_ptr()->get_topology().this_node()->endpoint();
+    if (my_ip == endpoint) {
+        _hints_manager.drain_forf(endpoint).get();
+        _hints_for_views_manager.drain_forf(endpoint).get();
+    } else {
+        _hints_manager.drain_for(endpoint);
+        _hints_for_views_manager.drain_for(endpoint);
+    }
 }
 
 void storage_proxy::on_up(const gms::inet_address& endpoint) {};

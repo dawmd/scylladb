@@ -3578,11 +3578,12 @@ future<> storage_service::maybe_reconnect_to_preferred_ip(inet_address ep, inet_
 
 future<> storage_service::on_remove(gms::inet_address endpoint, gms::permit_id pid) {
     slogger.debug("endpoint={} on_remove: permit_id={}", endpoint, pid);
-    auto tmlock = co_await get_token_metadata_lock();
-    auto tmptr = co_await get_mutable_token_metadata_ptr();
-    tmptr->remove_endpoint(endpoint);
-    co_await update_topology_change_info(tmptr, ::format("on_remove {}", endpoint));
-    co_await replicate_to_all_cores(std::move(tmptr));
+    // auto tmlock = co_await get_token_metadata_lock();
+    // auto tmptr = co_await get_mutable_token_metadata_ptr();
+    // tmptr->remove_endpoint(endpoint);
+    // co_await update_topology_change_info(tmptr, ::format("on_remove {}", endpoint));
+    // co_await replicate_to_all_cores(std::move(tmptr));
+    return make_ready_future<>();
 }
 
 future<> storage_service::on_dead(gms::inet_address endpoint, gms::endpoint_state_ptr state, gms::permit_id pid) {
@@ -5460,7 +5461,7 @@ future<> storage_service::excise(std::unordered_set<token> tokens, inet_address 
     co_await remove_endpoint(endpoint, pid);
     auto tmlock = std::make_optional(co_await get_token_metadata_lock());
     auto tmptr = co_await get_mutable_token_metadata_ptr();
-    tmptr->remove_endpoint(endpoint);
+    tmptr->remove_endpoint_except_topology(endpoint);
     tmptr->remove_bootstrap_tokens(tokens);
 
     co_await update_topology_change_info(tmptr, ::format("excise {}", endpoint));
@@ -5468,6 +5469,12 @@ future<> storage_service::excise(std::unordered_set<token> tokens, inet_address 
     tmlock.reset();
 
     co_await notify_left(endpoint);
+    tmlock = std::make_optional(co_await get_token_metadata_lock());
+    tmptr = co_await get_mutable_token_metadata_ptr();
+    tmptr->remove_endpoint_from_topology(endpoint);
+    co_await update_topology_change_info(tmptr, ::format("excise {}", endpoint));
+    co_await replicate_to_all_cores(std::move(tmptr));
+    tmlock.reset();
 }
 
 future<> storage_service::excise(std::unordered_set<token> tokens, inet_address endpoint, int64_t expire_time, gms::permit_id pid) {
@@ -5480,7 +5487,7 @@ future<> storage_service::leave_ring() {
     co_await _sys_ks.local().set_bootstrap_state(db::system_keyspace::bootstrap_state::NEEDS_BOOTSTRAP);
     co_await mutate_token_metadata([this] (mutable_token_metadata_ptr tmptr) {
         auto endpoint = get_broadcast_address();
-        tmptr->remove_endpoint(endpoint);
+        tmptr->remove_endpoint_except_topology(endpoint);
         return update_topology_change_info(std::move(tmptr), ::format("leave_ring {}", endpoint));
     });
 
@@ -5490,6 +5497,12 @@ future<> storage_service::leave_ring() {
     auto delay = std::max(get_ring_delay(), gms::gossiper::INTERVAL);
     slogger.info("Announcing that I have left the ring for {}ms", delay.count());
     co_await sleep_abortable(delay, _abort_source);
+
+    co_await mutate_token_metadata([this] (auto tmptr) {
+        auto endpoint = get_broadcast_address();
+        tmptr->remove_endpoint_from_topology(endpoint);
+        return update_topology_change_info(std::move(tmptr), ::format("leave_ring {}", endpoint));
+    });
 }
 
 future<>

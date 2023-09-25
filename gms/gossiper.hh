@@ -333,6 +333,8 @@ public:
      * Removes the endpoint from Gossip but retains endpoint state
      */
     future<> remove_endpoint(inet_address endpoint, permit_id);
+    future<> remove_endpoint_but_topology(inet_address endpoint, permit_id pid);
+    future<> remove_endpoint_from_topology(inet_address endpoint);
     future<> force_remove_endpoint(inet_address endpoint, permit_id);
 private:
     /**

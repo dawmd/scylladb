@@ -11,6 +11,7 @@
 #include "locator/snitch_base.hh"
 #include "locator/abstract_replication_strategy.hh"
 #include "locator/tablets.hh"
+#include "locator/types.hh"
 #include "log.hh"
 #include "partition_range_compat.hh"
 #include <unordered_map>
@@ -175,6 +176,8 @@ public:
     void del_leaving_endpoint(inet_address endpoint);
 public:
     void remove_endpoint(inet_address endpoint);
+    void remove_endpoint_except_topology(inet_address endpoint);
+    void remove_endpoint_from_topology(inet_address endpoint);
 
     bool is_normal_token_owner(inet_address endpoint) const;
 
@@ -636,10 +639,24 @@ void token_metadata_impl::remove_endpoint(inet_address endpoint) {
     remove_by_value(_bootstrap_tokens, endpoint);
     remove_by_value(_token_to_endpoint_map, endpoint);
     _normal_token_owners.erase(endpoint);
+    _topology.remove_endpoint(endpoint);
+    _leaving_endpoints.erase(endpoint);
+    del_replacing_endpoint(endpoint);
+    invalidate_cached_rings();
+}
+
+void token_metadata_impl::remove_endpoint_except_topology(inet_address endpoint) {
+    remove_by_value(_bootstrap_tokens, endpoint);
+    remove_by_value(_token_to_endpoint_map, endpoint);
+    _normal_token_owners.erase(endpoint);
     // _topology.remove_endpoint(endpoint);
     _leaving_endpoints.erase(endpoint);
     del_replacing_endpoint(endpoint);
     invalidate_cached_rings();
+}
+
+void token_metadata_impl::remove_endpoint_from_topology(inet_address endpoint) {
+    _topology.remove_endpoint(endpoint);
 }
 
 token token_metadata_impl::get_predecessor(token t) const {
@@ -1050,6 +1067,18 @@ token_metadata::del_leaving_endpoint(inet_address endpoint) {
 void
 token_metadata::remove_endpoint(inet_address endpoint) {
     _impl->remove_endpoint(endpoint);
+    _impl->sort_tokens();
+}
+
+void
+token_metadata::remove_endpoint_except_topology(inet_address endpoint) {
+    _impl->remove_endpoint_except_topology(endpoint);
+    _impl->sort_tokens();
+}
+
+void
+token_metadata::remove_endpoint_from_topology(inet_address endpoint) {
+    _impl->remove_endpoint_from_topology(endpoint);
     _impl->sort_tokens();
 }
 

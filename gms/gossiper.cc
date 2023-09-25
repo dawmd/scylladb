@@ -1213,7 +1213,7 @@ future<> gossiper::evict_from_membership(inet_address endpoint, permit_id pid) {
     });
     _expire_time_endpoint_map.erase(endpoint);
     quarantine_endpoint(endpoint);
-    logger.debug("evicting {} from gossip", endpoint);
+    logger.warn("evicting {} from gossip", endpoint);
 }
 
 void gossiper::quarantine_endpoint(inet_address endpoint) {

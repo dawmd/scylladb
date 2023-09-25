@@ -192,6 +192,8 @@ public:
     void del_leaving_endpoint(inet_address endpoint);
 
     void remove_endpoint(inet_address endpoint);
+    void remove_endpoint_except_topology(inet_address endpoint);
+    void remove_endpoint_from_topology(inet_address endpoint);
 
     // Checks if the node is part of the token ring. If yes, the node is one of
     // the nodes that owns the tokens and inside the set _normal_token_owners.
