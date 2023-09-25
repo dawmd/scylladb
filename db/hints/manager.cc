@@ -61,9 +61,10 @@ const std::string manager::FILENAME_PREFIX("HintsLog" + commitlog::descriptor::S
 const std::chrono::seconds manager::hint_file_write_timeout = std::chrono::seconds(2);
 std::chrono::seconds manager::hints_flush_period = std::chrono::seconds(10);
 
-manager::manager(sstring hints_directory, host_filter filter, int64_t max_hint_window_ms, resource_manager& res_manager, distributed<replica::database>& db)
+manager::manager(service::storage_proxy* proxy, sstring hints_directory, host_filter filter, int64_t max_hint_window_ms, resource_manager& res_manager, distributed<replica::database>& db)
     : _hints_dir(fs::path(hints_directory) / format("{:d}", this_shard_id()))
     , _host_filter(std::move(filter))
+    , _proxy_anchor(proxy)
     , _max_hint_window_us(max_hint_window_ms * 1000)
     , _local_db(db.local())
     , _resource_manager(res_manager)
@@ -115,8 +116,7 @@ void manager::register_metrics(const sstring& group_name) {
     });
 }
 
-future<> manager::start(shared_ptr<service::storage_proxy> proxy_ptr, shared_ptr<gms::gossiper> gossiper_ptr) {
-    _proxy_anchor = std::move(proxy_ptr);
+future<> manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
     _gossiper_anchor = std::move(gossiper_ptr);
     return lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(), [this] (fs::path datadir, directory_entry de) {
         endpoint_id ep = endpoint_id(de.name);
@@ -403,10 +403,10 @@ bool manager::check_dc_for2(endpoint_id ep) const noexcept {
 }
 
 void manager::drain_for(endpoint_id endpoint) {
-    check(endpoint);
     if (!started() || stopping() || draining_all()) {
         return;
     }
+    check(endpoint);
 
     manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", endpoint);
 

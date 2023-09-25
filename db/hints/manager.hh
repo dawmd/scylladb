@@ -112,7 +112,7 @@ private:
 
     node_to_hint_store_factory_type _store_factory;
     host_filter _host_filter;
-    shared_ptr<service::storage_proxy> _proxy_anchor;
+    service::storage_proxy* _proxy_anchor;
     shared_ptr<gms::gossiper> _gossiper_anchor;
     int64_t _max_hint_window_us = 0;
     replica::database& _local_db;
@@ -128,12 +128,12 @@ private:
     seastar::named_semaphore _drain_lock = {1, named_semaphore_exception_factory{"drain lock"}};
 
 public:
-    manager(sstring hints_directory, host_filter filter, int64_t max_hint_window_ms, resource_manager&res_manager, sharded<replica::database>& db);
+    manager(service::storage_proxy*, sstring hints_directory, host_filter filter, int64_t max_hint_window_ms, resource_manager&res_manager, sharded<replica::database>& db);
     virtual ~manager();
     manager(manager&&) = delete;
     manager& operator=(manager&&) = delete;
     void register_metrics(const sstring& group_name);
-    future<> start(shared_ptr<service::storage_proxy> proxy_ptr, shared_ptr<gms::gossiper> gossiper_ptr);
+    future<> start(shared_ptr<gms::gossiper> gossiper_ptr);
     future<> stop();
     bool store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept;
 
