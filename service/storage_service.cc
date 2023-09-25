@@ -3578,12 +3578,12 @@ future<> storage_service::maybe_reconnect_to_preferred_ip(inet_address ep, inet_
 
 future<> storage_service::on_remove(gms::inet_address endpoint, gms::permit_id pid) {
     slogger.debug("endpoint={} on_remove: permit_id={}", endpoint, pid);
-    // auto tmlock = co_await get_token_metadata_lock();
-    // auto tmptr = co_await get_mutable_token_metadata_ptr();
-    // tmptr->remove_endpoint(endpoint);
-    // co_await update_topology_change_info(tmptr, ::format("on_remove {}", endpoint));
-    // co_await replicate_to_all_cores(std::move(tmptr));
-    return make_ready_future<>();
+    auto tmlock = co_await get_token_metadata_lock();
+    auto tmptr = co_await get_mutable_token_metadata_ptr();
+    tmptr->remove_endpoint(endpoint);
+    co_await update_topology_change_info(tmptr, ::format("on_remove {}", endpoint));
+    co_await replicate_to_all_cores(std::move(tmptr));
+    // return make_ready_future<>();
 }
 
 future<> storage_service::on_dead(gms::inet_address endpoint, gms::endpoint_state_ptr state, gms::permit_id pid) {
@@ -5458,19 +5458,19 @@ future<> storage_service::removenode_with_stream(gms::inet_address leaving_node,
 future<> storage_service::excise(std::unordered_set<token> tokens, inet_address endpoint, gms::permit_id pid) {
     slogger.info("Removing tokens {} for {}", tokens, endpoint);
     // FIXME: HintedHandOffManager.instance.deleteHintsForEndpoint(endpoint);
+    // auto tmlock = std::make_optional(co_await get_token_metadata_lock());
+    // auto tmptr = co_await get_mutable_token_metadata_ptr();
+    // tmptr->remove_endpoint_except_topology(endpoint);
+    // tmptr->remove_bootstrap_tokens(tokens);
+
+    // co_await update_topology_change_info(tmptr, ::format("excise {}", endpoint));
+    // co_await replicate_to_all_cores(std::move(tmptr));
+    // tmlock.reset();
+
+    co_await notify_left(endpoint);
     co_await remove_endpoint(endpoint, pid);
     auto tmlock = std::make_optional(co_await get_token_metadata_lock());
     auto tmptr = co_await get_mutable_token_metadata_ptr();
-    tmptr->remove_endpoint_except_topology(endpoint);
-    tmptr->remove_bootstrap_tokens(tokens);
-
-    co_await update_topology_change_info(tmptr, ::format("excise {}", endpoint));
-    co_await replicate_to_all_cores(std::move(tmptr));
-    tmlock.reset();
-
-    co_await notify_left(endpoint);
-    tmlock = std::make_optional(co_await get_token_metadata_lock());
-    tmptr = co_await get_mutable_token_metadata_ptr();
     tmptr->remove_endpoint_from_topology(endpoint);
     co_await update_topology_change_info(tmptr, ::format("excise {}", endpoint));
     co_await replicate_to_all_cores(std::move(tmptr));
