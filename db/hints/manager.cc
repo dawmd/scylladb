@@ -35,15 +35,19 @@
 #include "utils/error_injection.hh"
 #include "db/hints/internal/hint_logger.hh"
 
-#define check_raw(ip, func)                                                                                             \
-    assert(started());                                                                                                  \
-    assert(_proxy_anchor->get_token_metadata_ptr()->get_topology().this_node() != nullptr                               \
-            || _proxy_anchor->get_token_metadata_ptr()->get_topology().find_node(ip) != nullptr                         \
+#define check_raw(ip, func)                                                                                                 \
+    manager_logger.warn("hint_manager::state[started: {}, replay_allowed: {}, draining_all: {}, drained_all: {}, stopping: {}, stopped: {}]",\
+            started(), replay_allowed(), draining_all(), _state.contains(state::drained_all), stopping(), _state.contains(state::stopped));                      \
+    assert(started());                                                                                                      \
+    assert(_proxy_anchor->get_token_metadata_ptr()->get_topology().this_node() != nullptr                                   \
+            || _proxy_anchor->get_token_metadata_ptr()->get_topology().find_node(ip) != nullptr                             \
             || _proxy_anchor->get_token_metadata_ptr()->get_host_id_if_known(ip).has_value())
 
-#define check_raw2(ip, func)                                                                                            \
-    assert(_proxy_anchor->get_token_metadata_ptr()->get_topology().this_node() != nullptr                               \
-            || _proxy_anchor->get_token_metadata_ptr()->get_topology().find_node(ip) != nullptr                         \
+#define check_raw2(ip, func)                                                                                                \
+    manager_logger.warn("hint_manager::state[started: {}, replay_allowed: {}, draining_all: {}, drained_all: {}, stopping: {}, stopped: {}]",\
+            started(), replay_allowed(), draining_all(), _state.contains(state::drained_all), stopping(), _state.contains(state::stopped));                      \
+    assert(_proxy_anchor->get_token_metadata_ptr()->get_topology().this_node() != nullptr                                   \
+            || _proxy_anchor->get_token_metadata_ptr()->get_topology().find_node(ip) != nullptr                             \
             || _proxy_anchor->get_token_metadata_ptr()->get_host_id_if_known(ip).has_value())
 
 #define check(ip) check_raw(ip, __func__)
@@ -145,6 +149,8 @@ future<> manager::stop() {
         }).finally([this] {
             _ep_managers.clear();
             manager_logger.info("Stopped");
+        }).finally([this] {
+            _state.set(state::stopped);
         }).discard_result();
     });
   });
@@ -443,7 +449,8 @@ void manager::drain_for(endpoint_id endpoint) {
                 manager_logger.error("Exception when draining {}: {}", endpoint, eptr);
             });
         });
-    }).finally([endpoint] {
+    }).finally([this, endpoint] {
+        _state.set(state::drained_all);
         manager_logger.trace("drain_for: finished draining {}", endpoint);
     });
 }
@@ -489,7 +496,8 @@ future<> manager::drain_forf(endpoint_id endpoint) {
                 manager_logger.error("Exception when draining {}: {}", endpoint, eptr);
             });
         });
-    }).finally([endpoint] {
+    }).finally([this, endpoint] {
+        _state.set(state::drained_all);
         manager_logger.trace("drain_for: finished draining {}", endpoint);
     });
 }

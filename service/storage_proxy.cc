@@ -3759,7 +3759,7 @@ mutation storage_proxy::do_get_batchlog_mutation_for(schema_ptr schema, const st
 template<typename Range>
 bool storage_proxy::cannot_hint(const Range& targets, db::write_type type) const {
     // if hints are disabled we "can always hint" since there's going to be no hint generated in this case
-    return hints_enabled(type) && _hints_manager.started() && boost::algorithm::any_of(targets, std::bind(&db::hints::manager::too_many_in_flight_hints_for, &_hints_manager, std::placeholders::_1));
+    return hints_enabled(type) && _hints_manager.started() && !_hints_manager.draining_all() && boost::algorithm::any_of(targets, std::bind(&db::hints::manager::too_many_in_flight_hints_for, &_hints_manager, std::placeholders::_1));
 }
 
 future<> storage_proxy::send_to_endpoint(
@@ -6474,6 +6474,7 @@ void storage_proxy::on_join_cluster(const gms::inet_address& endpoint) {};
 void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {
     const auto my_ip = get_token_metadata_ptr()->get_topology().this_node()->endpoint();
     if (my_ip == endpoint) {
+        cancel_write_handlers([] (auto&&) { return true; });
         _hints_manager.drain_forf(endpoint).get();
         _hints_for_views_manager.drain_forf(endpoint).get();
     } else {

@@ -86,14 +86,18 @@ public:
         started,                // hinting is currently allowed (start() call is complete)
         replay_allowed,         // replaying (hints sending) is allowed
         draining_all,           // hinting is not allowed - all ep managers are being stopped because this node is leaving the cluster
-        stopping                // hinting is not allowed - stopping is in progress (stop() method has been called)
+        drained_all,
+        stopping,               // hinting is not allowed - stopping is in progress (stop() method has been called)
+        stopped
     };
 
     using state_set = enum_set<super_enum<state,
         state::started,
         state::replay_allowed,
         state::draining_all,
-        state::stopping>>;
+        state::drained_all,
+        state::stopping,
+        state::stopped>>;
 
 private:
     using ep_managers_map_type = std::unordered_map<endpoint_id, hint_endpoint_manager>;

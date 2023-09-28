@@ -1865,10 +1865,13 @@ future<> system_keyspace::set_bootstrap_state(bootstrap_state state) {
     sstring state_name = state_to_name.at(state);
 
     sstring req = format("INSERT INTO system.{} (key, bootstrapped) VALUES (?, ?)", LOCAL);
+    slogger.warn("system_keyspace::set_bootstrap_state(): before executing cql");
     co_await execute_cql(req, sstring(LOCAL), state_name).discard_result();
+    slogger.warn("system_keyspace::set_bootstrap_state(): in the middle of executing cql");
     co_await container().invoke_on_all([state] (auto& sys_ks) {
         sys_ks._cache->_state = state;
     });
+    slogger.warn("system_keyspace::set_bootstrap_state(): after executing cql");
 }
 
 std::vector<schema_ptr> system_keyspace::all_tables(const db::config& cfg) {
