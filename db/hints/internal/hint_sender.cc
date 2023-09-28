@@ -48,12 +48,16 @@
 namespace db::hints {
 namespace internal {
 
+namespace {
+
 class no_column_mapping : public std::out_of_range {
 public:
     no_column_mapping(const table_schema_version& id)
         : std::out_of_range(format("column mapping for CF schema_version {} is missing", id))
     {}
 };
+
+} // anonymous namespace
 
 struct send_one_file_ctx {
     send_one_file_ctx(std::unordered_map<table_schema_version, column_mapping>& last_schema_ver_to_column_mapping)
