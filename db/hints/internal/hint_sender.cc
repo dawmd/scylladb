@@ -189,7 +189,7 @@ frozen_mutation_and_schema hint_sender::get_mutation(lw_shared_ptr<send_one_file
         converting_mutation_partition_applier v{cm, *schema, m.partition()};
         
         fm.partition().accept(cm, v);
-        
+
         return {freeze(m), std::move(schema)};
     }
 
@@ -200,13 +200,15 @@ const column_mapping& hint_sender::get_column_mapping(lw_shared_ptr<send_one_fil
         const frozen_mutation& fm, const hint_entry_reader& hr)
 {
     auto cm_it = ctx_ptr->schema_ver_to_column_mapping.find(fm.schema_version());
+
     if (cm_it == ctx_ptr->schema_ver_to_column_mapping.end()) {
         if (!hr.get_column_mapping()) {
             throw no_column_mapping(fm.schema_version());
         }
 
         manager_logger.debug("new schema version {}", fm.schema_version());
-        cm_it = ctx_ptr->schema_ver_to_column_mapping.emplace(fm.schema_version(), *hr.get_column_mapping()).first;
+        cm_it = ctx_ptr->schema_ver_to_column_mapping.emplace(
+                    fm.schema_version(), *hr.get_column_mapping()).first;
     }
 
     return cm_it->second;
