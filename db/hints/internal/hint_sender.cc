@@ -126,16 +126,16 @@ public:
 };
 
 future<> hint_sender::flush_maybe() noexcept {
-    auto current_time = clock_type::now();
+    const auto current_time = clock_type::now();
+    
     if (current_time >= _next_flush_tp) {
-        return _ep_manager.flush_current_hints().then([this, current_time] {
+        try {
+            co_await _ep_manager.flush_current_hints();
             _next_flush_tp = current_time + manager::hints_flush_period;
-        }).handle_exception([] (auto eptr) {
-            manager_logger.trace("flush_maybe() failed: {}", eptr);
-            return make_ready_future<>();
-        });
+        } catch (...) {
+            manager_logger.trace("flush_maybe() failed: {}", std::current_exception());
+        }
     }
-    return make_ready_future<>();
 }
 
 future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m, locator::effective_replication_map_ptr ermp,
