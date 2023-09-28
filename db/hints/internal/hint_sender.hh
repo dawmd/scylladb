@@ -59,9 +59,12 @@ namespace internal {
 class hint_endpoint_manager;
 
 class hint_sender {
-    // Important: clock::now() must be noexcept.
-    // TODO: add the corresponding static_assert() when seastar::lowres_clock::now() is marked as "noexcept".
-    using clock = seastar::lowres_clock;
+private:
+    using clock_type = seastar::lowres_clock;
+    static_assert(noexcept(clock_type::now()), "clock_type::now() must be noexcept");
+    
+    using duration_type = typename clock_type::duration;
+    using time_point_type = typename clock_type::time_point;
 
     enum class state {
         stopping,               // stop() was called
@@ -103,8 +106,8 @@ private:
     state_set _state;
     future<> _stopped;
     abort_source _stop_as;
-    clock::time_point _next_flush_tp;
-    clock::time_point _next_send_retry_tp;
+    time_point_type _next_flush_tp;
+    time_point_type _next_send_retry_tp;
     endpoint_id _ep_key;
     hint_endpoint_manager& _ep_manager;
     manager& _shard_manager;
@@ -273,7 +276,7 @@ private:
 
     /// \brief Return the amount of time we want to sleep after the current iteration.
     /// \return The time till the soonest event: flushing or re-sending.
-    clock::duration next_sleep_duration() const;
+    duration_type next_sleep_duration() const;
 };
 
 } // namespace internal
