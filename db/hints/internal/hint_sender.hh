@@ -80,25 +80,32 @@ private:
         state::draining>>;
 
 private:
+    endpoint_id _ep_key;
+
     std::list<sstring> _segments_to_replay;
-    // Segments to replay which were not created on this shard but were moved during rebalancing
+    // Segments to replay which were not created on this shard but were moved during rebalancing.
     std::list<sstring> _foreign_segments_to_replay;
+    
     replay_position _last_not_complete_rp;
     replay_position _sent_upper_bound_rp;
+    
     std::unordered_map<table_schema_version, column_mapping> _last_schema_ver_to_column_mapping;
+    
     state_set _state;
     future<> _stopped;
     abort_source _stop_as;
+    
     time_point_type _next_flush_tp;
     time_point_type _next_send_retry_tp;
-    endpoint_id _ep_key;
+    
     hint_endpoint_manager& _ep_manager;
     manager& _shard_manager;
     resource_manager& _resource_manager;
     service::storage_proxy& _proxy;
     replica::database& _db;
-    seastar::scheduling_group _hints_cpu_sched_group;
     gms::gossiper& _gossiper;
+    
+    seastar::scheduling_group _hints_cpu_sched_group;
     seastar::shared_mutex& _file_update_mutex;
 
     std::multimap<db::replay_position, lw_shared_ptr<std::optional<promise<>>>> _replay_waiters;
