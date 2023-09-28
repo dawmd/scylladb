@@ -258,11 +258,6 @@ private:
     /// \brief Dismisses ALL current replay waiters with an exception.
     void dismiss_replay_waiters() noexcept;
 
-    /// \brief Get the last modification time stamp for a given file.
-    /// \param fname File name
-    /// \return The last modification time stamp for \param fname.
-    static future<timespec> get_last_file_modification(const sstring& fname);
-
     hint_stats& shard_stats();
 
     /// \brief Flush all pending hints to storage if hints_flush_period passed since the last flush event.
