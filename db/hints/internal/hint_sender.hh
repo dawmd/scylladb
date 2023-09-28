@@ -113,7 +113,8 @@ private:
 public:
     hint_sender(hint_endpoint_manager& parent, service::storage_proxy& local_storage_proxy,
             replica::database& local_db, gms::gossiper& local_gossiper) noexcept;
-    ~hint_sender();
+    
+    ~hint_sender() noexcept;
 
 public:
     /// \brief A constructor that should be called from the copy/move-constructor of hint_endpoint_manager.

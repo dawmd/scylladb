@@ -241,7 +241,7 @@ hint_sender::hint_sender(const hint_sender& other, hint_endpoint_manager& parent
     , _file_update_mutex(_ep_manager.file_update_mutex())
 {}
 
-hint_sender::~hint_sender() {
+hint_sender::~hint_sender() noexcept {
     dismiss_replay_waiters();
 }
 
