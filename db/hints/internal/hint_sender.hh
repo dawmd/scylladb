@@ -108,7 +108,7 @@ private:
     seastar::scheduling_group _hints_cpu_sched_group;
     seastar::shared_mutex& _file_update_mutex;
 
-    std::multimap<db::replay_position, lw_shared_ptr<std::optional<promise<>>>> _replay_waiters;
+    std::multimap<replay_position, lw_shared_ptr<std::optional<promise<>>>> _replay_waiters;
 
 public:
     hint_sender(hint_endpoint_manager& parent, service::storage_proxy& local_storage_proxy,
@@ -149,10 +149,10 @@ public:
     };
 
     /// \brief Sets the sent_upper_bound_rp marker to indicate that the hints were replayed _up to_ given position.
-    void rewind_sent_replay_position_to(db::replay_position rp);
+    void rewind_sent_replay_position_to(replay_position rp);
 
     /// \brief Waits until hints are replayed up to a given replay position, or given abort source is triggered.
-    future<> wait_until_hints_are_replayed_up_to(abort_source& as, db::replay_position up_to_rp);
+    future<> wait_until_hints_are_replayed_up_to(abort_source& as, replay_position up_to_rp);
 
 private:
     /// \brief Gets the name of the current segment that should be sent.
@@ -206,7 +206,7 @@ private:
     /// \param fname name of the hints file this hint was read from
     /// \return future that resolves when next hint may be sent
     future<> send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fragmented_temporary_buffer buf,
-            db::replay_position rp, gc_clock::duration secs_since_file_mod, const sstring& fname);
+            replay_position rp, gc_clock::duration secs_since_file_mod, const sstring& fname);
 
     /// \brief Send all hint from a single file and delete it after it has been successfully sent.
     /// Send all hints from the given file. If we failed to send the current segment we will pick up

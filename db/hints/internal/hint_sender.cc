@@ -61,17 +61,17 @@ struct send_one_file_ctx {
     {}
     std::unordered_map<table_schema_version, column_mapping>& schema_ver_to_column_mapping;
     seastar::gate file_send_gate;
-    std::optional<db::replay_position> first_failed_rp;
-    std::optional<db::replay_position> last_succeeded_rp;
-    std::set<db::replay_position> in_progress_rps;
+    std::optional<replay_position> first_failed_rp;
+    std::optional<replay_position> last_succeeded_rp;
+    std::set<replay_position> in_progress_rps;
     bool segment_replay_failed = false;
 
-    void mark_hint_as_in_progress(db::replay_position rp);
-    void on_hint_send_success(db::replay_position rp) noexcept;
-    void on_hint_send_failure(db::replay_position rp) noexcept;
+    void mark_hint_as_in_progress(replay_position rp);
+    void on_hint_send_success(replay_position rp) noexcept;
+    void on_hint_send_failure(replay_position rp) noexcept;
 
     // Returns a position below which hints were successfully replayed.
-    db::replay_position get_replayed_bound() const noexcept;
+    replay_position get_replayed_bound() const noexcept;
 };
 
 future<> hint_sender::flush_maybe() noexcept {
@@ -294,7 +294,7 @@ future<> hint_sender::send_one_mutation(frozen_mutation_and_schema m) {
 }
 
 future<> hint_sender::send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fragmented_temporary_buffer buf,
-        db::replay_position rp, gc_clock::duration secs_since_file_mod, const sstring& fname)
+        replay_position rp, gc_clock::duration secs_since_file_mod, const sstring& fname)
 {
     return _resource_manager.get_send_units_for(buf.size_bytes()).then(
                 [this, secs_since_file_mod, &fname, buf = std::move(buf), rp, ctx_ptr] (auto units) mutable {
@@ -398,7 +398,7 @@ void hint_sender::dismiss_replay_waiters() noexcept {
     _replay_waiters.clear();
 }
 
-future<> hint_sender::wait_until_hints_are_replayed_up_to(abort_source& as, db::replay_position up_to_rp) {
+future<> hint_sender::wait_until_hints_are_replayed_up_to(abort_source& as, replay_position up_to_rp) {
     manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): entering with target {}", end_point_key(), up_to_rp);
     if (_foreign_segments_to_replay.empty() && up_to_rp < _sent_upper_bound_rp) {
         manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): hints were already replayed above the point ({} < {})",
@@ -431,18 +431,18 @@ future<> hint_sender::wait_until_hints_are_replayed_up_to(abort_source& as, db::
     });
 }
 
-void send_one_file_ctx::mark_hint_as_in_progress(db::replay_position rp) {
+void send_one_file_ctx::mark_hint_as_in_progress(replay_position rp) {
     in_progress_rps.insert(rp);
 }
 
-void send_one_file_ctx::on_hint_send_success(db::replay_position rp) noexcept {
+void send_one_file_ctx::on_hint_send_success(replay_position rp) noexcept {
     in_progress_rps.erase(rp);
     if (!last_succeeded_rp || *last_succeeded_rp < rp) {
         last_succeeded_rp = rp;
     }
 }
 
-void send_one_file_ctx::on_hint_send_failure(db::replay_position rp) noexcept {
+void send_one_file_ctx::on_hint_send_failure(replay_position rp) noexcept {
     in_progress_rps.erase(rp);
     segment_replay_failed = true;
     if (!first_failed_rp || rp < *first_failed_rp) {
@@ -450,13 +450,13 @@ void send_one_file_ctx::on_hint_send_failure(db::replay_position rp) noexcept {
     }
 }
 
-db::replay_position send_one_file_ctx::get_replayed_bound() const noexcept {
+replay_position send_one_file_ctx::get_replayed_bound() const noexcept {
     // We are sure that all hints were sent _below_ the position which is the minimum of the following:
     // - Position of the first hint that failed to be sent in this replay (first_failed_rp),
     // - Position of the last hint which was successfully sent (last_succeeded_rp, inclusive bound),
     // - Position of the lowest hint which is being currently sent (in_progress_rps.begin()).
 
-    db::replay_position rp;
+    replay_position rp;
     if (first_failed_rp) {
         rp = *first_failed_rp;
     } else if (last_succeeded_rp) {
@@ -473,7 +473,7 @@ db::replay_position send_one_file_ctx::get_replayed_bound() const noexcept {
     return rp;
 }
 
-void hint_sender::rewind_sent_replay_position_to(db::replay_position rp) {
+void hint_sender::rewind_sent_replay_position_to(replay_position rp) {
     _sent_upper_bound_rp = rp;
     notify_replay_waiters();
 }
@@ -523,7 +523,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
                 }
             };
         }, _last_not_complete_rp.pos, &_db.extensions()).get();
-    } catch (db::commitlog::segment_error& ex) {
+    } catch (commitlog::segment_error& ex) {
         manager_logger.error("{}: {}. Dropping...", fname, ex.what());
         ctx_ptr->segment_replay_failed = false;
         ++this->shard_stats().corrupted_files;
