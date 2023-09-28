@@ -50,7 +50,9 @@ namespace internal {
 
 class no_column_mapping : public std::out_of_range {
 public:
-    no_column_mapping(const table_schema_version& id) : std::out_of_range(format("column mapping for CF schema_version {} is missing", id)) {}
+    no_column_mapping(const table_schema_version& id)
+        : std::out_of_range(format("column mapping for CF schema_version {} is missing", id))
+    {}
 };
 
 struct send_one_file_ctx {
@@ -95,7 +97,9 @@ future<timespec> hint_sender::get_last_file_modification(const sstring& fname) {
     });
 }
 
-future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m, locator::effective_replication_map_ptr ermp, const inet_address_vector_replica_set& natural_endpoints) noexcept {
+future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m, locator::effective_replication_map_ptr ermp,
+        const inet_address_vector_replica_set& natural_endpoints) noexcept
+{
     return futurize_invoke([this, m = std::move(m), ermp = std::move(ermp), &natural_endpoints] () mutable -> future<> {
         // The fact that we send with CL::ALL in both cases below ensures that new hints are not going
         // to be generated as a result of hints sending.
@@ -103,7 +107,9 @@ future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m, locator
             manager_logger.trace("Sending directly to {}", end_point_key());
             return _proxy.send_hint_to_endpoint(std::move(m), std::move(ermp), end_point_key());
         } else {
-            manager_logger.trace("Endpoints set has changed and {} is no longer a replica. Mutating from scratch...", end_point_key());
+            manager_logger.trace("Endpoints set has changed and {} is no longer a replica. Mutating from scratch...",
+                    end_point_key());
+
             return _proxy.send_hint_to_all_replicas(std::move(m));
         }
     });
@@ -120,7 +126,8 @@ bool hint_sender::can_send() noexcept {
             return true;
         } else {
             if (!_state.contains(state::left_ring)) {
-                _state.set_if<state::left_ring>(!_shard_manager.local_db().get_token_metadata().is_normal_token_owner(end_point_key()));
+                const auto& token_md = _shard_manager.local_db().get_token_metadata();
+                _state.set_if<state::left_ring>(!token_md.is_normal_token_owner(end_point_key()));
             }
             // send the hints out if the destination Node is part of the ring - we will send to all new replicas in this case
             return _state.contains(state::left_ring);
@@ -145,7 +152,9 @@ frozen_mutation_and_schema hint_sender::get_mutation(lw_shared_ptr<send_one_file
     return {std::move(hr).mutation(), std::move(schema)};
 }
 
-const column_mapping& hint_sender::get_column_mapping(lw_shared_ptr<send_one_file_ctx> ctx_ptr, const frozen_mutation& fm, const hint_entry_reader& hr) {
+const column_mapping& hint_sender::get_column_mapping(lw_shared_ptr<send_one_file_ctx> ctx_ptr,
+        const frozen_mutation& fm, const hint_entry_reader& hr)
+{
     auto cm_it = ctx_ptr->schema_ver_to_column_mapping.find(fm.schema_version());
     if (cm_it == ctx_ptr->schema_ver_to_column_mapping.end()) {
         if (!hr.get_column_mapping()) {
@@ -159,7 +168,8 @@ const column_mapping& hint_sender::get_column_mapping(lw_shared_ptr<send_one_fil
     return cm_it->second;
 }
 
-hint_sender::hint_sender(hint_endpoint_manager& parent, service::storage_proxy& local_storage_proxy,replica::database& local_db, gms::gossiper& local_gossiper) noexcept
+hint_sender::hint_sender(hint_endpoint_manager& parent, service::storage_proxy& local_storage_proxy,
+        replica::database& local_db, gms::gossiper& local_gossiper) noexcept
     : _stopped(make_ready_future<>())
     , _ep_key(parent.end_point_key())
     , _ep_manager(parent)
@@ -242,7 +252,8 @@ hint_sender::duration_type hint_sender::next_sleep_duration() const {
 
     duration_type d = std::min(next_flush_tp, next_retry_tp) - current_time;
 
-    // Don't sleep for less than 10 ticks of the "clock" if we are planning to sleep at all - the sleep() function is not perfect.
+    // Don't sleep for less than 10 ticks of the "clock" if we are planning to sleep at all.
+    // The sleep() function is not perfect.
     return duration_type{10 * div_ceil(d.count(), 10)};
 }
 
@@ -282,8 +293,11 @@ future<> hint_sender::send_one_mutation(frozen_mutation_and_schema m) {
     return do_send_one_mutation(std::move(m), std::move(erm), std::move(natural_endpoints));
 }
 
-future<> hint_sender::send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fragmented_temporary_buffer buf, db::replay_position rp, gc_clock::duration secs_since_file_mod, const sstring& fname) {
-    return _resource_manager.get_send_units_for(buf.size_bytes()).then([this, secs_since_file_mod, &fname, buf = std::move(buf), rp, ctx_ptr] (auto units) mutable {
+future<> hint_sender::send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fragmented_temporary_buffer buf,
+        db::replay_position rp, gc_clock::duration secs_since_file_mod, const sstring& fname)
+{
+    return _resource_manager.get_send_units_for(buf.size_bytes()).then(
+                [this, secs_since_file_mod, &fname, buf = std::move(buf), rp, ctx_ptr] (auto units) mutable {
         ctx_ptr->mark_hint_as_in_progress(rp);
 
         // Future is waited on indirectly in `send_one_file()` (via `ctx_ptr->file_send_gate`).
@@ -297,7 +311,8 @@ future<> hint_sender::send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fr
                 //
                 // Files are aggregated for at most manager::hints_timer_period therefore the oldest hint there is
                 // (last_modification - manager::hints_timer_period) old.
-                if (const auto now = gc_clock::now().time_since_epoch(); now - secs_since_file_mod > gc_grace_sec - manager::hints_flush_period) {
+                const auto now = gc_clock::now().time_since_epoch();
+                if (now - secs_since_file_mod > gc_grace_sec - manager::hints_flush_period) {
                     manager_logger.debug("send_hints(): the hint is too old, skipping it, "
                         "secs since file last modification {}, gc_grace_sec {}, hints_flush_period {}",
                         now - secs_since_file_mod, gc_grace_sec, manager::hints_flush_period);
@@ -354,13 +369,18 @@ future<> hint_sender::send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fr
 
 void hint_sender::notify_replay_waiters() noexcept {
     if (!_foreign_segments_to_replay.empty()) {
-        manager_logger.trace("[{}] notify_replay_waiters(): not notifying because there are still {} foreign segments to replay", end_point_key(), _foreign_segments_to_replay.size());
+        manager_logger.trace("[{}] notify_replay_waiters(): not notifying because there are still {} foreign segments to replay",
+                end_point_key(), _foreign_segments_to_replay.size());
         return;
     }
 
-    manager_logger.trace("[{}] notify_replay_waiters(): replay position upper bound was updated to {}", end_point_key(), _sent_upper_bound_rp);
+    manager_logger.trace("[{}] notify_replay_waiters(): replay position upper bound was updated to {}",
+            end_point_key(), _sent_upper_bound_rp);
+    
     while (!_replay_waiters.empty() && _replay_waiters.begin()->first < _sent_upper_bound_rp) {
-        manager_logger.trace("[{}] notify_replay_waiters(): notifying one ({} < {})", end_point_key(), _replay_waiters.begin()->first, _sent_upper_bound_rp);
+        manager_logger.trace("[{}] notify_replay_waiters(): notifying one ({} < {})",
+                end_point_key(), _replay_waiters.begin()->first, _sent_upper_bound_rp);
+        
         auto ptr = _replay_waiters.begin()->second;
         (**ptr).set_value();
         (*ptr) = std::nullopt; // Prevent it from being resolved by abort source subscription
@@ -381,7 +401,8 @@ void hint_sender::dismiss_replay_waiters() noexcept {
 future<> hint_sender::wait_until_hints_are_replayed_up_to(abort_source& as, db::replay_position up_to_rp) {
     manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): entering with target {}", end_point_key(), up_to_rp);
     if (_foreign_segments_to_replay.empty() && up_to_rp < _sent_upper_bound_rp) {
-        manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): hints were already replayed above the point ({} < {})", end_point_key(), up_to_rp, _sent_upper_bound_rp);
+        manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): hints were already replayed above the point ({} < {})",
+                end_point_key(), up_to_rp, _sent_upper_bound_rp);
         return make_ready_future<>();
     }
 
@@ -464,7 +485,8 @@ bool hint_sender::send_one_file(const sstring& fname) {
     lw_shared_ptr<send_one_file_ctx> ctx_ptr = make_lw_shared<send_one_file_ctx>(_last_schema_ver_to_column_mapping);
 
     try {
-        commitlog::read_log_file(fname, manager::FILENAME_PREFIX, [this, secs_since_file_mod, &fname, ctx_ptr] (commitlog::buffer_and_replay_position buf_rp) -> future<> {
+        commitlog::read_log_file(fname, manager::FILENAME_PREFIX,
+                [this, secs_since_file_mod, &fname, ctx_ptr] (commitlog::buffer_and_replay_position buf_rp) -> future<> {
             auto& buf = buf_rp.buffer;
             auto& rp = buf_rp.position;
 
@@ -564,7 +586,8 @@ void hint_sender::pop_current_segment() {
 // Runs in the seastar::async context
 void hint_sender::send_hints_maybe() noexcept {
     using namespace std::literals::chrono_literals;
-    manager_logger.trace("send_hints(): going to send hints to {}, we have {} segment to replay", end_point_key(), _segments_to_replay.size() + _foreign_segments_to_replay.size());
+    manager_logger.trace("send_hints(): going to send hints to {}, we have {} segment to replay",
+            end_point_key(), _segments_to_replay.size() + _foreign_segments_to_replay.size());
 
     int replayed_segments_count = 0;
 
