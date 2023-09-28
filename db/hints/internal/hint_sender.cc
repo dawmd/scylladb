@@ -141,19 +141,17 @@ future<> hint_sender::flush_maybe() noexcept {
 future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m, locator::effective_replication_map_ptr ermp,
         const inet_address_vector_replica_set& natural_endpoints) noexcept
 {
-    return futurize_invoke([this, m = std::move(m), ermp = std::move(ermp), &natural_endpoints] () mutable -> future<> {
-        // The fact that we send with CL::ALL in both cases below ensures that new hints are not going
-        // to be generated as a result of hints sending.
-        if (boost::range::find(natural_endpoints, end_point_key()) != natural_endpoints.end()) {
-            manager_logger.trace("Sending directly to {}", end_point_key());
-            return _proxy.send_hint_to_endpoint(std::move(m), std::move(ermp), end_point_key());
-        } else {
-            manager_logger.trace("Endpoints set has changed and {} is no longer a replica. Mutating from scratch...",
-                    end_point_key());
-
-            return _proxy.send_hint_to_all_replicas(std::move(m));
-        }
-    });
+    // In either case, we won't save yet another hint as a result of sending this one.
+    if (boost::range::find(natural_endpoints, end_point_key()) != natural_endpoints.end()) {
+        manager_logger.trace("Sending directly to {}", end_point_key());
+        // Send with CL = ONE.
+        return _proxy.send_hint_to_endpoint(std::move(m), std::move(ermp), end_point_key());
+    } else {
+        manager_logger.trace("Endpoints set has changed and {} is no longer a replica. Mutating from scratch...",
+                end_point_key());
+        // Send with CL = ALL.
+        return _proxy.send_hint_to_all_replicas(std::move(m));
+    }
 }
 
 bool hint_sender::can_send() noexcept {
