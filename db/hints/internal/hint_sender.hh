@@ -67,14 +67,15 @@ private:
     using time_point_type = typename clock_type::time_point;
 
     enum class state {
-        stopping,               // stop() was called
-        ep_state_left_the_ring, // destination Node is not a part of the ring anymore - usually means that it has been decommissioned
-        draining,               // try to send everything out and ignore errors
+        stopping,   // stop() has been called.
+        left_ring,  // Destination node is not part of the ring anymore.
+                    // That usually means that it has been decommissioned.
+        draining,   // Try to send everything out and ignore errors.
     };
 
     using state_set = enum_set<super_enum<state,
         state::stopping,
-        state::ep_state_left_the_ring,
+        state::left_ring,
         state::draining>>;
 
     struct send_one_file_ctx {

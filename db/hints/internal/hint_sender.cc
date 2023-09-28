@@ -97,14 +97,14 @@ bool hint_sender::can_send() noexcept {
 
     try {
         if (_gossiper.is_alive(end_point_key())) {
-            _state.remove(state::ep_state_left_the_ring);
+            _state.remove(state::left_ring);
             return true;
         } else {
-            if (!_state.contains(state::ep_state_left_the_ring)) {
-                _state.set_if<state::ep_state_left_the_ring>(!_shard_manager.local_db().get_token_metadata().is_normal_token_owner(end_point_key()));
+            if (!_state.contains(state::left_ring)) {
+                _state.set_if<state::left_ring>(!_shard_manager.local_db().get_token_metadata().is_normal_token_owner(end_point_key()));
             }
             // send the hints out if the destination Node is part of the ring - we will send to all new replicas in this case
-            return _state.contains(state::ep_state_left_the_ring);
+            return _state.contains(state::left_ring);
         }
     } catch (...) {
         return false;
