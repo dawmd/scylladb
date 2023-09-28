@@ -60,9 +60,7 @@ public:
 } // anonymous namespace
 
 struct send_one_file_ctx {
-    send_one_file_ctx(std::unordered_map<table_schema_version, column_mapping>& last_schema_ver_to_column_mapping)
-        : schema_ver_to_column_mapping(last_schema_ver_to_column_mapping)
-    {}
+public:
     std::unordered_map<table_schema_version, column_mapping>& schema_ver_to_column_mapping;
     seastar::gate file_send_gate;
     std::optional<replay_position> first_failed_rp;
@@ -70,6 +68,12 @@ struct send_one_file_ctx {
     std::set<replay_position> in_progress_rps;
     bool segment_replay_failed = false;
 
+public:
+    send_one_file_ctx(std::unordered_map<table_schema_version, column_mapping>& last_schema_ver_to_column_mapping)
+        : schema_ver_to_column_mapping(last_schema_ver_to_column_mapping)
+    {}
+
+public:
     void mark_hint_as_in_progress(replay_position rp);
     void on_hint_send_success(replay_position rp) noexcept;
     void on_hint_send_failure(replay_position rp) noexcept;
