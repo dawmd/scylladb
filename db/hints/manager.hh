@@ -183,6 +183,18 @@ public:
     /// \return TRUE if hints are allowed to be generated to \param ep.
     bool check_dc_for(endpoint_id ep) const noexcept;
 
+    /// Execute a given functor while having an endpoint's file update mutex locked.
+    ///
+    /// The caller must ensure that the passed endpoint_id is valid, i.e. this manager instance
+    /// really manages an endpoint manager corresponding to it. See @ref have_ep_manager.
+    ///
+    /// \param ep endpoint whose file update mutex should be locked
+    /// \param func functor to be executed
+    template <typename Func>
+    decltype(auto) with_file_update_mutex_for(endpoint_id ep, Func&& func) {
+        return _ep_managers.at(ep).with_file_update_mutex(std::forward<Func>(func));
+    }
+
     /// \brief Checks if hints are disabled for all endpoints
     /// \return TRUE if hints are disabled.
     bool is_disabled_for_all() const noexcept {
@@ -268,6 +280,8 @@ private:
     }
 
     hint_endpoint_manager& get_ep_manager(endpoint_id ep);
+
+public:
     bool have_ep_manager(endpoint_id ep) const noexcept;
 
 public:
