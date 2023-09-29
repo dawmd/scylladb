@@ -51,16 +51,17 @@ namespace db::hints {
 class directory_initializer {
 private:
     class impl;
-    ::std::shared_ptr<impl> _impl;
+    std::shared_ptr<impl> _impl;
 
+private:
     directory_initializer(::std::shared_ptr<impl> impl);
+public:
+    ~directory_initializer() noexcept = default;
 
 public:
     /// Creates an initializer that does nothing. Useful in tests.
     static directory_initializer make_dummy();
     static future<directory_initializer> make(utils::directories& dirs, sstring hints_directory);
-
-    ~directory_initializer() noexcept = default;
 
     future<> ensure_created_and_verified();
     future<> ensure_rebalanced();
