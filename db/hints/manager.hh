@@ -60,7 +60,8 @@ public:
     static directory_initializer make_dummy();
     static future<directory_initializer> make(utils::directories& dirs, sstring hints_directory);
 
-    ~directory_initializer();
+    ~directory_initializer() noexcept = default;
+
     future<> ensure_created_and_verified();
     future<> ensure_rebalanced();
 };
