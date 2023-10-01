@@ -6472,8 +6472,8 @@ future<> storage_proxy::wait_for_hint_sync_point(const db::hints::sync_point spo
 void storage_proxy::on_join_cluster(const gms::inet_address& endpoint) {};
 
 void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {
-    _hints_manager.drain_for(endpoint);
-    _hints_for_views_manager.drain_for(endpoint);
+    (void) _hints_manager.drain_for(endpoint);
+    (void) _hints_for_views_manager.drain_for(endpoint);
 }
 
 void storage_proxy::on_up(const gms::inet_address& endpoint) {};
