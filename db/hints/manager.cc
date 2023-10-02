@@ -241,7 +241,9 @@ void manager::allow_hints() {
 }
 
 void manager::forbid_hints() {
-    boost::for_each(_ep_managers, [] (auto& pair) { pair.second.forbid_hints(); });
+    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [] (hint_endpoint_manager& ep_man) {
+        ep_man.forbid_hints();
+    });
 }
 
 void manager::forbid_hints_for_eps_with_pending_hints() {
