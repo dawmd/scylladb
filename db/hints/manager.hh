@@ -213,6 +213,19 @@ public:
     /// \return A future that resolves when the operation is complete.
     future<> change_host_filter(host_filter filter);
 
+    void add_ep_with_pending_hints(endpoint_id key) {
+        _eps_with_pending_hints.insert(key);
+    }
+
+    void clear_eps_with_pending_hints() {
+        _eps_with_pending_hints.clear();
+        _eps_with_pending_hints.reserve(_ep_managers.size());
+    }
+
+    bool has_ep_with_pending_hints(endpoint_id key) const {
+        return _eps_with_pending_hints.contains(key);
+    }
+
     /// \brief Check if a hint may be generated to the give end point
     /// \param ep end point to check
     /// \return true if we should generate the hint to the given end point if it becomes unavailable
@@ -234,19 +247,6 @@ public:
     /// \return TRUE if hints are disabled.
     bool is_disabled_for_all() const noexcept {
         return _host_filter.is_disabled_for_all();
-    }
-
-    void add_ep_with_pending_hints(endpoint_id key) {
-        _eps_with_pending_hints.insert(key);
-    }
-
-    void clear_eps_with_pending_hints() {
-        _eps_with_pending_hints.clear();
-        _eps_with_pending_hints.reserve(_ep_managers.size());
-    }
-
-    bool has_ep_with_pending_hints(endpoint_id key) const {
-        return _eps_with_pending_hints.contains(key);
     }
 
     size_t ep_managers_size() const {
