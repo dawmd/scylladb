@@ -266,6 +266,18 @@ bool manager::can_hint_for(endpoint_id ep) const noexcept {
     return true;
 }
 
+bool manager::check_dc_for(endpoint_id ep) const noexcept {
+    try {
+        // If target's DC is not a "hintable" DCs - don't hint.
+        // If there is an end point manager then DC has already been checked and found to be ok.
+        return _host_filter.is_enabled_for_all() || have_ep_manager(ep) ||
+               _host_filter.can_hint_for(_proxy.get_token_metadata_ptr()->get_topology(), ep);
+    } catch (...) {
+        // if we failed to check the DC - block this hint
+        return false;
+    }
+}
+
 future<> manager::compute_hints_dir_device_id() {
     try {
         _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
@@ -462,18 +474,6 @@ future<> manager::change_host_filter(host_filter filter) {
             std::throw_with_nested(eptr);
         }
         throw;
-    }
-}
-
-bool manager::check_dc_for(endpoint_id ep) const noexcept {
-    try {
-        // If target's DC is not a "hintable" DCs - don't hint.
-        // If there is an end point manager then DC has already been checked and found to be ok.
-        return _host_filter.is_enabled_for_all() || have_ep_manager(ep) ||
-               _host_filter.can_hint_for(_proxy.get_token_metadata_ptr()->get_topology(), ep);
-    } catch (...) {
-        // if we failed to check the DC - block this hint
-        return false;
     }
 }
 
