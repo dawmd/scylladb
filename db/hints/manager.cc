@@ -410,6 +410,15 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
     }
 }
 
+bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
+    // There is no need to check the DC here because if there is an in-flight hint for this
+    // endpoint, then this means that its DC has already been checked and found to be ok.
+    return _stats.size_of_hints_in_progress > MAX_SIZE_OF_HINTS_IN_PROGRESS
+            && !utils::fb_utilities::is_me(ep)
+            && hints_in_progress_for(ep) > 0
+            && local_gossiper().get_endpoint_downtime(ep) <= _max_hint_window_us;
+}
+
 future<> manager::compute_hints_dir_device_id() {
     try {
         _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
@@ -458,15 +467,6 @@ hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep) {
 
 bool manager::have_ep_manager(endpoint_id ep) const noexcept {
     return _ep_managers.contains(ep);
-}
-
-bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
-    // There is no need to check the DC here because if there is an in-flight hint for this
-    // endpoint, then this means that its DC has already been checked and found to be ok.
-    return _stats.size_of_hints_in_progress > MAX_SIZE_OF_HINTS_IN_PROGRESS
-            && !utils::fb_utilities::is_me(ep)
-            && hints_in_progress_for(ep) > 0
-            && local_gossiper().get_endpoint_downtime(ep) <= _max_hint_window_us;
 }
 
 future<> manager::change_host_filter(host_filter filter) {
