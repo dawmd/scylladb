@@ -50,8 +50,6 @@
 #include <algorithm>
 #include <ranges>
 
-using namespace std::literals::chrono_literals;
-
 namespace db::hints {
 
 using namespace internal;
