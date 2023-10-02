@@ -204,14 +204,14 @@ public:
     /// \return TRUE if we are allowed to generate hint to the given end point but there are too many in-flight hints
     bool too_many_in_flight_hints_for(endpoint_id ep) const noexcept;
 
+    const host_filter& get_host_filter() const noexcept {
+        return _host_filter;
+    }
+
     /// \brief Changes the host_filter currently used, stopping and starting endpoint_managers relevant to the new host_filter.
     /// \param filter the new host_filter
     /// \return A future that resolves when the operation is complete.
     future<> change_host_filter(host_filter filter);
-
-    const host_filter& get_host_filter() const noexcept {
-        return _host_filter;
-    }
 
     /// \brief Check if a hint may be generated to the give end point
     /// \param ep end point to check
