@@ -301,6 +301,61 @@ bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const froze
     }
 }
 
+future<> manager::drain_for(endpoint_id endpoint) noexcept {
+    if (!started() || stopping() || draining_all()) {
+        co_return;
+    }
+
+    manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", endpoint);
+
+    const auto holder = seastar::gate::holder{_draining_eps_gate};
+    const auto sem_unit = co_await seastar::get_units(_drain_lock, 1);
+
+    // After an endpoint has been drained, we remove its directory with all of its contents.
+    auto drain_ep_manager = [] (hint_endpoint_manager& ep_man) -> future<> {
+        return ep_man.stop(drain::yes).finally([&] {
+            return ep_man.with_file_update_mutex([&ep_man] {
+                return remove_file(ep_man.hints_dir().native());
+            });
+        });
+    };
+
+    std::exception_ptr eptr = nullptr;
+
+    if (utils::fb_utilities::is_me(endpoint)) {
+        set_draining_all();
+        
+        try {
+            co_await coroutine::parallel_for_each(_ep_managers | boost::adaptors::map_values,
+                    [&drain_ep_manager] (hint_endpoint_manager& ep_man) {
+                return drain_ep_manager(ep_man);
+            });
+        } catch (...) {
+            eptr = std::current_exception();
+        }
+
+        _ep_managers.clear();
+    } else {
+        auto it = _ep_managers.find(endpoint);
+        if (it != _ep_managers.end()) {
+            try {
+                co_await drain_ep_manager(it->second);
+            } catch (...) {
+                eptr = std::current_exception();
+            }
+
+            // This never throws.
+            _ep_managers.erase(it);
+        }
+    }
+
+    if (eptr) {
+        manager_logger.error("Exception when draining {}: {}", endpoint, eptr);
+    }
+
+    manager_logger.trace("drain_for: finished draining {}", endpoint);
+}
+
 future<> manager::compute_hints_dir_device_id() {
     try {
         _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
@@ -475,61 +530,6 @@ future<> manager::change_host_filter(host_filter filter) {
         }
         throw;
     }
-}
-
-future<> manager::drain_for(endpoint_id endpoint) noexcept {
-    if (!started() || stopping() || draining_all()) {
-        co_return;
-    }
-
-    manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", endpoint);
-
-    const auto holder = seastar::gate::holder{_draining_eps_gate};
-    const auto sem_unit = co_await seastar::get_units(_drain_lock, 1);
-
-    // After an endpoint has been drained, we remove its directory with all of its contents.
-    auto drain_ep_manager = [] (hint_endpoint_manager& ep_man) -> future<> {
-        return ep_man.stop(drain::yes).finally([&] {
-            return ep_man.with_file_update_mutex([&ep_man] {
-                return remove_file(ep_man.hints_dir().native());
-            });
-        });
-    };
-
-    std::exception_ptr eptr = nullptr;
-
-    if (utils::fb_utilities::is_me(endpoint)) {
-        set_draining_all();
-        
-        try {
-            co_await coroutine::parallel_for_each(_ep_managers | boost::adaptors::map_values,
-                    [&drain_ep_manager] (hint_endpoint_manager& ep_man) {
-                return drain_ep_manager(ep_man);
-            });
-        } catch (...) {
-            eptr = std::current_exception();
-        }
-
-        _ep_managers.clear();
-    } else {
-        auto it = _ep_managers.find(endpoint);
-        if (it != _ep_managers.end()) {
-            try {
-                co_await drain_ep_manager(it->second);
-            } catch (...) {
-                eptr = std::current_exception();
-            }
-
-            // This never throws.
-            _ep_managers.erase(it);
-        }
-    }
-
-    if (eptr) {
-        manager_logger.error("Exception when draining {}: {}", endpoint, eptr);
-    }
-
-    manager_logger.trace("drain_for: finished draining {}", endpoint);
 }
 
 void manager::update_backlog(size_t backlog, size_t max_backlog) {
