@@ -482,16 +482,6 @@ future<> manager::change_host_filter(host_filter filter) {
     }
 }
 
-future<> manager::compute_hints_dir_device_id() {
-    try {
-        _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
-    } catch (...) {
-        manager_logger.warn("Failed to stat directory {} for device id: {}",
-                _hints_dir.native(), std::current_exception());
-        throw;
-    }
-}
-
 void manager::allow_hints() {
     std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [] (hint_endpoint_manager& ep_man) {
         ep_man.allow_hints();
@@ -514,6 +504,16 @@ void manager::forbid_hints_for_eps_with_pending_hints() {
             ep_man.allow_hints();
         }
     });
+}
+
+future<> manager::compute_hints_dir_device_id() {
+    try {
+        _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
+    } catch (...) {
+        manager_logger.warn("Failed to stat directory {} for device id: {}",
+                _hints_dir.native(), std::current_exception());
+        throw;
+    }
 }
 
 hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep) {
