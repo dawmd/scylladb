@@ -172,6 +172,17 @@ public:
     /// \brief Waits until hint replay reach replay positions described in `rps`.
     future<> wait_for_sync_point(abort_source& as, const sync_point::shard_rps& rps);
 
+    /// \brief Get the number of in-flight (to the disk) hints to a given end point.
+    /// \param ep End point identificator
+    /// \return Number of hints in-flight to \param ep.
+    uint64_t hints_in_progress_for(endpoint_id ep) const noexcept {
+        auto it = _ep_managers.find(ep);
+        if (it == _ep_managers.end()) {
+            return 0;
+        }
+        return it->second.hints_in_progress();
+    }
+
     /// \brief Changes the host_filter currently used, stopping and starting endpoint_managers relevant to the new host_filter.
     /// \param filter the new host_filter
     /// \return A future that resolves when the operation is complete.
@@ -223,17 +234,6 @@ public:
     /// \return Size of mutations of hints in-flight (to the disk) at the moment.
     uint64_t size_of_hints_in_progress() const noexcept {
         return _stats.size_of_hints_in_progress;
-    }
-
-    /// \brief Get the number of in-flight (to the disk) hints to a given end point.
-    /// \param ep End point identificator
-    /// \return Number of hints in-flight to \param ep.
-    uint64_t hints_in_progress_for(endpoint_id ep) const noexcept {
-        auto it = _ep_managers.find(ep);
-        if (it == _ep_managers.end()) {
-            return 0;
-        }
-        return it->second.hints_in_progress();
     }
 
     void add_ep_with_pending_hints(endpoint_id key) {
