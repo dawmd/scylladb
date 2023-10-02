@@ -239,6 +239,8 @@ public:
     void allow_replaying() noexcept {
         _state.set(state::replay_allowed);
     }
+    
+    bool have_ep_manager(endpoint_id ep) const noexcept;
 
     /// \brief Check if a hint may be generated to the give end point
     /// \param ep end point to check
@@ -291,7 +293,6 @@ private:
     hint_endpoint_manager& get_ep_manager(endpoint_id ep);
 
 public:
-    bool have_ep_manager(endpoint_id ep) const noexcept;
 
     void update_backlog(size_t backlog, size_t max_backlog);
 
