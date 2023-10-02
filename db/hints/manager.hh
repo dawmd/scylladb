@@ -33,7 +33,6 @@
 #include <chrono>
 #include <span>
 #include <unordered_map>
-#include <vector>
 
 class fragmented_temporary_buffer;
 
