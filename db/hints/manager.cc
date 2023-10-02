@@ -419,56 +419,6 @@ bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
             && local_gossiper().get_endpoint_downtime(ep) <= _max_hint_window_us;
 }
 
-future<> manager::compute_hints_dir_device_id() {
-    try {
-        _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
-    } catch (...) {
-        manager_logger.warn("Failed to stat directory {} for device id: {}",
-                _hints_dir.native(), std::current_exception());
-        throw;
-    }
-}
-
-void manager::allow_hints() {
-    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [] (hint_endpoint_manager& ep_man) {
-        ep_man.allow_hints();
-    });
-}
-
-void manager::forbid_hints() {
-    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [] (hint_endpoint_manager& ep_man) {
-        ep_man.forbid_hints();
-    });
-}
-
-void manager::forbid_hints_for_eps_with_pending_hints() {
-    manager_logger.trace("space_watchdog: Going to block hints to: {}", _eps_with_pending_hints);
-
-    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [this] (hint_endpoint_manager& ep_man) {
-        if (has_ep_with_pending_hints(ep_man.end_point_key())) {
-            ep_man.forbid_hints();
-        } else {
-            ep_man.allow_hints();
-        }
-    });
-}
-
-hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep) {
-    auto [it, emplaced] = _ep_managers.try_emplace(ep, ep, *this);
-    hint_endpoint_manager& ep_man = it->second;
-
-    if (emplaced) {
-        manager_logger.trace("Created an endpoint manager for {}", ep);
-        ep_man.start();    
-    }
-
-    return ep_man;
-}
-
-bool manager::have_ep_manager(endpoint_id ep) const noexcept {
-    return _ep_managers.contains(ep);
-}
-
 future<> manager::change_host_filter(host_filter filter) {
     if (!started()) {
         co_await coroutine::return_exception(
@@ -530,6 +480,56 @@ future<> manager::change_host_filter(host_filter filter) {
         }
         throw;
     }
+}
+
+future<> manager::compute_hints_dir_device_id() {
+    try {
+        _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
+    } catch (...) {
+        manager_logger.warn("Failed to stat directory {} for device id: {}",
+                _hints_dir.native(), std::current_exception());
+        throw;
+    }
+}
+
+void manager::allow_hints() {
+    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [] (hint_endpoint_manager& ep_man) {
+        ep_man.allow_hints();
+    });
+}
+
+void manager::forbid_hints() {
+    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [] (hint_endpoint_manager& ep_man) {
+        ep_man.forbid_hints();
+    });
+}
+
+void manager::forbid_hints_for_eps_with_pending_hints() {
+    manager_logger.trace("space_watchdog: Going to block hints to: {}", _eps_with_pending_hints);
+
+    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [this] (hint_endpoint_manager& ep_man) {
+        if (has_ep_with_pending_hints(ep_man.end_point_key())) {
+            ep_man.forbid_hints();
+        } else {
+            ep_man.allow_hints();
+        }
+    });
+}
+
+hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep) {
+    auto [it, emplaced] = _ep_managers.try_emplace(ep, ep, *this);
+    hint_endpoint_manager& ep_man = it->second;
+
+    if (emplaced) {
+        manager_logger.trace("Created an endpoint manager for {}", ep);
+        ep_man.start();    
+    }
+
+    return ep_man;
+}
+
+bool manager::have_ep_manager(endpoint_id ep) const noexcept {
+    return _ep_managers.contains(ep);
 }
 
 void manager::update_backlog(size_t backlog, size_t max_backlog) {
