@@ -155,6 +155,17 @@ public:
 
     bool store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept;
 
+    /// \brief Initiate the draining when we detect that the node has left the cluster.
+    ///
+    /// If the node that has left is the current node - drains all pending hints to all nodes.
+    /// Otherwise drains hints to the node that has left.
+    ///
+    /// In both cases - removes the corresponding hints' directories after all hints have been drained and erases the
+    /// corresponding hint_endpoint_manager objects.
+    ///
+    /// \param endpoint node that left the cluster
+    future<> drain_for(endpoint_id endpoint) noexcept;
+
     /// \brief Changes the host_filter currently used, stopping and starting endpoint_managers relevant to the new host_filter.
     /// \param filter the new host_filter
     /// \return A future that resolves when the operation is complete.
@@ -281,18 +292,6 @@ private:
 
 public:
     bool have_ep_manager(endpoint_id ep) const noexcept;
-
-public:
-    /// \brief Initiate the draining when we detect that the node has left the cluster.
-    ///
-    /// If the node that has left is the current node - drains all pending hints to all nodes.
-    /// Otherwise drains hints to the node that has left.
-    ///
-    /// In both cases - removes the corresponding hints' directories after all hints have been drained and erases the
-    /// corresponding hint_endpoint_manager objects.
-    ///
-    /// \param endpoint node that left the cluster
-    future<> drain_for(endpoint_id endpoint) noexcept;
 
     void update_backlog(size_t backlog, size_t max_backlog);
 
