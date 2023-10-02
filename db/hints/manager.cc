@@ -228,6 +228,44 @@ future<> manager::stop() {
     });
 }
 
+bool manager::can_hint_for(endpoint_id ep) const noexcept {
+    if (utils::fb_utilities::is_me(ep)) {
+        return false;
+    }
+
+    auto it = _ep_managers.find(ep);
+    if (it != _ep_managers.end() && (it->second.stopping() || !it->second.can_hint())) {
+        return false;
+    }
+
+    // Don't allow more than one in-flight (to the store) hint to a specific destination when
+    // the total size of in-flight hints is more than the maximum allowed value.
+    //
+    // In the worst case there's going to be (_max_size_of_hints_in_progress + N - 1) in-flight
+    // hints where N is the total number nodes in the cluster.
+    const auto hipf = hints_in_progress_for(ep);
+    if (_stats.size_of_hints_in_progress > MAX_SIZE_OF_HINTS_IN_PROGRESS && hipf > 0) {
+        manager_logger.trace("size_of_hints_in_progress {} hints_in_progress_for({}) {}",
+                _stats.size_of_hints_in_progress, ep, hipf);
+        return false;
+    }
+
+    // Check that the destination DC is "hintable".
+    if (!check_dc_for(ep)) {
+        manager_logger.trace("{}'s DC is not hintable", ep);
+        return false;
+    }
+
+    // Check if the endpoint has been down for too long.
+    const auto ep_downtime = local_gossiper().get_endpoint_downtime(ep);
+    if (ep_downtime > _max_hint_window_us) {
+        manager_logger.trace("{} has been down for {}, not hinting", ep, ep_downtime);
+        return false;
+    }
+
+    return true;
+}
+
 future<> manager::compute_hints_dir_device_id() {
     try {
         _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
@@ -362,44 +400,6 @@ bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
             && !utils::fb_utilities::is_me(ep)
             && hints_in_progress_for(ep) > 0
             && local_gossiper().get_endpoint_downtime(ep) <= _max_hint_window_us;
-}
-
-bool manager::can_hint_for(endpoint_id ep) const noexcept {
-    if (utils::fb_utilities::is_me(ep)) {
-        return false;
-    }
-
-    auto it = _ep_managers.find(ep);
-    if (it != _ep_managers.end() && (it->second.stopping() || !it->second.can_hint())) {
-        return false;
-    }
-
-    // Don't allow more than one in-flight (to the store) hint to a specific destination when
-    // the total size of in-flight hints is more than the maximum allowed value.
-    //
-    // In the worst case there's going to be (_max_size_of_hints_in_progress + N - 1) in-flight
-    // hints where N is the total number nodes in the cluster.
-    const auto hipf = hints_in_progress_for(ep);
-    if (_stats.size_of_hints_in_progress > MAX_SIZE_OF_HINTS_IN_PROGRESS && hipf > 0) {
-        manager_logger.trace("size_of_hints_in_progress {} hints_in_progress_for({}) {}",
-                _stats.size_of_hints_in_progress, ep, hipf);
-        return false;
-    }
-
-    // Check that the destination DC is "hintable".
-    if (!check_dc_for(ep)) {
-        manager_logger.trace("{}'s DC is not hintable", ep);
-        return false;
-    }
-
-    // Check if the endpoint has been down for too long.
-    const auto ep_downtime = local_gossiper().get_endpoint_downtime(ep);
-    if (ep_downtime > _max_hint_window_us) {
-        manager_logger.trace("{} has been down for {}, not hinting", ep, ep_downtime);
-        return false;
-    }
-
-    return true;
 }
 
 future<> manager::change_host_filter(host_filter filter) {
