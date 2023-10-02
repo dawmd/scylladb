@@ -356,6 +356,20 @@ future<> manager::drain_for(endpoint_id endpoint) noexcept {
     manager_logger.trace("drain_for: finished draining {}", endpoint);
 }
 
+sync_point::shard_rps manager::calculate_current_sync_point(std::span<const endpoint_id> target_eps) const {
+    sync_point::shard_rps rps;
+
+    for (auto addr : target_eps) {
+        auto it = _ep_managers.find(addr);
+        if (it != _ep_managers.end()) {
+            const hint_endpoint_manager& ep_man = it->second;
+            rps[ep_man.end_point_key()] = ep_man.last_written_replay_position();
+        }
+    }
+
+    return rps;
+}
+
 future<> manager::compute_hints_dir_device_id() {
     try {
         _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
@@ -388,20 +402,6 @@ void manager::forbid_hints_for_eps_with_pending_hints() {
             ep_man.allow_hints();
         }
     });
-}
-
-sync_point::shard_rps manager::calculate_current_sync_point(std::span<const endpoint_id> target_eps) const {
-    sync_point::shard_rps rps;
-
-    for (auto addr : target_eps) {
-        auto it = _ep_managers.find(addr);
-        if (it != _ep_managers.end()) {
-            const hint_endpoint_manager& ep_man = it->second;
-            rps[ep_man.end_point_key()] = ep_man.last_written_replay_position();
-        }
-    }
-
-    return rps;
 }
 
 future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_rps& rps) {
