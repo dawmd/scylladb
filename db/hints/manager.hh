@@ -226,6 +226,20 @@ public:
         return _eps_with_pending_hints.contains(key);
     }
 
+    /// \brief Checks if hints are disabled for all endpoints
+    /// \return TRUE if hints are disabled.
+    bool is_disabled_for_all() const noexcept {
+        return _host_filter.is_disabled_for_all();
+    }
+
+    void allow_hints();
+    void forbid_hints();
+    void forbid_hints_for_eps_with_pending_hints();
+
+    void allow_replaying() noexcept {
+        _state.set(state::replay_allowed);
+    }
+
     /// \brief Check if a hint may be generated to the give end point
     /// \param ep end point to check
     /// \return true if we should generate the hint to the given end point if it becomes unavailable
@@ -243,12 +257,6 @@ public:
         return _ep_managers.at(ep).with_file_update_mutex(std::forward<Func>(func));
     }
 
-    /// \brief Checks if hints are disabled for all endpoints
-    /// \return TRUE if hints are disabled.
-    bool is_disabled_for_all() const noexcept {
-        return _host_filter.is_disabled_for_all();
-    }
-
     size_t ep_managers_size() const {
         return _ep_managers.size();
     }
@@ -259,14 +267,6 @@ public:
 
     dev_t hints_dir_device_id() const {
         return _hints_dir_device_id;
-    }
-
-    void allow_hints();
-    void forbid_hints();
-    void forbid_hints_for_eps_with_pending_hints();
-
-    void allow_replaying() noexcept {
-        _state.set(state::replay_allowed);
     }
 
 private:
