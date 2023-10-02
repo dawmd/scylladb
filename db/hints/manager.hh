@@ -144,8 +144,15 @@ public:
 
 public:
     void register_metrics(const sstring& group_name);
+
     future<> start(shared_ptr<gms::gossiper> gossiper_ptr);
     future<> stop();
+
+    /// \brief Check if DC \param ep belongs to is "hintable"
+    /// \param ep End point identificator
+    /// \return TRUE if hints are allowed to be generated to \param ep.
+    bool check_dc_for(endpoint_id ep) const noexcept;
+
     bool store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept;
 
     /// \brief Changes the host_filter currently used, stopping and starting endpoint_managers relevant to the new host_filter.
@@ -177,11 +184,6 @@ public:
     /// \param ep end point to check
     /// \return TRUE if we are allowed to generate hint to the given end point but there are too many in-flight hints
     bool too_many_in_flight_hints_for(endpoint_id ep) const noexcept;
-
-    /// \brief Check if DC \param ep belongs to is "hintable"
-    /// \param ep End point identificator
-    /// \return TRUE if hints are allowed to be generated to \param ep.
-    bool check_dc_for(endpoint_id ep) const noexcept;
 
     /// Execute a given functor while having an endpoint's file update mutex locked.
     ///
