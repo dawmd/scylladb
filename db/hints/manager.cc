@@ -370,40 +370,6 @@ sync_point::shard_rps manager::calculate_current_sync_point(std::span<const endp
     return rps;
 }
 
-future<> manager::compute_hints_dir_device_id() {
-    try {
-        _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
-    } catch (...) {
-        manager_logger.warn("Failed to stat directory {} for device id: {}",
-                _hints_dir.native(), std::current_exception());
-        throw;
-    }
-}
-
-void manager::allow_hints() {
-    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [] (hint_endpoint_manager& ep_man) {
-        ep_man.allow_hints();
-    });
-}
-
-void manager::forbid_hints() {
-    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [] (hint_endpoint_manager& ep_man) {
-        ep_man.forbid_hints();
-    });
-}
-
-void manager::forbid_hints_for_eps_with_pending_hints() {
-    manager_logger.trace("space_watchdog: Going to block hints to: {}", _eps_with_pending_hints);
-
-    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [this] (hint_endpoint_manager& ep_man) {
-        if (has_ep_with_pending_hints(ep_man.end_point_key())) {
-            ep_man.forbid_hints();
-        } else {
-            ep_man.allow_hints();
-        }
-    });
-}
-
 future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_rps& rps) {
     abort_source local_as;
 
@@ -442,6 +408,40 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
     if (was_aborted) {
         co_await coroutine::return_exception(abort_requested_exception{});
     }
+}
+
+future<> manager::compute_hints_dir_device_id() {
+    try {
+        _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
+    } catch (...) {
+        manager_logger.warn("Failed to stat directory {} for device id: {}",
+                _hints_dir.native(), std::current_exception());
+        throw;
+    }
+}
+
+void manager::allow_hints() {
+    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [] (hint_endpoint_manager& ep_man) {
+        ep_man.allow_hints();
+    });
+}
+
+void manager::forbid_hints() {
+    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [] (hint_endpoint_manager& ep_man) {
+        ep_man.forbid_hints();
+    });
+}
+
+void manager::forbid_hints_for_eps_with_pending_hints() {
+    manager_logger.trace("space_watchdog: Going to block hints to: {}", _eps_with_pending_hints);
+
+    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [this] (hint_endpoint_manager& ep_man) {
+        if (has_ep_with_pending_hints(ep_man.end_point_key())) {
+            ep_man.forbid_hints();
+        } else {
+            ep_man.allow_hints();
+        }
+    });
 }
 
 hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep) {
