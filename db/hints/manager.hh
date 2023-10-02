@@ -242,10 +242,6 @@ public:
         return _hints_dir_device_id;
     }
 
-    seastar::named_semaphore& drain_lock() noexcept {
-        return _drain_lock;
-    }
-
     void allow_hints();
     void forbid_hints();
     void forbid_hints_for_eps_with_pending_hints();
