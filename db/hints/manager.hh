@@ -148,6 +148,11 @@ public:
     future<> start(shared_ptr<gms::gossiper> gossiper_ptr);
     future<> stop();
 
+    /// \brief Check if a hint may be generated to the give end point
+    /// \param ep end point to check
+    /// \return true if we should generate the hint to the given end point if it becomes unavailable
+    bool can_hint_for(endpoint_id ep) const noexcept;
+
     /// \brief Check if DC \param ep belongs to is "hintable"
     /// \param ep End point identificator
     /// \return TRUE if hints are allowed to be generated to \param ep.
@@ -241,13 +246,8 @@ public:
     }
 
     bool have_ep_manager(endpoint_id ep) const noexcept;
-    
-    void update_backlog(size_t backlog, size_t max_backlog);
 
-    /// \brief Check if a hint may be generated to the give end point
-    /// \param ep end point to check
-    /// \return true if we should generate the hint to the given end point if it becomes unavailable
-    bool can_hint_for(endpoint_id ep) const noexcept;
+    void update_backlog(size_t backlog, size_t max_backlog);
 
     /// Execute a given functor while having an endpoint's file update mutex locked.
     ///
