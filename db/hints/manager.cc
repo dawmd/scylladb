@@ -48,6 +48,7 @@
 // STD.
 #include <algorithm>
 #include <exception>
+#include <ranges>
 
 namespace db::hints {
 
