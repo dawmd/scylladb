@@ -248,7 +248,7 @@ void manager::forbid_hints() {
 
 void manager::forbid_hints_for_eps_with_pending_hints() {
     manager_logger.trace("space_watchdog: Going to block hints to: {}", _eps_with_pending_hints);
-    
+
     std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [this] (hint_endpoint_manager& ep_man) {
         if (has_ep_with_pending_hints(ep_man.end_point_key())) {
             ep_man.forbid_hints();
@@ -258,8 +258,9 @@ void manager::forbid_hints_for_eps_with_pending_hints() {
     });
 }
 
-sync_point::shard_rps manager::calculate_current_sync_point(const std::vector<endpoint_id>& target_eps) const {
+sync_point::shard_rps manager::calculate_current_sync_point(std::span<const endpoint_id> target_eps) const {
     sync_point::shard_rps rps;
+
     for (auto addr : target_eps) {
         auto it = _ep_managers.find(addr);
         if (it != _ep_managers.end()) {
@@ -267,6 +268,7 @@ sync_point::shard_rps manager::calculate_current_sync_point(const std::vector<en
             rps[ep_man.end_point_key()] = ep_man.last_written_replay_position();
         }
     }
+
     return rps;
 }
 
