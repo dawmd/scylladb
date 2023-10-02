@@ -46,6 +46,7 @@
 
 // STD.
 #include <algorithm>
+#include <ranges>
 
 using namespace std::literals::chrono_literals;
 
@@ -234,7 +235,9 @@ future<> manager::compute_hints_dir_device_id() {
 }
 
 void manager::allow_hints() {
-    boost::for_each(_ep_managers, [] (auto& pair) { pair.second.allow_hints(); });
+    std::ranges::for_each(_ep_managers | boost::adaptors::map_values, [] (hint_endpoint_manager& ep_man) {
+        ep_man.allow_hints();
+    });
 }
 
 void manager::forbid_hints() {
