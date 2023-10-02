@@ -169,6 +169,9 @@ public:
     /// \brief Returns a set of replay positions for hint queues towards endpoints from the `target_eps`.
     sync_point::shard_rps calculate_current_sync_point(std::span<const endpoint_id> target_eps) const;
 
+    /// \brief Waits until hint replay reach replay positions described in `rps`.
+    future<> wait_for_sync_point(abort_source& as, const sync_point::shard_rps& rps);
+
     /// \brief Changes the host_filter currently used, stopping and starting endpoint_managers relevant to the new host_filter.
     /// \param filter the new host_filter
     /// \return A future that resolves when the operation is complete.
@@ -265,9 +268,6 @@ public:
     void allow_replaying() noexcept {
         _state.set(state::replay_allowed);
     }
-
-    /// \brief Waits until hint replay reach replay positions described in `rps`.
-    future<> wait_for_sync_point(abort_source& as, const sync_point::shard_rps& rps);
 
 private:
     future<> compute_hints_dir_device_id();
