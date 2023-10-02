@@ -278,6 +278,29 @@ bool manager::check_dc_for(endpoint_id ep) const noexcept {
     }
 }
 
+bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm,
+        tracing::trace_state_ptr tr_state) noexcept
+{
+    if (stopping() || draining_all() || !started() || !can_hint_for(ep)) {
+        manager_logger.trace("Can't store a hint to {}", ep);
+        ++_stats.dropped;
+        return false;
+    }
+
+    try {
+        manager_logger.trace("Going to store a hint to {}", ep);
+        tracing::trace(tr_state, "Going to store a hint to {}", ep);
+
+        return get_ep_manager(ep).store_hint(std::move(s), std::move(fm), tr_state);
+    } catch (...) {
+        manager_logger.trace("Failed to store a hint to {}: {}", ep, std::current_exception());
+        tracing::trace(tr_state, "Failed to store a hint to {}: {}", ep, std::current_exception());
+
+        ++_stats.errors;
+        return false;
+    }
+}
+
 future<> manager::compute_hints_dir_device_id() {
     try {
         _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
@@ -380,29 +403,6 @@ hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep) {
 
 bool manager::have_ep_manager(endpoint_id ep) const noexcept {
     return _ep_managers.contains(ep);
-}
-
-bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm,
-        tracing::trace_state_ptr tr_state) noexcept
-{
-    if (stopping() || draining_all() || !started() || !can_hint_for(ep)) {
-        manager_logger.trace("Can't store a hint to {}", ep);
-        ++_stats.dropped;
-        return false;
-    }
-
-    try {
-        manager_logger.trace("Going to store a hint to {}", ep);
-        tracing::trace(tr_state, "Going to store a hint to {}", ep);
-
-        return get_ep_manager(ep).store_hint(std::move(s), std::move(fm), tr_state);
-    } catch (...) {
-        manager_logger.trace("Failed to store a hint to {}: {}", ep, std::current_exception());
-        tracing::trace(tr_state, "Failed to store a hint to {}: {}", ep, std::current_exception());
-
-        ++_stats.errors;
-        return false;
-    }
 }
 
 bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
