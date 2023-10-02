@@ -183,6 +183,11 @@ public:
         return it->second.hints_in_progress();
     }
 
+    /// \return Size of mutations of hints in-flight (to the disk) at the moment.
+    uint64_t size_of_hints_in_progress() const noexcept {
+        return _stats.size_of_hints_in_progress;
+    }
+
     /// \brief Changes the host_filter currently used, stopping and starting endpoint_managers relevant to the new host_filter.
     /// \param filter the new host_filter
     /// \return A future that resolves when the operation is complete.
@@ -229,11 +234,6 @@ public:
     /// \return TRUE if hints are disabled.
     bool is_disabled_for_all() const noexcept {
         return _host_filter.is_disabled_for_all();
-    }
-
-    /// \return Size of mutations of hints in-flight (to the disk) at the moment.
-    uint64_t size_of_hints_in_progress() const noexcept {
-        return _stats.size_of_hints_in_progress;
     }
 
     void add_ep_with_pending_hints(endpoint_id key) {
