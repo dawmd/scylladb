@@ -506,6 +506,10 @@ void manager::forbid_hints_for_eps_with_pending_hints() {
     });
 }
 
+bool manager::have_ep_manager(endpoint_id ep) const noexcept {
+    return _ep_managers.contains(ep);
+}
+
 future<> manager::compute_hints_dir_device_id() {
     try {
         _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
@@ -526,10 +530,6 @@ hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep) {
     }
 
     return ep_man;
-}
-
-bool manager::have_ep_manager(endpoint_id ep) const noexcept {
-    return _ep_managers.contains(ep);
 }
 
 void manager::update_backlog(size_t backlog, size_t max_backlog) {
