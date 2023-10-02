@@ -10,6 +10,7 @@
 #include "db/hints/manager.hh"
 
 // Seastar features.
+#include <exception>
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/future.hh>
@@ -223,12 +224,13 @@ future<> manager::stop() {
 }
 
 future<> manager::compute_hints_dir_device_id() {
-    return get_device_id(_hints_dir.native()).then([this](dev_t device_id) {
-        _hints_dir_device_id = device_id;
-    }).handle_exception([this](auto ep) {
-        manager_logger.warn("Failed to stat directory {} for device id: {}", _hints_dir.native(), ep);
-        return make_exception_future<>(ep);
-    });
+    try {
+        _hints_dir_device_id = co_await get_device_id(_hints_dir.native());
+    } catch (...) {
+        manager_logger.warn("Failed to stat directory {} for device id: {}",
+                _hints_dir.native(), std::current_exception());
+        throw;
+    }
 }
 
 void manager::allow_hints() {
