@@ -38,7 +38,7 @@ SEASTAR_THREAD_TEST_CASE(test_add_node) {
         .local_dc_rack = endpoint_dc_rack::default_location,
     };
 
-    auto topo = topology(cfg);
+    auto topo = topology(cfg, topology::key_kind::inet_address);
 
     set_abort_on_internal_error(false);
     auto reset_on_internal_abort = seastar::defer([] {
@@ -76,7 +76,7 @@ SEASTAR_THREAD_TEST_CASE(test_moving) {
         .local_dc_rack = endpoint_dc_rack::default_location,
     };
 
-    auto topo = topology(cfg);
+    auto topo = topology(cfg, topology::key_kind::inet_address);
 
     topo.add_node(id1, ep1, endpoint_dc_rack::default_location, node::state::normal);
 
@@ -106,7 +106,7 @@ SEASTAR_THREAD_TEST_CASE(test_update_node) {
         .local_dc_rack = endpoint_dc_rack::default_location,
     };
 
-    auto topo = topology(cfg);
+    auto topo = topology(cfg, topology::key_kind::inet_address);
 
     set_abort_on_internal_error(false);
     auto reset_on_internal_abort = seastar::defer([] {
@@ -199,7 +199,7 @@ SEASTAR_THREAD_TEST_CASE(test_remove_endpoint) {
         .local_dc_rack = dc_rack1
     };
 
-    auto topo = topology(cfg);
+    auto topo = topology(cfg, topology::key_kind::inet_address);
 
     topo.add_node(id1, ep1, dc_rack1, node::state::normal);
     topo.add_node(id2, ep2, dc_rack2, node::state::normal);
