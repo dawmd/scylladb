@@ -6488,9 +6488,16 @@ future<> storage_proxy::wait_for_hint_sync_point(const db::hints::sync_point spo
 void storage_proxy::on_join_cluster(const gms::inet_address& endpoint) {};
 
 void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {
-    // Discarding these futures is safe. They're awaited by db::hints::manager::stop().
-    (void) _hints_manager.drain_for(endpoint);
-    (void) _hints_for_views_manager.drain_for(endpoint);
+    const auto tmptr = get_token_metadata_ptr();
+    const auto my_ep = fbu::get_broadcast_address();//tmptr->get_topology().this_node()->endpoint();
+    if (my_ep == endpoint) {
+        _hints_manager.drain_for(endpoint).get();
+        _hints_for_views_manager.drain_for(endpoint).get();
+    } else {
+        // Discarding these futures is safe. They're awaited by db::hints::manager::stop().
+        (void) _hints_manager.drain_for(endpoint);
+        (void) _hints_for_views_manager.drain_for(endpoint);
+    }
 }
 
 void storage_proxy::on_up(const gms::inet_address& endpoint) {};
