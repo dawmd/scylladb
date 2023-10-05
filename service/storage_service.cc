@@ -3709,7 +3709,12 @@ future<> storage_service::on_remove(gms::inet_address endpoint, gms::permit_id p
     slogger.debug("endpoint={} on_remove: permit_id={}", endpoint, pid);
     auto tmlock = co_await get_token_metadata_lock();
     auto tmptr = co_await get_mutable_token_metadata_ptr();
-    tmptr->remove_endpoint(endpoint);
+    const auto my_ep = tmptr->get_topology().this_node()->endpoint();
+    if (my_ep == endpoint) {
+        tmptr->remove_endpoint_without_topo(endpoint);
+    } else {
+        tmptr->remove_endpoint(endpoint);
+    }
     co_await update_topology_change_info(tmptr, ::format("on_remove {}", endpoint));
     co_await replicate_to_all_cores(std::move(tmptr));
 }
@@ -4556,6 +4561,18 @@ future<> storage_service::decommission() {
 
                     // Step 8: Finish token movement
                     ctl.done(node_ops_cmd::decommission_done).get();
+
+                    // What if we fail between leave ring and here? Or even if this lambda fails?
+                    // We'll end up with a weird state of token metadata because the endpoint will
+                    // be in the topology, but it won't have any other information.
+                    //
+                    // mutate_token_metadata is apparently atomic, but it can fail, I guess.
+                    // Think what to do with that.
+                    ss.mutate_token_metadata([&ss] (mutable_token_metadata_ptr tmptr) {
+                        auto endpoint = ss.get_broadcast_address();
+                        tmptr->remove_endpoint_from_topo(endpoint);
+                        return ss.update_topology_change_info(std::move(tmptr), ::format("leave_ring {}", endpoint));
+                    }).get();
                 } catch (...) {
                     ctl.abort_on_error(node_ops_cmd::decommission_abort, std::current_exception()).get();
                 }
@@ -5612,7 +5629,7 @@ future<> storage_service::leave_ring() {
     co_await _sys_ks.local().set_bootstrap_state(db::system_keyspace::bootstrap_state::NEEDS_BOOTSTRAP);
     co_await mutate_token_metadata([this] (mutable_token_metadata_ptr tmptr) {
         auto endpoint = get_broadcast_address();
-        tmptr->remove_endpoint(endpoint);
+        tmptr->remove_endpoint_without_topo(endpoint);
         return update_topology_change_info(std::move(tmptr), ::format("leave_ring {}", endpoint));
     });
 
