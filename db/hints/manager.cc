@@ -265,6 +265,7 @@ sync_point::shard_rps manager::calculate_current_sync_point(std::span<const endp
     sync_point::shard_rps rps;
 
     for (auto addr : target_eps) {
+        check_ep(__func__, addr);
         auto it = _ep_managers.find(addr);
         if (it != _ep_managers.end()) {
             const hint_endpoint_manager& ep_man = it->second;
@@ -354,6 +355,7 @@ bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const froze
         ++_stats.dropped;
         return false;
     }
+    check_ep(__func__, ep);
 
     try {
         manager_logger.trace("Going to store a hint to {}", ep);
@@ -498,6 +500,7 @@ future<> manager::drain_for(endpoint_id endpoint) noexcept {
     if (!started() || stopping() || draining_all()) {
         co_return;
     }
+    check_ep(__func__, endpoint);
 
     check_ep(__func__, endpoint);
 
@@ -567,9 +570,10 @@ future<> manager::with_file_update_mutex_for(endpoint_id ep, noncopyable_functio
 }
 
 void manager::check_ep(std::string_view func, endpoint_id ep) const {
-    manager_logger.info("[{}]: Checking ep: {}", func, ep);
-    auto tmptr = _proxy.get_token_metadata_ptr();
+    manager_logger.warn("check_ep at({}, {})", func, ep);
+    const auto tmptr = _proxy.get_token_metadata_ptr();
     assert(tmptr->get_host_id_if_known(ep).has_value());
+    assert(tmptr->get_topology().this_node() != nullptr);
 }
 
 } // namespace db::hints

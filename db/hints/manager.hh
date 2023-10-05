@@ -300,10 +300,12 @@ public:
         _state.set(state::stopping);
     }
 
+public:
     bool started() const noexcept {
         return _state.contains(state::started);
     }
 
+private:
     void set_started() noexcept {
         _state.set(state::started);
     }
