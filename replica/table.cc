@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#include <exception>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/maybe_yield.hh>
@@ -59,6 +60,15 @@
 #include "readers/multi_range.hh"
 #include "readers/combined.hh"
 #include "readers/compacting.hh"
+
+#define DEBUG_INIT                                  \
+    static unsigned STATIC_DEBUG_COUNTER = 0;       \
+    unsigned DEBUG_COUNTER = STATIC_DEBUG_COUNTER++
+#define DEBUG_LOGGER tlogger.warn
+#define DEBUG_SFLOG(func, fmt, ...) DEBUG_LOGGER("DEBUGGING[{}: {}]: " fmt, func, DEBUG_COUNTER __VA_OPT__(,) __VA_ARGS__)
+#define DEBUG_SLOG(fmt, ...) DEBUG_SFLOG(__func__, fmt __VA_OPT__(,) __VA_ARGS__)
+#define DEBUG_FLOG(func, fmt, ...) DEBUG_LOGGER("DEBUGGING[{}, {}: {}]: " fmt, func, (void*)this, DEBUG_COUNTER __VA_OPT__(,) __VA_ARGS__)
+#define DEBUG_LOG(fmt, ...) DEBUG_FLOG(__func__, fmt __VA_OPT__(,) __VA_ARGS__)
 
 namespace replica {
 
@@ -157,6 +167,8 @@ table::find_partition(schema_ptr s, reader_permit permit, const dht::decorated_k
 
 future<table::const_row_ptr>
 table::find_row(schema_ptr s, reader_permit permit, const dht::decorated_key& partition_key, clustering_key clustering_key) const {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     return find_partition(s, std::move(permit), partition_key).then([clustering_key = std::move(clustering_key), s] (const_mutation_partition_ptr p) {
         if (!p) {
             return make_ready_future<const_row_ptr>();
@@ -168,6 +180,9 @@ table::find_row(schema_ptr s, reader_permit permit, const dht::decorated_key& pa
         } else {
             return make_ready_future<const_row_ptr>();
         }
+    }).then([this, DEBUG_COUNTER] (auto&& x) {
+        DEBUG_FLOG("table::find_row", "entering the function");
+        return std::forward<decltype(x)>(x);
     });
 }
 
@@ -658,13 +673,18 @@ const compaction_group_vector& table::compaction_groups() const noexcept {
 }
 
 future<> table::parallel_foreach_compaction_group(std::function<future<>(compaction_group&)> action) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     // TODO: place a barrier here when we allow dynamic groups.
     co_await coroutine::parallel_for_each(compaction_groups(), [&] (const compaction_group_ptr& cg) {
         return action(*cg);
     });
+    DEBUG_LOG("leaving the function");
 }
 
 future<sstables::sstable_list> table::take_storage_snapshot(dht::token_range tr) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     sstables::sstable_list ret;
 
     for (auto cg_id : compaction_group_ids_for_token_range(tr)) {
@@ -685,6 +705,7 @@ future<sstables::sstable_list> table::take_storage_snapshot(dht::token_range tr)
         });
     }
 
+    DEBUG_LOG("leaving the function");
     co_return ret;
 }
 
@@ -696,8 +717,10 @@ void table::update_stats_for_new_sstable(const sstables::shared_sstable& sst) no
 
 future<>
 table::do_add_sstable_and_update_cache(sstables::shared_sstable sst, sstables::offstrategy offstrategy) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     auto permit = co_await seastar::get_units(_sstable_set_mutation_sem, 1);
-    co_return co_await get_row_cache().invalidate(row_cache::external_updater([this, sst, offstrategy] () noexcept {
+    co_await get_row_cache().invalidate(row_cache::external_updater([this, sst, offstrategy] () noexcept {
         // FIXME: this is not really noexcept, but we need to provide strong exception guarantees.
         // atomically load all opened sstables into column family.
         compaction_group& cg = compaction_group_for_sstable(sst);
@@ -708,16 +731,23 @@ table::do_add_sstable_and_update_cache(sstables::shared_sstable sst, sstables::o
         }
         update_stats_for_new_sstable(sst);
     }), dht::partition_range::make({sst->get_first_decorated_key(), true}, {sst->get_last_decorated_key(), true}));
+    
+    DEBUG_LOG("leaving the function");
 }
 
 future<>
 table::add_sstable_and_update_cache(sstables::shared_sstable sst, sstables::offstrategy offstrategy) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     co_await do_add_sstable_and_update_cache(std::move(sst), offstrategy);
     trigger_compaction();
+    DEBUG_LOG("leaving the function");
 }
 
 future<>
 table::add_sstables_and_update_cache(const std::vector<sstables::shared_sstable>& ssts) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     for (auto& sst : ssts) {
         try {
             co_await do_add_sstable_and_update_cache(sst, sstables::offstrategy::no);
@@ -727,10 +757,13 @@ table::add_sstables_and_update_cache(const std::vector<sstables::shared_sstable>
         }
     }
     trigger_compaction();
+    DEBUG_LOG("leaving the function");
 }
 
 future<>
 table::update_cache(compaction_group& cg, lw_shared_ptr<memtable> m, std::vector<sstables::shared_sstable> ssts) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     auto permit = co_await seastar::get_units(_sstable_set_mutation_sem, 1);
     mutation_source_opt ms_opt;
     if (ssts.size() == 1) {
@@ -752,10 +785,11 @@ table::update_cache(compaction_group& cg, lw_shared_ptr<memtable> m, std::vector
         try_trigger_compaction(cg);
     });
     if (cache_enabled()) {
-        co_return co_await _cache.update(std::move(adder), *m);
+        co_await _cache.update(std::move(adder), *m);
     } else {
-        co_return co_await _cache.invalidate(std::move(adder)).then([m] { return m->clear_gently(); });
+        co_await _cache.invalidate(std::move(adder)).then([m] { return m->clear_gently(); });
     }
+    DEBUG_LOG("leaving the function");
 }
 
 // Handles permit management only, used for situations where we don't want to inform
@@ -835,6 +869,8 @@ public:
 // It either succeeds eventually after retrying or aborts.
 future<>
 table::seal_active_memtable(compaction_group& cg, flush_permit&& flush_permit) noexcept {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     auto old = cg.memtables()->back();
     tlogger.debug("Sealing active memtable of {}.{}, partitions: {}, occupancy: {}", _schema->ks_name(), _schema->cf_name(), old->partition_count(), old->occupancy());
 
@@ -965,10 +1001,13 @@ table::seal_active_memtable(compaction_group& cg, flush_permit&& flush_permit) n
 
     // FIXME: release commit log
     // FIXME: provide back-pressure to upper layers
+    DEBUG_LOG("leaving the function");
 }
 
 future<>
 table::try_flush_memtable_to_sstable(compaction_group& cg, lw_shared_ptr<memtable> old, sstable_write_permit&& permit) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     auto try_flush = [this, old = std::move(old), permit = make_lw_shared(std::move(permit)), &cg] () mutable -> future<> {
         // Note that due to our sharded architecture, it is possible that
         // in the face of a value change some shards will backup sstables
@@ -1049,7 +1088,9 @@ table::try_flush_memtable_to_sstable(compaction_group& cg, lw_shared_ptr<memtabl
         };
         co_return co_await with_scheduling_group(default_scheduling_group(), std::ref(post_flush));
     };
-    co_return co_await with_scheduling_group(_config.memtable_scheduling_group, std::ref(try_flush));
+    co_await with_scheduling_group(_config.memtable_scheduling_group, std::ref(try_flush));
+
+    DEBUG_LOG("leaving the function");
 }
 
 void
@@ -1059,6 +1100,8 @@ table::start() {
 
 future<>
 table::stop() {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     if (_async_gate.is_closed()) {
         co_return;
     }
@@ -1073,6 +1116,7 @@ table::stop() {
         _sstables = make_compound_sstable_set();
     }));
     _cache.refresh_snapshot();
+    DEBUG_LOG("leaving the function");
 }
 static seastar::metrics::label_instance node_table_metrics("__per_table", "node");
 void table::set_metrics() {
@@ -1201,6 +1245,8 @@ table::sstable_list_builder::build_new_list(const sstables::sstable_set& current
                               sstables::sstable_set new_sstable_list,
                               const std::vector<sstables::shared_sstable>& new_sstables,
                               const std::vector<sstables::shared_sstable>& old_sstables) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     std::unordered_set<sstables::shared_sstable> s(old_sstables.begin(), old_sstables.end());
 
     // this might seem dangerous, but "move" here just avoids constness,
@@ -1212,11 +1258,14 @@ table::sstable_list_builder::build_new_list(const sstables::sstable_set& current
         }
         co_await coroutine::maybe_yield();
     }
+    DEBUG_LOG("leaving the function");
     co_return make_lw_shared<sstables::sstable_set>(std::move(new_sstable_list));
 }
 
 future<>
 compaction_group::delete_sstables_atomically(std::vector<sstables::shared_sstable> sstables_to_remove) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     return seastar::try_with_gate(_t._sstable_deletion_gate, [this, sstables_to_remove = std::move(sstables_to_remove)] () mutable {
         return with_semaphore(_t._sstable_deletion_sem, 1, [this, sstables_to_remove = std::move(sstables_to_remove)] () mutable {
             return _t.get_sstables_manager().delete_atomically(std::move(sstables_to_remove));
@@ -1225,6 +1274,8 @@ compaction_group::delete_sstables_atomically(std::vector<sstables::shared_sstabl
         // There is nothing more we can do here.
         // Any remaining SSTables will eventually be re-compacted and re-deleted.
         tlogger.error("Compacted SSTables deletion failed: {}. Ignored.", std::move(ex));
+    }).then([this, DEBUG_COUNTER] {
+        DEBUG_FLOG("compaction_group::delete_sstables_atomically", "leaving the function");
     });
 }
 
@@ -1363,10 +1414,13 @@ compaction_group::update_main_sstable_list_on_compaction_completion(sstables::co
 
 future<>
 table::compact_all_sstables(std::optional<tasks::task_info> info) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     co_await flush();
     co_await parallel_foreach_compaction_group([this, info] (compaction_group& cg) {
         return _compaction_manager.perform_major_compaction(cg.as_table_state(), info);
     });
+    DEBUG_LOG("leaving the function");
 }
 
 void table::start_compaction() {
@@ -1407,6 +1461,8 @@ void table::trigger_offstrategy_compaction() {
 }
 
 future<bool> table::perform_offstrategy_compaction(std::optional<tasks::task_info> info) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     // If the user calls trigger_offstrategy_compaction() to trigger
     // off-strategy explicitly, cancel the timeout based automatic trigger.
     _off_strategy_trigger.cancel();
@@ -1414,10 +1470,13 @@ future<bool> table::perform_offstrategy_compaction(std::optional<tasks::task_inf
     co_await parallel_foreach_compaction_group([this, &performed, info] (compaction_group& cg) -> future<> {
         performed |= co_await _compaction_manager.perform_offstrategy(cg.as_table_state(), info);
     });
+    DEBUG_LOG("leaving the function");
     co_return performed;
 }
 
 future<> table::perform_cleanup_compaction(compaction::owned_ranges_ptr sorted_owned_ranges, std::optional<tasks::task_info> info) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     co_await flush();
 
     if (_compaction_groups.size() == 1) {
@@ -1459,6 +1518,7 @@ future<> table::perform_cleanup_compaction(compaction::owned_ranges_ptr sorted_o
         auto&& cg_ranges = std::move(cg_ranges_map.at(cg.token_range()));
         return get_compaction_manager().perform_cleanup(std::move(cg_ranges), cg.as_table_state(), info);
     });
+    DEBUG_LOG("leaving the function");
 }
 
 unsigned table::estimate_pending_compactions() const {
@@ -1549,6 +1609,8 @@ int64_t table::get_unleveled_sstables() const {
 }
 
 future<std::unordered_set<sstables::shared_sstable>> table::get_sstables_by_partition_key(const sstring& key) const {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     auto pk = partition_key::from_nodetool_style_string(_schema, key);
     auto dk = dht::decorate_key(*_schema, pk);
     auto hk = sstables::sstable::make_hashed_key(*_schema, dk.key());
@@ -1562,6 +1624,7 @@ future<std::unordered_set<sstables::shared_sstable>> table::get_sstables_by_part
             ssts.insert(s);
         }
     }
+    DEBUG_LOG("leaving the function");
     co_return ssts;
 }
 
@@ -1672,10 +1735,13 @@ table::table(schema_ptr schema, config config, lw_shared_ptr<const storage_optio
     , _row_locker(_schema)
     , _off_strategy_trigger([this] { trigger_offstrategy_compaction(); })
 {
+    DEBUG_INIT;
+    DEBUG_LOG("construction a table");
     if (!_config.enable_disk_writes) {
         tlogger.warn("Writes disabled, column family no durable.");
     }
     set_metrics();
+    DEBUG_LOG("constructed a table");
 }
 
 void table::update_effective_replication_map(locator::effective_replication_map_ptr erm) {
@@ -1745,6 +1811,8 @@ logalloc::occupancy_stats table::occupancy() const {
 
 future<>
 table::seal_snapshot(sstring jsondir, std::vector<snapshot_file_set> file_sets) {
+    DEBUG_INIT;
+    DEBUG_SLOG("entering the function");
     std::ostringstream ss;
     int n = 0;
     ss << "{" << std::endl << "\t\"files\" : [ ";
@@ -1781,9 +1849,12 @@ table::seal_snapshot(sstring jsondir, std::vector<snapshot_file_set> file_sets) 
     }
 
     co_await io_check(sync_directory, std::move(jsondir));
+    DEBUG_SLOG("leaving the function");
 }
 
 future<> table::write_schema_as_cql(database& db, sstring dir) const {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     std::ostringstream ss;
 
     this->schema()->describe(db, ss, false);
@@ -1803,12 +1874,16 @@ future<> table::write_schema_as_cql(database& db, sstring dir) const {
     co_await out.close();
 
     if (ex) {
+        DEBUG_LOG("throwing an exception: {}", ex);
         co_await coroutine::return_exception_ptr(std::move(ex));
     }
+    DEBUG_LOG("leaving the function");
 }
 
 // Runs the orchestration code on an arbitrary shard to balance the load.
 future<> table::snapshot_on_all_shards(sharded<database>& sharded_db, const global_table_ptr& table_shards, sstring name) {
+    DEBUG_INIT;
+    DEBUG_SLOG("entering the function");
     auto jsondir = table_shards->_config.datadir + "/snapshots/" + name;
     auto orchestrator = std::hash<sstring>()(jsondir) % smp::count;
 
@@ -1828,9 +1903,12 @@ future<> table::snapshot_on_all_shards(sharded<database>& sharded_db, const glob
 
         co_await t.finalize_snapshot(sharded_db.local(), std::move(jsondir), std::move(file_sets));
     });
+    DEBUG_SLOG("leaving the function");
 }
 
 future<table::snapshot_file_set> table::take_snapshot(database& db, sstring jsondir) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     tlogger.trace("take_snapshot {}", jsondir);
 
     auto sstable_deletion_guard = co_await get_units(_sstable_deletion_sem, 1);
@@ -1849,10 +1927,13 @@ future<table::snapshot_file_set> table::take_snapshot(database& db, sstring json
         });
     });
     co_await io_check(sync_directory, jsondir);
+    DEBUG_LOG("leaving the function");
     co_return make_foreign(std::move(table_names));
 }
 
 future<> table::finalize_snapshot(database& db, sstring jsondir, std::vector<snapshot_file_set> file_sets) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     std::exception_ptr ex;
 
     tlogger.debug("snapshot {}: writing schema.cql", jsondir);
@@ -1867,11 +1948,15 @@ future<> table::finalize_snapshot(database& db, sstring jsondir, std::vector<sna
     });
 
     if (ex) {
+        DEBUG_LOG("throwing an exception: {}", ex);
         co_await coroutine::return_exception_ptr(std::move(ex));
     }
+    DEBUG_LOG("leaving the function");
 }
 
 future<bool> table::snapshot_exists(sstring tag) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     sstring jsondir = _config.datadir + "/snapshots/" + tag;
     return open_checked_directory(general_disk_error_handler, std::move(jsondir)).then_wrapped([] (future<file> f) {
         try {
@@ -1883,10 +1968,15 @@ future<bool> table::snapshot_exists(sstring tag) {
             }
             return make_ready_future<bool>(false);
         }
+    }).then([this, DEBUG_COUNTER] (auto x) {
+        DEBUG_FLOG("table::snapshot_exists", "leaving the function");
+        return x;
     });
 }
 
 future<std::unordered_map<sstring, table::snapshot_details>> table::get_snapshot_details() {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     return seastar::async([this] {
         std::unordered_map<sstring, snapshot_details> all_snapshots;
         for (auto& datadir : _config.all_datadirs) {
@@ -1931,6 +2021,9 @@ future<std::unordered_map<sstring, table::snapshot_details>> table::get_snapshot
             }).get();
         }
         return all_snapshots;
+    }).then([this, DEBUG_COUNTER] (auto&& x) {
+        DEBUG_FLOG("table::get_snapshot_details", "leaving the function");
+        return std::forward<decltype(x)>(x);
     });
 }
 
@@ -1955,6 +2048,8 @@ size_t compaction_group::memtable_count() const noexcept {
 }
 
 future<> table::flush(std::optional<db::replay_position> pos) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     if (pos && *pos < _flush_rp) {
         co_return;
     }
@@ -1962,6 +2057,7 @@ future<> table::flush(std::optional<db::replay_position> pos) {
     auto fp = _highest_rp;
     co_await parallel_foreach_compaction_group(std::mem_fn(&compaction_group::flush));
     _flush_rp = std::max(_flush_rp, fp);
+    DEBUG_LOG("leaving the function");
 }
 
 bool table::can_flush() const {
@@ -1981,16 +2077,21 @@ future<> compaction_group::clear_memtables() {
 }
 
 future<> table::clear() {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     auto permits = co_await _config.dirty_memory_manager->get_all_flush_permits();
 
     co_await parallel_foreach_compaction_group(std::mem_fn(&compaction_group::clear_memtables));
 
     co_await _cache.invalidate(row_cache::external_updater([] { /* There is no underlying mutation source */ }));
+    DEBUG_LOG("leaving the function");
 }
 
 // NOTE: does not need to be futurized, but might eventually, depending on
 // if we implement notifications, whatnot.
 future<db::replay_position> table::discard_sstables(db_clock::time_point truncated_at) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     assert(std::ranges::all_of(compaction_groups(), [this] (const compaction_group_ptr& cg) {
         return _compaction_manager.compaction_disabled(cg->as_table_state());
     }));
@@ -2049,6 +2150,7 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
         co_await get_sstables_manager().delete_atomically({r.sst});
         erase_sstable_cleanup_state(r.sst);
     });
+    DEBUG_LOG("leaving the function");
     co_return p->rp;
 }
 
@@ -2163,6 +2265,8 @@ future<> table::generate_and_propagate_view_updates(shared_ptr<db::view::view_up
         flat_mutation_reader_v2_opt existings,
         tracing::trace_state_ptr tr_state,
         gc_clock::time_point now) const {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     auto base_token = m.token();
     auto m_schema = m.schema();
     db::view::view_update_builder builder = db::view::make_view_update_builder(
@@ -2200,8 +2304,10 @@ future<> table::generate_and_propagate_view_updates(shared_ptr<db::view::view_up
     }
     co_await builder.close();
     if (err) {
+        DEBUG_LOG("throwing an exception: {}", err);
         std::rethrow_exception(err);
     }
+    DEBUG_LOG("leaving the function");
 }
 
 /**
@@ -2264,6 +2370,8 @@ table::local_base_lock(
         const dht::decorated_key& pk,
         const query::clustering_row_ranges& rows,
         db::timeout_clock::time_point timeout) const {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     // FIXME: Optimization:
     // Below we always pass "true" to the lock functions and take an exclusive
     // lock on the affected row or partition. But as explained above, if all
@@ -2274,6 +2382,7 @@ table::local_base_lock(
     _row_locker.upgrade(s);
     if (rows.size() == 1 && rows[0].is_singular() && rows[0].start() && !rows[0].start()->value().is_empty(*s)) {
         // A single clustering row is involved.
+        DEBUG_LOG("leaving the function 1");
         return _row_locker.lock_ck(pk, rows[0].start()->value(), true, timeout, _row_locker_stats);
     } else {
         // More than a single clustering row is involved. Most commonly it's
@@ -2281,6 +2390,7 @@ table::local_base_lock(
         // lock less than the entire partition in more elaborate cases where
         // just a few individual rows are involved, or row ranges, but we
         // don't think this will make a practical difference.
+        DEBUG_LOG("leaving the function 2");
         return _row_locker.lock_pk(pk, true, timeout, _row_locker_stats);
     }
 }
@@ -2302,6 +2412,8 @@ future<> table::populate_views(
         dht::token base_token,
         flat_mutation_reader_v2&& reader,
         gc_clock::time_point now) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     auto schema = reader.schema();
     db::view::view_update_builder builder = db::view::make_view_update_builder(
             gen->get_db().as_data_dictionary(),
@@ -2333,8 +2445,10 @@ future<> table::populate_views(
     }
     co_await builder.close();
     if (err) {
+        DEBUG_LOG("throwing an exception: {}", err);
         std::rethrow_exception(err);
     }
+    DEBUG_LOG("leaving the function");
 }
 
 const ssize_t new_reader_base_cost{16 * 1024};
@@ -2419,11 +2533,15 @@ void table::do_apply(compaction_group& cg, db::rp_handle&& h, Args&&... args) {
 }
 
 future<> table::apply(const mutation& m, db::rp_handle&& h, db::timeout_clock::time_point timeout) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     auto& cg = compaction_group_for_token(m.token());
     auto holder = cg.async_gate().hold();
     return dirty_memory_region_group().run_when_memory_available([this, &m, h = std::move(h), &cg, holder = std::move(holder)] () mutable {
         do_apply(cg, std::move(h), m);
-    }, timeout);
+    }, timeout).finally([this, DEBUG_COUNTER] {
+        DEBUG_FLOG("table::apply", "leaving the function");
+    });
 }
 
 template void table::do_apply(compaction_group& cg, db::rp_handle&&, const mutation&);
@@ -2449,11 +2567,15 @@ write_memtable_to_sstable(flat_mutation_reader_v2 reader,
                           size_t estimated_partitions,
                           sstables::write_monitor& monitor,
                           sstables::sstable_writer_config& cfg) {
+    DEBUG_INIT;
+    DEBUG_SLOG("entering the function");
     cfg.replay_position = mt.replay_position();
     cfg.monitor = &monitor;
     cfg.origin = "memtable";
     schema_ptr s = reader.schema();
-    return sst->write_components(std::move(reader), estimated_partitions, s, cfg, mt.get_encoding_stats());
+    return sst->write_components(std::move(reader), estimated_partitions, s, cfg, mt.get_encoding_stats()).finally([DEBUG_COUNTER] {
+        DEBUG_SFLOG("write_memtable_to_sstable", "leaving the function");
+    });
 }
 
 future<>
@@ -2487,6 +2609,8 @@ table::query(schema_ptr s,
         query::result_memory_limiter& memory_limiter,
         db::timeout_clock::time_point timeout,
         std::optional<query::querier>* saved_querier) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     if (cmd.get_row_limit() == 0 || cmd.slice.partition_row_limit() == 0 || cmd.partition_limit == 0) {
         co_return make_lw_shared<query::result>();
     }
@@ -2549,6 +2673,7 @@ table::query(schema_ptr s,
         *saved_querier = std::move(querier_opt);
     }
 
+    DEBUG_LOG("leaving the function");
     co_return make_lw_shared<query::result>(qs.builder.build(std::move(last_pos)));
 }
 
@@ -2561,6 +2686,8 @@ table::mutation_query(schema_ptr s,
         query::result_memory_accounter accounter,
         db::timeout_clock::time_point timeout,
         std::optional<query::querier>* saved_querier) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     if (cmd.get_row_limit() == 0 || cmd.slice.partition_row_limit() == 0 || cmd.partition_limit == 0) {
         co_return reconcilable_result();
     }
@@ -2591,11 +2718,13 @@ table::mutation_query(schema_ptr s,
         *saved_querier = std::move(querier_opt);
     }
 
+    DEBUG_LOG("leaving the function");
     co_return r;
   } catch (...) {
     ex = std::current_exception();
   }
     co_await q.close();
+    DEBUG_LOG("throwing an exception: {}", ex);
     co_return coroutine::exception(std::move(ex));
 }
 
@@ -2636,6 +2765,8 @@ table::enable_auto_compaction() {
 
 future<>
 table::disable_auto_compaction() {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     // FIXME: mute backlog. When we disable background compactions
     // for the table, we must also disable current backlog of the
     // table compaction strategy that contributes to the scheduling
@@ -2667,6 +2798,8 @@ table::disable_auto_compaction() {
         return parallel_foreach_compaction_group([this] (compaction_group& cg) {
             return _compaction_manager.stop_ongoing_compactions("disable auto-compaction", &cg.as_table_state(), sstables::compaction_type::Compaction);
         });
+    }).finally([this, DEBUG_COUNTER] {
+        DEBUG_FLOG("table::disable_auto_compaction", "leaving the function");
     });
 }
 
@@ -2701,6 +2834,8 @@ table::make_reader_v2_excluding_staging(schema_ptr s,
 }
 
 future<> table::move_sstables_from_staging(std::vector<sstables::shared_sstable> sstables) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     auto units = co_await get_units(_sstable_deletion_sem, 1);
     sstables::delayed_commit_changes delay_commit;
     std::unordered_set<compaction_group*> compaction_groups_to_notify;
@@ -2724,6 +2859,7 @@ future<> table::move_sstables_from_staging(std::vector<sstables::shared_sstable>
             }
         } catch (...) {
             tlogger.warn("Failed to move sstable {} from staging: {}", sst->get_filename(), std::current_exception());
+            DEBUG_LOG("throwing an exception", std::current_exception());
             throw;
         }
     }
@@ -2739,6 +2875,7 @@ future<> table::move_sstables_from_staging(std::vector<sstables::shared_sstable>
     // at the end of the node operation on behalf of this table, which brings more efficiency in terms
     // of write amplification.
     do_update_off_strategy_trigger();
+    DEBUG_LOG("leaving the function");
 }
 
 /**
@@ -2747,9 +2884,14 @@ future<> table::move_sstables_from_staging(std::vector<sstables::shared_sstable>
  */
 future<row_locker::lock_holder> table::push_view_replica_updates(shared_ptr<db::view::view_update_generator> gen, const schema_ptr& s, const frozen_mutation& fm,
         db::timeout_clock::time_point timeout, tracing::trace_state_ptr tr_state, reader_concurrency_semaphore& sem) const {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     //FIXME: Avoid unfreezing here.
     auto m = fm.unfreeze(s);
-    return push_view_replica_updates(std::move(gen), s, std::move(m), timeout, std::move(tr_state), sem);
+    return push_view_replica_updates(std::move(gen), s, std::move(m), timeout, std::move(tr_state), sem).then_wrapped([this, DEBUG_COUNTER] (auto&& x) {
+        DEBUG_FLOG("table::push_view_replica_updates", "leaving the function");
+        return std::forward<decltype(x)>(x);
+    });
 }
 
 future<row_locker::lock_holder> table::do_push_view_replica_updates(shared_ptr<db::view::view_update_generator> gen, schema_ptr s, mutation m, db::timeout_clock::time_point timeout, mutation_source source,
@@ -2831,6 +2973,8 @@ future<row_locker::lock_holder> table::push_view_replica_updates(shared_ptr<db::
 future<row_locker::lock_holder>
 table::stream_view_replica_updates(shared_ptr<db::view::view_update_generator> gen, const schema_ptr& s, mutation&& m, db::timeout_clock::time_point timeout,
         std::vector<sstables::shared_sstable>& excluded_sstables) const {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     return do_push_view_replica_updates(
             std::move(gen),
             s,
@@ -2839,7 +2983,10 @@ table::stream_view_replica_updates(shared_ptr<db::view::view_update_generator> g
             as_mutation_source_excluding_staging(),
             tracing::trace_state_ptr(),
             *_config.streaming_read_concurrency_semaphore,
-            query::partition_slice::option_set::of<query::partition_slice::option::bypass_cache>());
+            query::partition_slice::option_set::of<query::partition_slice::option::bypass_cache>()).then_wrapped([this, DEBUG_COUNTER] (auto&& x) {
+        DEBUG_FLOG("table::stream_view_replica_updates", "leaving the function");
+        return std::forward<decltype(x)>(x);
+    });
 }
 
 mutation_source
@@ -2967,8 +3114,12 @@ compaction::table_state& table::as_table_state() const noexcept {
 }
 
 future<> table::parallel_foreach_table_state(std::function<future<>(table_state&)> action) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     return parallel_foreach_compaction_group([action = std::move(action)] (compaction_group& cg) -> future<> {
        return action(cg.as_table_state());
+    }).finally([this, DEBUG_COUNTER] {
+        DEBUG_FLOG("table::parallel_foreach_table_state", "leaving the function");
     });
 }
 
@@ -3041,6 +3192,8 @@ future<> compaction_group::cleanup() {
 }
 
 future<> table::cleanup_tablet(locator::tablet_id tid) {
+    DEBUG_INIT;
+    DEBUG_LOG("entering the function");
     auto holder = async_gate().hold();
 
     auto& cg_ptr = _compaction_groups[tid.value()];
@@ -3059,6 +3212,7 @@ future<> table::cleanup_tablet(locator::tablet_id tid) {
     tlogger.info("Cleaned up tablet {} of table {}.{} successfully.", tid, _schema->ks_name(), _schema->cf_name());
 
     // FIXME: Deallocate compaction group in this shard
+    DEBUG_LOG("leaving the function");
 }
 
 } // namespace replica
