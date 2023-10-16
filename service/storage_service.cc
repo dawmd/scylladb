@@ -3713,7 +3713,7 @@ future<> storage_service::on_remove(gms::inet_address endpoint, gms::permit_id p
     if (my_ep == endpoint) {
         tmptr->remove_endpoint_without_topo(endpoint);
     } else {
-        tmptr->remove_endpoint(endpoint);
+        tmptr->remove_endpoint_without_topo(endpoint);
     }
     co_await update_topology_change_info(tmptr, ::format("on_remove {}", endpoint));
     co_await replicate_to_all_cores(std::move(tmptr));
@@ -4562,17 +4562,7 @@ future<> storage_service::decommission() {
                     // Step 8: Finish token movement
                     ctl.done(node_ops_cmd::decommission_done).get();
 
-                    // What if we fail between leave ring and here? Or even if this lambda fails?
-                    // We'll end up with a weird state of token metadata because the endpoint will
-                    // be in the topology, but it won't have any other information.
-                    //
-                    // mutate_token_metadata is apparently atomic, but it can fail, I guess.
-                    // Think what to do with that.
-                    ss.mutate_token_metadata([&ss] (mutable_token_metadata_ptr tmptr) {
-                        auto endpoint = ss.get_broadcast_address();
-                        tmptr->remove_endpoint_from_topo(endpoint);
-                        return ss.update_topology_change_info(std::move(tmptr), ::format("leave_ring {}", endpoint));
-                    }).get();
+                    
                 } catch (...) {
                     ctl.abort_on_error(node_ops_cmd::decommission_abort, std::current_exception()).get();
                 }
@@ -4621,6 +4611,18 @@ future<> storage_service::decommission() {
             ss._sys_ks.local().set_bootstrap_state(db::system_keyspace::bootstrap_state::DECOMMISSIONED).get();
             slogger.info("DECOMMISSIONING: set_bootstrap_state done");
             ss.set_mode(mode::DECOMMISSIONED);
+
+            // What if we fail between leave ring and here? Or even if this lambda fails?
+            // We'll end up with a weird state of token metadata because the endpoint will
+            // be in the topology, but it won't have any other information.
+            //
+            // mutate_token_metadata is apparently atomic, but it can fail, I guess.
+            // Think what to do with that.
+            ss.mutate_token_metadata([&ss] (mutable_token_metadata_ptr tmptr) {
+                auto endpoint = ss.get_broadcast_address();
+                tmptr->remove_endpoint_from_topo(endpoint);
+                return ss.update_topology_change_info(std::move(tmptr), ::format("leave_ring {}", endpoint));
+            }).get();
 
             if (leave_group0_ex) {
                 std::rethrow_exception(leave_group0_ex);
@@ -4916,6 +4918,7 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
                     ss.excise(std::move(tmp), endpoint, pid).get();
                     removed_from_token_ring = true;
                     slogger.info("removenode[{}]: Finished removing the node from the ring", uuid);
+                    // ss.remove_endpoint_from_topo...
                 } catch (...) {
                     // we need to revert the effect of prepare verb the removenode ops is failed
                     ctl.abort_on_error(node_ops_cmd::removenode_abort, std::current_exception()).get();
@@ -5609,7 +5612,7 @@ future<> storage_service::excise(std::unordered_set<token> tokens, inet_address 
     co_await remove_endpoint(endpoint, pid);
     auto tmlock = std::make_optional(co_await get_token_metadata_lock());
     auto tmptr = co_await get_mutable_token_metadata_ptr();
-    tmptr->remove_endpoint(endpoint);
+    tmptr->remove_endpoint_without_topo(endpoint);
     tmptr->remove_bootstrap_tokens(tokens);
 
     co_await update_topology_change_info(tmptr, ::format("excise {}", endpoint));
@@ -5617,6 +5620,13 @@ future<> storage_service::excise(std::unordered_set<token> tokens, inet_address 
     tmlock.reset();
 
     co_await notify_left(endpoint);
+
+    // tmlock = std::make_optional(co_await get_token_metadata_lock());
+    // tmptr = co_await get_mutable_token_metadata_ptr();
+    // tmptr->remove_endpoint_from_topo(endpoint);
+    // co_await update_topology_change_info(tmptr, ::format("excise {}", endpoint));
+    // co_await replicate_to_all_cores(std::move(tmptr));
+    // tmlock.reset();
 }
 
 future<> storage_service::excise(std::unordered_set<token> tokens, inet_address endpoint, int64_t expire_time, gms::permit_id pid) {

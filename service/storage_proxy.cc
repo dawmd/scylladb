@@ -6495,8 +6495,8 @@ void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {
         _hints_for_views_manager.drain_for(endpoint).get();
     } else {
         // Discarding these futures is safe. They're awaited by db::hints::manager::stop().
-        (void) _hints_manager.drain_for(endpoint);
-        (void) _hints_for_views_manager.drain_for(endpoint);
+        _hints_manager.drain_for(endpoint).get();
+        _hints_for_views_manager.drain_for(endpoint).get();
     }
 }
 
