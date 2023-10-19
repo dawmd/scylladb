@@ -3559,6 +3559,19 @@ future<> storage_service::handle_state_normal(inet_address endpoint, gms::permit
     std::unordered_set<inet_address> endpoints_to_remove;
 
     auto do_remove_node = [&] (gms::inet_address node) {
+        // this lambda is called in three cases:
+        // 1. old endpoint for the given host_id is ours, we remove the new endpoint;
+        // 2. new endpoint for the given host_id has bigger generation, we remove the old endpoint;
+        // 3. old endpoint for the given host_id has bigger generation, we remove the new endpoint.
+        // In all of these cases host_id is retained, only the IP addresses are changed.
+        // That's why we don't need to call remove_endpoint on tmptr->get_new().
+        // However, it will be called eventually through the chain storage_service::remove_endpoint ->
+        // _gossiper.remove_endpoint -> storage_service::on_remove, and we should handle
+        // the case when we wouldn't be able to find endpoint -> ip mapping in tm->get_new().
+        // This could happen e.g. when the new endpoint has bigger generation - the code
+        // below will remap host_id to new IP and we won't find old IP in storage_service::on_remove.
+        // We should just skip the remove in that case.
+
         tmptr->remove_endpoint(node);
         endpoints_to_remove.insert(node);
     };
@@ -3574,14 +3587,34 @@ future<> storage_service::handle_state_normal(inet_address endpoint, gms::permit
             do_remove_node(*existing);
             slogger.info("Set host_id={} to be owned by node={}, existing={}", host_id, endpoint, *existing);
             tmptr->update_host_id(host_id, endpoint);
+            tmptr->get_new()->update_host_id(host_id, endpoint);
         } else {
             slogger.warn("Host ID collision for {} between {} and {}; ignored {}", host_id, *existing, endpoint, endpoint);
             do_remove_node(endpoint);
         }
     } else if (existing && *existing == endpoint) {
+        // This branch in taken by replace-with-different-ip.
+        // We actually don't remove anything from replacing endpoints here, since
+        // we pass new host_id to del_replacing_endpoint. The same was true
+        // with IP-based token_metadata - the new IP was passed to del_replacing_endpoint
+        // and it didn't remove anything. I'm not sure why we need this code at all.
+        // The old IP is removed by the next block of logic - we detach old IP from token ring,
+        // it gets added to candidates_for_removal, then storage_service::remove_endpoint ->
+        // _gossiper.remove_endpoint -> storage_service::on_remove -> it's removed
+        // from topology and from replacing_endpoints.
+
         tmptr->del_replacing_endpoint(endpoint);
+        tmptr->get_new()->del_replacing_endpoint(host_id);
     } else {
         tmptr->del_replacing_endpoint(endpoint);
+
+        // This branch is taken by replace-with-same-ip.
+        // We need to grab an old host_id for the given endpoint to properly
+        // remove it from replacing endpoints.
+        if (const auto old_host_id = tmptr->get_new()->get_host_id_if_known(endpoint); old_host_id) {
+            tmptr->get_new()->del_replacing_endpoint(*old_host_id);
+        }
+        tmptr->get_new()->del_replacing_endpoint(host_id);
         auto nodes = _gossiper.get_nodes_with_host_id(host_id);
         bool left = std::any_of(nodes.begin(), nodes.end(), [this] (const gms::inet_address& node) { return _gossiper.is_left(node); });
         if (left) {
@@ -3591,6 +3624,7 @@ future<> storage_service::handle_state_normal(inet_address endpoint, gms::permit
         }
         slogger.info("Set host_id={} to be owned by node={}", host_id, endpoint);
         tmptr->update_host_id(host_id, endpoint);
+        tmptr->get_new()->update_host_id(host_id, endpoint);
     }
 
     // Tokens owned by the handled endpoint.
@@ -3603,6 +3637,16 @@ future<> storage_service::handle_state_normal(inet_address endpoint, gms::permit
     // and eventually, if any candidate for removal ends up owning no tokens, it is removed from token_metadata.
     std::unordered_map<token, inet_address> token_to_endpoint_map = get_token_metadata().get_token_to_endpoint();
     std::unordered_set<inet_address> candidates_for_removal;
+
+    // Here we convert tokens from gossiper to owned_tokens, which will be assigned as a new
+    // normal tokens to token_metadata and its new host_id-based version.
+    // This transformation accounts for situations where some tokens
+    // belong to outdated nodes - the ones with smaller generation.
+    // We use endpoints instead of host_ids here since gossiper operates
+    // with endpoints and generations are tied to endpoints, not host_ids.
+    // In replace-with-same-ip scenario we won't be able to distinguish
+    // between the old and new IP owners, so we assume the old replica
+    // is down and won't be resurrected.
 
     for (auto t : tokens) {
         // we don't want to update if this node is responsible for the token and it has a later startup time than endpoint.
@@ -3671,8 +3715,11 @@ future<> storage_service::handle_state_normal(inet_address endpoint, gms::permit
             do_notify_joined = true;
         }
 
-        tmptr->update_topology(endpoint, get_dc_rack_for(endpoint), locator::node::state::normal);
+        const auto dc_rack = get_dc_rack_for(endpoint);
+        tmptr->update_topology(endpoint, dc_rack, locator::node::state::normal);
+        tmptr->get_new()->update_topology(host_id, dc_rack, locator::node::state::normal);
         co_await tmptr->update_normal_tokens(owned_tokens, endpoint);
+        co_await tmptr->get_new()->update_normal_tokens(owned_tokens, host_id);
     }
 
     co_await update_topology_change_info(tmptr, ::format("handle_state_normal {}", endpoint));
