@@ -4916,6 +4916,14 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
                     ss._gossiper.advertise_token_removed(endpoint, host_id, pid).get();
                     std::unordered_set<token> tmp(tokens.begin(), tokens.end());
                     ss.excise(std::move(tmp), endpoint, pid).get();
+
+                    auto tmlock = std::make_optional(ss.get_token_metadata_lock().get());
+                    auto tmptr = ss.get_mutable_token_metadata_ptr().get();
+                    tmptr->remove_endpoint_from_topo(endpoint);
+                    ss.update_topology_change_info(tmptr, ::format("removed endpoint from token metadata in removenode")).get();
+                    ss.replicate_to_all_cores(std::move(tmptr)).get();
+                    tmlock.reset();
+
                     removed_from_token_ring = true;
                     slogger.info("removenode[{}]: Finished removing the node from the ring", uuid);
                     // ss.remove_endpoint_from_topo...
