@@ -291,11 +291,12 @@ public:
 
     void update_backlog(size_t backlog, size_t max_backlog);
 
-private:
+public:
     bool stopping() const noexcept {
         return _state.contains(state::stopping);
     }
 
+private:
     void set_stopping() noexcept {
         _state.set(state::stopping);
     }
@@ -318,10 +319,12 @@ private:
         _state.set(state::draining_all);
     }
 
+public:
     bool draining_all() noexcept {
         return _state.contains(state::draining_all);
     }
 
+private:
     void check_ep(std::string_view func, endpoint_id ep) const;
 };
 
