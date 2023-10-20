@@ -296,6 +296,7 @@ public:
         return _state.contains(state::stopping);
     }
 
+private:
     void set_stopping() noexcept {
         _state.set(state::stopping);
     }
@@ -318,6 +319,7 @@ private:
         _state.set(state::draining_all);
     }
 
+public:
     bool draining_all() noexcept {
         return _state.contains(state::draining_all);
     }
