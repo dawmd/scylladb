@@ -5620,7 +5620,7 @@ future<> storage_service::excise(std::unordered_set<token> tokens, inet_address 
     co_await remove_endpoint(endpoint, pid);
     auto tmlock = std::make_optional(co_await get_token_metadata_lock());
     auto tmptr = co_await get_mutable_token_metadata_ptr();
-    tmptr->remove_endpoint_without_topo(endpoint);
+    tmptr->remove_endpoint_without_topo(endpoint); // README: CHANGING THIS TO remove_endpoint causes a segmentation fault on node1
     tmptr->remove_bootstrap_tokens(tokens);
 
     co_await update_topology_change_info(tmptr, ::format("excise {}", endpoint));
