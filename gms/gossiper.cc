@@ -682,6 +682,7 @@ future<> gossiper::force_remove_endpoint(inet_address endpoint, permit_id pid) {
 }
 
 future<> gossiper::remove_endpoint(inet_address endpoint, permit_id pid) {
+    logger.warn("gossiper::remove_endpoint: REMOVING {}", endpoint);
     auto permit = co_await lock_endpoint(endpoint, pid);
     pid = permit.id();
 
@@ -704,6 +705,7 @@ future<> gossiper::remove_endpoint(inet_address endpoint, permit_id pid) {
 
     bool was_alive;
     co_await mutate_live_and_unreachable_endpoints([endpoint, &was_alive] (gossiper& g) {
+        logger.debug("gossiper::remove_endpoint({})", endpoint);
         was_alive = g._live_endpoints.erase(endpoint);
         g._unreachable_endpoints.erase(endpoint);
     });
@@ -998,6 +1000,8 @@ future<> gossiper::replicate_live_endpoints_on_change() {
 
     co_await container().invoke_on_others([this] (gossiper& local_gossiper) {
         if (local_gossiper._live_endpoints_version != _live_endpoints_version) {
+            logger.debug("Shard's new live and unreachable endpoints. Live: {}. Unreachable: {}",
+                    _live_endpoints, _unreachable_endpoints | boost::adaptors::map_keys);
             local_gossiper._live_endpoints = _live_endpoints;
             local_gossiper._unreachable_endpoints = _unreachable_endpoints;
 
@@ -1006,7 +1010,7 @@ future<> gossiper::replicate_live_endpoints_on_change() {
             // retry setting the above next time around.
             local_gossiper._live_endpoints_version = _live_endpoints_version;
         } else {
-            logger.trace("shard already has the latest live and unreachable endpoints");
+            logger.debug("shard already has the latest live and unreachable endpoints");
         }
     });
 }
@@ -1127,12 +1131,12 @@ future<> gossiper::unregister_(shared_ptr<i_endpoint_state_change_subscriber> su
 std::set<inet_address> gossiper::get_live_members() const {
     std::set<inet_address> live_members(_live_endpoints.begin(), _live_endpoints.end());
     auto myip = get_broadcast_address();
-    logger.debug("live_members before={}", live_members);
+    logger.warn("live_members before={}", live_members);
     live_members.insert(myip);
     if (is_shutdown(myip)) {
         live_members.erase(myip);
     }
-    logger.debug("live_members after={}", live_members);
+    logger.warn("live_members after={}", live_members);
     return live_members;
 }
 
@@ -1203,10 +1207,12 @@ version_type gossiper::get_max_endpoint_state_version(const endpoint_state& stat
 }
 
 future<> gossiper::evict_from_membership(inet_address endpoint, permit_id pid) {
+    logger.warn("gossiper::evict_from_membership: EVICTING {}", endpoint);
     verify_permit(endpoint, pid);
     co_await mutate_live_and_unreachable_endpoints([endpoint] (gossiper& g) {
         g._unreachable_endpoints.erase(endpoint);
         g._live_endpoints.erase(endpoint);
+        logger.debug("gossiper::evict_from_membership({})", endpoint);
     });
     co_await container().invoke_on_all([endpoint] (auto& g) {
         g._endpoint_state_map.erase(endpoint);
@@ -1435,7 +1441,7 @@ endpoint_state& gossiper::get_or_create_endpoint_state(inet_address ep) {
 }
 
 future<> gossiper::reset_endpoint_state_map() {
-    logger.debug("Resetting endpoint state map");
+    logger.warn("gossiper::reset_endpoint_state_map RESETTING MAP");
     auto lock = co_await lock_endpoint_update_semaphore();
     auto version = _live_endpoints_version + 1;
     co_await container().invoke_on_all([version] (gossiper& g) {
@@ -1637,12 +1643,14 @@ future<> gossiper::real_mark_alive(inet_address addr) {
     update_timestamp(es);
 
     logger.debug("removing expire time for endpoint : {}", addr);
+    logger.warn("gossiper::real_mark_alive: INSERTING {}", addr);
     bool was_live = false;
     co_await mutate_live_and_unreachable_endpoints([addr, &was_live] (gossiper& g) {
         g._unreachable_endpoints.erase(addr);
         g._expire_time_endpoint_map.erase(addr);
 
         auto [it_, inserted] = g._live_endpoints.insert(addr);
+        logger.debug("gossiper::real_mark_alive: mutate_live_and_unreachable_endpoints({})", addr);
         was_live = !inserted;
     });
     if (was_live) {
@@ -1666,7 +1674,7 @@ future<> gossiper::real_mark_alive(inet_address addr) {
 }
 
 future<> gossiper::mark_dead(inet_address addr, endpoint_state_ptr state, permit_id pid) {
-    logger.trace("marking as down {}", addr);
+    logger.warn("gossiper::mark_dead: MARKING AS DOWN {}", addr);
     verify_permit(addr, pid);
     co_await mutate_live_and_unreachable_endpoints([addr] (gossiper& g) {
         g._live_endpoints.erase(addr);
@@ -1688,7 +1696,7 @@ future<> gossiper::handle_major_state_change(inet_address ep, endpoint_state eps
             logger.debug("Node {} is now part of the cluster, status = {}", ep, get_gossip_status(eps));
         }
     }
-    logger.trace("Adding endpoint state for {}, status = {}", ep, get_gossip_status(eps));
+    logger.debug("Adding endpoint state for {}, status = {}", ep, get_gossip_status(eps));
     co_await replicate(ep, eps, pid);
 
     if (is_in_shadow_round()) {
@@ -2400,6 +2408,7 @@ sstring gossiper::get_application_state_value(inet_address endpoint, application
  * @param endpoint endpoint that has shut itself down
  */
 future<> gossiper::mark_as_shutdown(const inet_address& endpoint, permit_id pid) {
+    logger.warn("gossiper::mark_as_shutdown: MARKING AS SHUTDOWN {}", endpoint);
     verify_permit(endpoint, pid);
     auto es = get_endpoint_state_ptr(endpoint);
     if (es) {
@@ -2408,6 +2417,8 @@ future<> gossiper::mark_as_shutdown(const inet_address& endpoint, permit_id pid)
         ep_state.get_heart_beat_state().force_highest_possible_version_unsafe();
         co_await replicate(endpoint, std::move(ep_state), pid);
         co_await mark_dead(endpoint, get_endpoint_state_ptr(endpoint), pid);
+    } else {
+        logger.warn("gossiper::mark_as_shutdown: SKIPPING {}", endpoint);
     }
 }
 
