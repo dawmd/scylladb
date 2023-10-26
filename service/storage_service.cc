@@ -3597,6 +3597,7 @@ void storage_service::handle_state_moving(inet_address endpoint, std::vector<sst
 }
 
 future<> storage_service::handle_state_removed(inet_address endpoint, std::vector<sstring> pieces, gms::permit_id pid) {
+    slogger.info("HANDLE STATE REMOVED 1: {}", endpoint);
     slogger.debug("endpoint={} handle_state_removed: permit_id={}", endpoint, pid);
 
     if (endpoint == get_broadcast_address()) {
@@ -3618,6 +3619,16 @@ future<> storage_service::handle_state_removed(inet_address endpoint, std::vecto
         add_expire_time_if_found(endpoint, extract_expire_time(pieces));
         co_await remove_endpoint(endpoint, pid);
     }
+
+    slogger.info("HANDLE STATE RMEMOVED 2: {}", endpoint);
+
+    auto tmlock = std::make_optional(co_await get_token_metadata_lock());
+    auto tmptr = co_await get_mutable_token_metadata_ptr();
+    tmptr->remove_endpoint_from_topo(endpoint);
+
+    co_await update_topology_change_info(tmptr, ::format("excise {}", endpoint));
+    co_await replicate_to_all_cores(std::move(tmptr));
+    tmlock.reset();
 }
 
 future<> storage_service::on_join(gms::inet_address endpoint, gms::endpoint_state_ptr ep_state, gms::permit_id pid) {
@@ -3709,12 +3720,12 @@ future<> storage_service::on_remove(gms::inet_address endpoint, gms::permit_id p
     slogger.debug("endpoint={} on_remove: permit_id={}", endpoint, pid);
     auto tmlock = co_await get_token_metadata_lock();
     auto tmptr = co_await get_mutable_token_metadata_ptr();
-    const auto my_ep = tmptr->get_topology().this_node()->endpoint();
-    if (my_ep == endpoint) {
+    // const auto my_ep = tmptr->get_topology().this_node()->endpoint();
+    // if (my_ep == endpoint) {
+    //     tmptr->remove_endpoint_without_topo(endpoint);
+    // } else {
         tmptr->remove_endpoint_without_topo(endpoint);
-    } else {
-        tmptr->remove_endpoint_without_topo(endpoint);
-    }
+    // }
     co_await update_topology_change_info(tmptr, ::format("on_remove {}", endpoint));
     co_await replicate_to_all_cores(std::move(tmptr));
 }
@@ -4127,6 +4138,7 @@ future<> storage_service::check_for_endpoint_collision(std::unordered_set<gms::i
 }
 
 future<> storage_service::remove_endpoint(inet_address endpoint, gms::permit_id pid) {
+    slogger.info("REMOVE ENDPOINT: {}", endpoint);
     co_await _gossiper.remove_endpoint(endpoint, pid);
     try {
         co_await _sys_ks.local().remove_endpoint(endpoint);
@@ -4751,6 +4763,13 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
         // Allow any nodes to mark the replacing node as alive
         _gossiper.advertise_to_nodes({}).get();
         slogger.info("replace[{}]: Allow any nodes to mark replacing node={} as alive", uuid,  get_broadcast_address());
+
+        auto tmlock = std::make_optional(get_token_metadata_lock().get());
+        auto tmptr = get_mutable_token_metadata_ptr().get();
+        tmptr->remove_endpoint(replace_address);//_without_topo(endpoint); // README: CHANGING THIS TO remove_endpoint causes a segmentation fault on node1
+        update_topology_change_info(tmptr, ::format("excise {}", replace_address)).get();
+        replicate_to_all_cores(std::move(tmptr)).get();
+        tmlock.reset();
     } catch (...) {
         // we need to revert the effect of prepare verb the replace ops is failed
         ctl.abort_on_error(node_ops_cmd::replace_abort, std::current_exception()).get();

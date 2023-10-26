@@ -81,9 +81,9 @@ void node_ops_ctl::refresh_sync_nodes(std::function<bool(gms::inet_address)> syn
         nlogger.warn("{}", msg);
         nlogger.warn("Sync nodes were: {}", sync_nodes);
         throw std::runtime_error(msg);
-    } else {
-        nlogger.error("Nodes are OK for the operation. Nodes down: {}. Sync nodes: {}", nodes_down, sync_nodes);
-    }
+    } //else {
+    //     nlogger.error("Nodes are OK for the operation. Nodes down: {}. Sync nodes: {}", nodes_down, sync_nodes);
+    // }
 
     nlogger.info("{}[{}]: sync_nodes={}, ignore_nodes={}", desc, uuid(), sync_nodes, ignore_nodes);
 }
