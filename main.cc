@@ -1599,6 +1599,27 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                 ss.local().uninit_messaging_service_part().get();
             });
 
+
+
+            // supervisor::notify("starting hinted handoff manager");
+            // if (!hinted_handoff_enabled.is_disabled_for_all()) {
+            //     hints_dir_initializer.ensure_rebalanced().get();
+            // }
+            // view_hints_dir_initializer.ensure_rebalanced().get();
+
+            // proxy.invoke_on_all([&lifecycle_notifier, &gossiper] (service::storage_proxy& local_proxy) {
+            //     lifecycle_notifier.local().register_subscriber(&local_proxy);
+            //     return local_proxy.start_hints_manager(gossiper.local().shared_from_this());
+            // }).get();
+
+            // auto drain_proxy = defer_verbose_shutdown("drain storage proxy", [&proxy, &lifecycle_notifier] {
+            //     proxy.invoke_on_all([&lifecycle_notifier] (service::storage_proxy& local_proxy) mutable {
+            //         return lifecycle_notifier.local().unregister_subscriber(&local_proxy).finally([&local_proxy] {
+            //             return local_proxy.drain_on_shutdown();
+            //         });
+            //     }).get();
+            // });
+
             api::set_server_messaging_service(ctx, messaging).get();
             auto stop_messaging_api = defer_verbose_shutdown("messaging service API", [&ctx] {
                 api::unset_server_messaging_service(ctx).get();

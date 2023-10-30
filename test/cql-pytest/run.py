@@ -289,6 +289,8 @@ def run_scylla_cmd(pid, dir):
         '--skip-wait-for-gossip-to-settle', '0',
         '--logger-log-level', 'compaction=warn',
         '--logger-log-level', 'migration_manager=warn',
+        '--logger-log-level', 'storage_service=trace',
+        '--logger-log-level', 'token_metadata=trace',
         # Use lower settings for some parameters to allow faster testing
         '--num-tokens', '16',
         '--query-tombstone-page-limit', '1000',

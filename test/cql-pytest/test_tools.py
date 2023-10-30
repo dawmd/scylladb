@@ -560,6 +560,7 @@ def system_scylla_local_reference_dump(scylla_path, system_scylla_local_sstable_
         "dump-data",
         "--output-format", "json",
         "--logger-log-level", "scylla-sstable=debug",
+        '--default-log-level=trace',
         "--system-schema",
         "--keyspace", "system",
         "--table", "scylla_local",
@@ -578,7 +579,7 @@ class TestScyllaSsstableSchemaLoading:
     table = "scylla_local"
 
     def check(self, scylla_path, extra_args, sstable, dump_reference, cwd=None, env=None):
-        dump_common_args = [scylla_path, "sstable", "dump-data", "--output-format", "json", "--logger-log-level", "scylla-sstable=debug"]
+        dump_common_args = [scylla_path, "sstable", "dump-data", "--output-format", "json", "--logger-log-level", "scylla-sstable=debug", '--default-log-level=trace']
         dump = json.loads(subprocess.check_output(dump_common_args + extra_args + [sstable], cwd=cwd, env=env))["sstables"]
         dump = list(dump.values())[0]
         assert dump == dump_reference

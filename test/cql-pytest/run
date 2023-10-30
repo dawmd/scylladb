@@ -22,7 +22,7 @@ if '--raft' in sys.argv:
     sys.argv.remove('--raft')
     def run_with_raft(pid, dir):
         (c, e) = run_with_raft.orig_cmd(pid, dir)
-        return (c + ['--consistent-cluster-management', 'true'], e)
+        return (c + ['--consistent-cluster-management', 'true', '--default-log-level=trace'], e)
     run_with_raft.orig_cmd = cmd
     cmd = run_with_raft
 

@@ -17,6 +17,8 @@
 #include "utils/stall_free.hh"
 #include "utils/fb_utilities.hh"
 
+#define LOGAD(fmt, ...) tlogger.debug("topology[{}]: " fmt, (void*)this __VA_OPT__(,) __VA_ARGS__)
+
 namespace locator {
 
 static logging::logger tlogger("topology");
@@ -60,6 +62,7 @@ std::string node::to_string(node::state s) {
 }
 
 future<> topology::clear_gently() noexcept {
+    LOGAD("Clearing gently");
     _this_node = nullptr;
     co_await utils::clear_gently(_dc_endpoints);
     co_await utils::clear_gently(_dc_racks);
@@ -292,6 +295,7 @@ bool topology::remove_node(host_id id) {
 }
 
 void topology::remove_node(const node* node) {
+    tlogger.debug("{}: popping {}", node->endpoint());
     pop_node(node);
 }
 
@@ -318,6 +322,7 @@ void topology::index_node(const node* node) {
         auto eit = _nodes_by_endpoint.find(node->endpoint());
         if (eit != _nodes_by_endpoint.end()) {
             if (eit->second->is_leaving() || eit->second->left()) {
+                LOGAD("Index node: erasing {}", node->endpoint());
                 _nodes_by_endpoint.erase(node->endpoint());
             } else if (!node->is_leaving() && !node->left()) {
                 if (node->host_id()) {
@@ -343,6 +348,8 @@ void topology::index_node(const node* node) {
     if (node->is_this_node()) {
         _this_node = node;
     }
+
+    tlogger.debug("Indexing endpoint {} finished", node->endpoint());
 }
 
 void topology::unindex_node(const node* node) {
@@ -384,6 +391,7 @@ void topology::unindex_node(const node* node) {
     }
     auto ep_it = _nodes_by_endpoint.find(node->endpoint());
     if (ep_it != _nodes_by_endpoint.end() && ep_it->second == node) {
+        tlogger.trace("ERASING {}", node->endpoint());
         _nodes_by_endpoint.erase(ep_it);
     }
     if (_this_node == node) {
@@ -422,6 +430,7 @@ const node* topology::find_node(host_id id) const noexcept {
 // Finds a node by its endpoint
 // Returns nullptr if not found
 const node* topology::find_node(const inet_address& ep) const noexcept {
+    tlogger.trace("find_node: topo[{}]: {}", (void*)this, *this);
     auto it = _nodes_by_endpoint.find(ep);
     if (it != _nodes_by_endpoint.end()) {
         return it->second;

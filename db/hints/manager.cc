@@ -207,6 +207,8 @@ future<> manager::start(const gms::gossiper* gossiper_ptr) {
     
     co_await compute_hints_dir_device_id();
     set_started();
+
+    manager_logger.warn("SETTING HINT MANAGER TO STARTED!");
 }
 
 future<> manager::stop() {
@@ -570,8 +572,8 @@ future<> manager::with_file_update_mutex_for(endpoint_id ep, noncopyable_functio
 }
 
 void manager::check_ep(std::string_view func, endpoint_id ep) const {
-    manager_logger.warn("check_ep at({}, {})", func, ep);
     const auto tmptr = _proxy.get_token_metadata_ptr();
+    manager_logger.warn("check_ep at({}, {}). Topology* = {}", func, ep, (void*) std::addressof(tmptr->get_topology()));
     assert(tmptr->get_host_id_if_known(ep).has_value());
     assert(tmptr->get_topology().this_node() != nullptr);
 }

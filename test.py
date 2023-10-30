@@ -396,7 +396,7 @@ class PythonTestSuite(TestSuite):
                 cluster_name=create_cfg.cluster_name,
                 ip_addr=create_cfg.ip_addr,
                 seeds=create_cfg.seeds,
-                cmdline_options=cmdline_options,
+                cmdline_options=cmdline_options + ['--default-log-level=trace'],
                 config_options=config_options,
                 property_file=create_cfg.property_file)
 

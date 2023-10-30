@@ -1217,6 +1217,7 @@ token_metadata::set_version_tracker(version_tracker_t tracker) {
 }
 
 void shared_token_metadata::set(mutable_token_metadata_ptr tmptr) noexcept {
+    tlogger.debug("Changing token metadata. Previous topology: {}", _shared->get_topology());
     if (_shared->get_ring_version() >= tmptr->get_ring_version()) {
         on_internal_error(tlogger, format("shared_token_metadata: must not set non-increasing ring_version: {} -> {}", _shared->get_ring_version(), tmptr->get_ring_version()));
     }
@@ -1229,7 +1230,7 @@ void shared_token_metadata::set(mutable_token_metadata_ptr tmptr) noexcept {
 
     _shared = std::move(tmptr);
     _shared->set_version_tracker(_versions_barrier.start());
-    tlogger.debug("new token_metadata is set, version {}", _shared->get_version());
+    tlogger.debug("new token_metadata is set, version {}. Topology: {}", _shared->get_version(), _shared->get_topology());
 }
 
 void shared_token_metadata::update_fence_version(token_metadata::version_t version) {
@@ -1263,6 +1264,7 @@ future<> shared_token_metadata::mutate_token_metadata(seastar::noncopyable_funct
     // when the modified token_metadata is committed.
     tm.invalidate_cached_rings();
     co_await func(tm);
+    tlogger.debug("mutate_token_metadata BEFORE");
     set(make_token_metadata_ptr(std::move(tm)));
 }
 
@@ -1287,6 +1289,7 @@ future<> shared_token_metadata::mutate_on_all_shards(sharded<shared_token_metada
         pending_token_metadata_ptr[this_shard_id()] = make_token_metadata_ptr(co_await tm.clone_async());
     });
 
+    tlogger.debug("mutate on all shards BEFORE");
     co_await stm.invoke_on_all([&] (shared_token_metadata& stm) {
         stm.set(std::move(pending_token_metadata_ptr[this_shard_id()]));
     });

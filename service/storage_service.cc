@@ -341,6 +341,13 @@ future<> storage_service::topology_state_load() {
     slogger.debug("raft topology: reload raft topology state");
     // read topology state from disk and recreate token_metadata from it
     _topology_state_machine._topology = co_await _sys_ks.local().load_topology_state();
+    slogger.debug("raft topology: after reloading");
+    // slogger.debug("TOPOLOGY STATE MACHINE TOPOLOGY: {}, {}, {}, {}, {}",
+    //         _topology_state_machine._topology.normal_nodes,
+    //         _topology_state_machine._topology.left_nodes,
+    //         _topology_state_machine._topology.new_nodes,
+    //         _topology_state_machine._topology.transition_nodes,
+    //         _topology_state_machine._topology.requests);
 
     co_await _feature_service.container().invoke_on_all([&] (gms::feature_service& fs) {
         return fs.enable(boost::copy_range<std::set<std::string_view>>(_topology_state_machine._topology.enabled_features));
@@ -516,6 +523,8 @@ future<> storage_service::topology_state_load() {
             tmptr->set_tablets(co_await replica::read_tablet_metadata(*_qp));
         }
     }));
+
+    slogger.debug("Chyba koniec");
 
     // We don't load gossiper endpoint states in storage_service::join_cluster
     // if _raft_topology_change_enabled. On the other hand gossiper is still needed
@@ -4119,6 +4128,7 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
     // Apply changes on all shards
     try {
         co_await container().invoke_on_all([&] (storage_service& ss) {
+            slogger.debug("replicate to all cores SS BEFORE");
             ss._shared_token_metadata.set(std::move(pending_token_metadata_ptr[this_shard_id()]));
             auto& db = ss._db.local();
 
@@ -4861,7 +4871,7 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
 
         auto tmlock = std::make_optional(get_token_metadata_lock().get());
         auto tmptr = get_mutable_token_metadata_ptr().get();
-        tmptr->remove_endpoint(replace_address);//_without_topo(endpoint); // README: CHANGING THIS TO remove_endpoint causes a segmentation fault on node1
+        tmptr->remove_endpoint(replace_address); // README: CHANGING THIS TO remove_endpoint causes a segmentation fault on node1
         update_topology_change_info(tmptr, ::format("excise {}", replace_address)).get();
         replicate_to_all_cores(std::move(tmptr)).get();
         tmlock.reset();
