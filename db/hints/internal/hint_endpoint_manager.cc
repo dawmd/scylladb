@@ -129,7 +129,7 @@ hint_endpoint_manager::hint_endpoint_manager(const endpoint_id& key, manager& sh
     // Approximate the position of the last written hint by using the same formula as for segment id calculation in commitlog
     // TODO: Should this logic be deduplicated with what is in the commitlog?
     , _last_written_rp(this_shard_id(), std::chrono::duration_cast<std::chrono::milliseconds>(runtime::get_boot_time().time_since_epoch()).count())
-    , _sender(*this, _shard_manager.local_storage_proxy(), _shard_manager.local_db(), _shard_manager.local_gossiper())
+    , _sender(*this, _shard_manager.local_storage_proxy(), _shard_manager.local_db())//, _shard_manager.local_gossiper())
 {}
 
 hint_endpoint_manager::hint_endpoint_manager(hint_endpoint_manager&& other)

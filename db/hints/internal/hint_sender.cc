@@ -96,7 +96,11 @@ bool hint_sender::can_send() noexcept {
     }
 
     try {
-        if (_gossiper.is_alive(end_point_key())) {
+        auto* node = _shard_manager.local_db().get_token_metadata().get_topology().find_node(end_point_key());//_gossiper.is_alive(end_point_key())) {
+        if (!node) {
+            return false;
+        }
+        if (node->is_normal() || node->is_leaving()) {
             _state.remove(state::ep_state_left_the_ring);
             return true;
         } else {
@@ -140,7 +144,7 @@ const column_mapping& hint_sender::get_column_mapping(lw_shared_ptr<send_one_fil
     return cm_it->second;
 }
 
-hint_sender::hint_sender(hint_endpoint_manager& parent, service::storage_proxy& local_storage_proxy,replica::database& local_db, gms::gossiper& local_gossiper) noexcept
+hint_sender::hint_sender(hint_endpoint_manager& parent, service::storage_proxy& local_storage_proxy,replica::database& local_db) noexcept//, gms::gossiper& local_gossiper) noexcept
     : _stopped(make_ready_future<>())
     , _ep_key(parent.end_point_key())
     , _ep_manager(parent)
@@ -149,7 +153,7 @@ hint_sender::hint_sender(hint_endpoint_manager& parent, service::storage_proxy& 
     , _proxy(local_storage_proxy)
     , _db(local_db)
     , _hints_cpu_sched_group(_db.get_streaming_scheduling_group())
-    , _gossiper(local_gossiper)
+    // , _gossiper(local_gossiper)
     , _file_update_mutex(_ep_manager.file_update_mutex())
 {}
 
@@ -162,7 +166,7 @@ hint_sender::hint_sender(const hint_sender& other, hint_endpoint_manager& parent
     , _proxy(other._proxy)
     , _db(other._db)
     , _hints_cpu_sched_group(other._hints_cpu_sched_group)
-    , _gossiper(other._gossiper)
+    // , _gossiper(other._gossiper)
     , _file_update_mutex(_ep_manager.file_update_mutex())
 {}
 

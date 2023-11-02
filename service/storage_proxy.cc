@@ -3037,14 +3037,16 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
 
     auto all = boost::range::join(natural_endpoints, pending_endpoints);
 
-    if (cannot_hint(all, type)) {
-        get_stats().writes_failed_due_to_too_many_in_flight_hints++;
-        // avoid OOMing due to excess hints.  we need to do this check even for "live" nodes, since we can
-        // still generate hints for those if it's overloaded or simply dead but not yet known-to-be-dead.
-        // The idea is that if we have over maxHintsInProgress hints in flight, this is probably due to
-        // a small number of nodes causing problems, so we should avoid shutting down writes completely to
-        // healthy nodes.  Any node with no hintsInProgress is considered healthy.
-        throw overloaded_exception(_hints_manager.size_of_hints_in_progress());
+    if (_hints_manager.started() && !_hints_manager.draining_all() && !_hints_manager.stopping()) {
+        if (cannot_hint(all, type)) {
+            get_stats().writes_failed_due_to_too_many_in_flight_hints++;
+            // avoid OOMing due to excess hints.  we need to do this check even for "live" nodes, since we can
+            // still generate hints for those if it's overloaded or simply dead but not yet known-to-be-dead.
+            // The idea is that if we have over maxHintsInProgress hints in flight, this is probably due to
+            // a small number of nodes causing problems, so we should avoid shutting down writes completely to
+            // healthy nodes.  Any node with no hintsInProgress is considered healthy.
+            throw overloaded_exception(_hints_manager.size_of_hints_in_progress());
+        }
     }
 
     // filter live endpoints from dead ones
@@ -6361,12 +6363,12 @@ storage_proxy::query_nonsingular_data_locally(schema_ptr s, lw_shared_ptr<query:
     co_return ret;
 }
 
-future<> storage_proxy::start_hints_manager(shared_ptr<gms::gossiper> g) {
+future<> storage_proxy::start_hints_manager() {
     if (!_hints_manager.is_disabled_for_all()) {
         co_await _hints_resource_manager.register_manager(_hints_manager);
     }
     co_await _hints_resource_manager.register_manager(_hints_for_views_manager);
-    co_await _hints_resource_manager.start(std::move(g));
+    co_await _hints_resource_manager.start();
 }
 
 void storage_proxy::allow_replaying_hints() noexcept {
@@ -6485,15 +6487,31 @@ future<> storage_proxy::wait_for_hint_sync_point(const db::hints::sync_point spo
     co_return;
 }
 
-void storage_proxy::on_join_cluster(const gms::inet_address& endpoint) {};
+void storage_proxy::on_join_cluster(const gms::inet_address& endpoint) {
+    // slogger.info("ON JOIN CLUSTER FOR {}", endpoint);
+    // if (endpoint == utils::fb_utilities::get_broadcast_address()) {
+    //     slogger.info("Starting shard hint manager");
+    //     start_hints_manager().get();
+    //     slogger.info("Allow replaying hints");
+    //     allow_replaying_hints();
+    // }
+};
 
 void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {
     // Discarding these futures is safe. They're awaited by db::hints::manager::stop().
-    (void) _hints_manager.drain_for(endpoint);
-    (void) _hints_for_views_manager.drain_for(endpoint);
+    _hints_manager.drain_for(endpoint).get();
+    _hints_for_views_manager.drain_for(endpoint).get();
 }
 
-void storage_proxy::on_up(const gms::inet_address& endpoint) {};
+void storage_proxy::on_up(const gms::inet_address& endpoint) {
+    slogger.info("ON JOIN CLUSTER FOR {}", endpoint);
+    if (endpoint == utils::fb_utilities::get_broadcast_address()) {
+        slogger.info("Starting shard hint manager");
+        start_hints_manager().get();
+        slogger.info("Allow replaying hints");
+        allow_replaying_hints();
+    }
+};
 
 void storage_proxy::cancel_write_handlers(noncopyable_function<bool(const abstract_write_response_handler&)> filter_fun) {
     assert(thread::running_in_thread());

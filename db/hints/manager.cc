@@ -189,10 +189,7 @@ void manager::register_metrics(const sstring& group_name) {
     });
 }
 
-future<> manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
-    _gossiper_anchor = std::move(gossiper_ptr);
-
-
+future<> manager::start() {
     co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),
             [this] (fs::path datadir, directory_entry de) {
         endpoint_id ep = endpoint_id{de.name};
@@ -364,8 +361,8 @@ bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
     // endpoint, then this means that its DC has already been checked and found to be ok.
     return _stats.size_of_hints_in_progress > MAX_SIZE_OF_HINTS_IN_PROGRESS
             && !utils::fb_utilities::is_me(ep)
-            && hints_in_progress_for(ep) > 0
-            && local_gossiper().get_endpoint_downtime(ep) <= _max_hint_window_us;
+            && hints_in_progress_for(ep) > 0;
+            // && local_gossiper().get_endpoint_downtime(ep) <= _max_hint_window_us;
 }
 
 bool manager::can_hint_for(endpoint_id ep) const noexcept {
@@ -397,11 +394,11 @@ bool manager::can_hint_for(endpoint_id ep) const noexcept {
     }
 
     // Check if the endpoint has been down for too long.
-    const auto ep_downtime = local_gossiper().get_endpoint_downtime(ep);
-    if (ep_downtime > _max_hint_window_us) {
-        manager_logger.trace("{} has been down for {}, not hinting", ep, ep_downtime);
-        return false;
-    }
+    // const auto ep_downtime = local_gossiper().get_endpoint_downtime(ep);
+    // if (ep_downtime > _max_hint_window_us) {
+    //     manager_logger.trace("{} has been down for {}, not hinting", ep, ep_downtime);
+    //     return false;
+    // }
 
     return true;
 }
