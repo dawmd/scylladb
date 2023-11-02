@@ -536,7 +536,7 @@ future<> storage_service::topology_state_load() {
         }
 
         if (_db.local().get_config().check_experimental(db::experimental_features_t::feature::TABLETS)) {
-            tmptr->set_tablets(co_await replica::read_tablet_metadata(_qp));
+            tmptr->get_new()->set_tablets(co_await replica::read_tablet_metadata(_qp));
         }
     }));
 
@@ -1552,7 +1552,7 @@ class topology_coordinator {
                                                            schema_ptr,
                                                            locator::global_tablet_id,
                                                            const locator::tablet_transition_info&)> func) {
-        auto tm = get_token_metadata_ptr();
+        auto tm = get_token_metadata_ptr()->get_new();
         for (auto&& [table, tmap] : tm->tablets().all_tables()) {
             co_await coroutine::maybe_yield();
             auto s = _db.find_schema(table);
@@ -1566,7 +1566,7 @@ class topology_coordinator {
 
     void generate_migration_update(std::vector<canonical_mutation>& out, const group0_guard& guard, const tablet_migration_info& mig) {
         auto s = _db.find_schema(mig.tablet.table);
-        auto& tmap = get_token_metadata_ptr()->tablets().get_tablet_map(mig.tablet.table);
+        auto& tmap = get_token_metadata_ptr()->get_new()->tablets().get_tablet_map(mig.tablet.table);
         auto last_token = tmap.get_last_token(mig.tablet.tablet);
         if (tmap.get_tablet_transition_info(mig.tablet.tablet)) {
             slogger.warn("Tablet already in transition, ignoring migration: {}", mig);
@@ -1707,7 +1707,7 @@ class topology_coordinator {
             }
         }
         if (!preempt) {
-            auto plan = co_await _tablet_allocator.balance_tablets(get_token_metadata_ptr());
+            auto plan = co_await _tablet_allocator.balance_tablets(get_token_metadata_ptr()->get_new_strong());
             if (!drain || plan.has_nodes_to_drain()) {
                 co_await generate_migration_updates(updates, guard, plan);
             }
@@ -2422,7 +2422,7 @@ future<bool> topology_coordinator::maybe_start_tablet_migration(group0_guard gua
     slogger.debug("raft topology: Evaluating tablet balance");
 
     auto tm = get_token_metadata_ptr();
-    auto plan = co_await _tablet_allocator.balance_tablets(tm);
+    auto plan = co_await _tablet_allocator.balance_tablets(tm->get_new_strong());
     if (plan.empty()) {
         slogger.debug("raft topology: Tablets are balanced");
         co_return false;
@@ -6137,7 +6137,7 @@ future<> storage_service::load_tablet_metadata() {
         return make_ready_future<>();
     }
     return mutate_token_metadata([this] (mutable_token_metadata_ptr tmptr) -> future<> {
-        tmptr->set_tablets(co_await replica::read_tablet_metadata(_qp));
+        tmptr->get_new()->set_tablets(co_await replica::read_tablet_metadata(_qp));
     }, acquire_merge_lock::no);
 }
 
