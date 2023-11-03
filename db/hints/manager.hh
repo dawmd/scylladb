@@ -204,6 +204,7 @@ public:
     /// \param ep End point identificator
     /// \return Number of hints in-flight to \param ep.
     uint64_t hints_in_progress_for(endpoint_id ep) const noexcept {
+        check_ep(__func__, ep);
         auto it = _ep_managers.find(ep);
         if (it == _ep_managers.end()) {
             return 0;
@@ -212,6 +213,7 @@ public:
     }
 
     void add_ep_with_pending_hints(endpoint_id key) {
+        check_ep(__func__, key);
         _eps_with_pending_hints.insert(key);
     }
 
@@ -221,6 +223,7 @@ public:
     }
 
     bool has_ep_with_pending_hints(endpoint_id key) const {
+        check_ep(__func__, key);
         return _eps_with_pending_hints.contains(key);
     }
 
@@ -288,7 +291,7 @@ public:
 
     void update_backlog(size_t backlog, size_t max_backlog);
 
-private:
+public:
     bool stopping() const noexcept {
         return _state.contains(state::stopping);
     }
@@ -316,6 +319,8 @@ private:
     bool draining_all() noexcept {
         return _state.contains(state::draining_all);
     }
+
+    void check_ep(std::string_view, endpoint_id) const;
 };
 
 } // namespace db::hints

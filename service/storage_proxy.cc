@@ -3039,14 +3039,16 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
 
     auto all = boost::range::join(natural_endpoints, pending_endpoints);
 
-    if (cannot_hint(all, type)) {
-        get_stats().writes_failed_due_to_too_many_in_flight_hints++;
-        // avoid OOMing due to excess hints.  we need to do this check even for "live" nodes, since we can
-        // still generate hints for those if it's overloaded or simply dead but not yet known-to-be-dead.
-        // The idea is that if we have over maxHintsInProgress hints in flight, this is probably due to
-        // a small number of nodes causing problems, so we should avoid shutting down writes completely to
-        // healthy nodes.  Any node with no hintsInProgress is considered healthy.
-        throw overloaded_exception(_hints_manager.size_of_hints_in_progress());
+    if (_hints_manager.started() && !_hints_manager.draining_all() && !_hints_manager.stopping()) {
+        if (cannot_hint(all, type)) {
+            get_stats().writes_failed_due_to_too_many_in_flight_hints++;
+            // avoid OOMing due to excess hints.  we need to do this check even for "live" nodes, since we can
+            // still generate hints for those if it's overloaded or simply dead but not yet known-to-be-dead.
+            // The idea is that if we have over maxHintsInProgress hints in flight, this is probably due to
+            // a small number of nodes causing problems, so we should avoid shutting down writes completely to
+            // healthy nodes.  Any node with no hintsInProgress is considered healthy.
+            throw overloaded_exception(_hints_manager.size_of_hints_in_progress());
+        }
     }
 
     // filter live endpoints from dead ones

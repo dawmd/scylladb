@@ -258,6 +258,9 @@ void manager::forbid_hints_for_eps_with_pending_hints() {
 }
 
 sync_point::shard_rps manager::calculate_current_sync_point(std::span<const endpoint_id> target_eps) const {
+    for (const auto& ep : target_eps) {
+        check_ep(__func__, ep);
+    }
     sync_point::shard_rps rps;
 
     for (auto addr : target_eps) {
@@ -272,6 +275,9 @@ sync_point::shard_rps manager::calculate_current_sync_point(std::span<const endp
 }
 
 future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_rps& rps) {
+    for (const auto& [ep, _] : rps) {
+        check_ep(__func__, ep);
+    }
     abort_source local_as;
 
     auto sub = as.subscribe([&local_as] () noexcept {
@@ -321,6 +327,7 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
 }
 
 hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep) {
+    check_ep(__func__, ep);
     auto [it, emplaced] = _ep_managers.try_emplace(ep, ep, *this);
     hint_endpoint_manager& ep_man = it->second;
 
@@ -333,12 +340,14 @@ hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep) {
 }
 
 bool manager::have_ep_manager(endpoint_id ep) const noexcept {
+    check_ep(__func__, ep);
     return _ep_managers.contains(ep);
 }
 
 bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm,
         tracing::trace_state_ptr tr_state) noexcept
 {
+    check_ep(__func__, ep);
     if (stopping() || draining_all() || !started() || !can_hint_for(ep)) {
         manager_logger.trace("Can't store a hint to {}", ep);
         ++_stats.dropped;
@@ -360,6 +369,7 @@ bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const froze
 }
 
 bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
+    check_ep(__func__, ep);
     // There is no need to check the DC here because if there is an in-flight hint for this
     // endpoint, then this means that its DC has already been checked and found to be ok.
     return _stats.size_of_hints_in_progress > MAX_SIZE_OF_HINTS_IN_PROGRESS
@@ -369,6 +379,7 @@ bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
 }
 
 bool manager::can_hint_for(endpoint_id ep) const noexcept {
+    check_ep(__func__, ep);
     if (utils::fb_utilities::is_me(ep)) {
         return false;
     }
@@ -470,6 +481,7 @@ future<> manager::change_host_filter(host_filter filter) {
 }
 
 bool manager::check_dc_for(endpoint_id ep) const noexcept {
+    check_ep(__func__, ep);
     try {
         // If target's DC is not a "hintable" DCs - don't hint.
         // If there is an end point manager then DC has already been checked and found to be ok.
@@ -485,6 +497,8 @@ future<> manager::drain_for(endpoint_id endpoint) noexcept {
     if (!started() || stopping() || draining_all()) {
         co_return;
     }
+
+    check_ep(__func__, endpoint);
 
     manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", endpoint);
 
@@ -549,6 +563,12 @@ void manager::update_backlog(size_t backlog, size_t max_backlog) {
 
 future<> manager::with_file_update_mutex_for(endpoint_id ep, noncopyable_function<future<> ()> func) {
     return _ep_managers.at(ep).with_file_update_mutex(std::move(func));
+}
+
+void manager::check_ep(std::string_view func, endpoint_id ep) const {
+    manager_logger.info("[{}]: Checking ep: {}", func, ep);
+    auto tmptr = _proxy.get_token_metadata_ptr();
+    assert(tmptr->get_host_id_if_known(ep).has_value());
 }
 
 } // namespace db::hints
