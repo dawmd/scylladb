@@ -189,8 +189,8 @@ void manager::register_metrics(const sstring& group_name) {
     });
 }
 
-future<> manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
-    _gossiper_anchor = std::move(gossiper_ptr);
+future<> manager::start(const gms::gossiper* gossiper_ptr) {
+    _gossiper_anchor = gossiper_ptr;
 
 
     co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),

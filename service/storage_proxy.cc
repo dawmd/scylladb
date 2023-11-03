@@ -52,6 +52,7 @@
 #include <boost/range/algorithm/partition.hpp>
 #include <boost/intrusive/list.hpp>
 #include <boost/outcome/result.hpp>
+#include "utils/fb_utilities.hh"
 #include "utils/latency.hh"
 #include "schema/schema.hh"
 #include "query_ranges_to_vnodes.hh"
@@ -6362,12 +6363,12 @@ storage_proxy::query_nonsingular_data_locally(schema_ptr s, lw_shared_ptr<query:
     co_return ret;
 }
 
-future<> storage_proxy::start_hints_manager(shared_ptr<gms::gossiper> g) {
+future<> storage_proxy::start_hints_manager(const gms::gossiper& g) {
     if (!_hints_manager.is_disabled_for_all()) {
-        co_await _hints_resource_manager.register_manager(_hints_manager);
+        co_await _hints_resource_manager.register_manager(_hints_manager, g);
     }
-    co_await _hints_resource_manager.register_manager(_hints_for_views_manager);
-    co_await _hints_resource_manager.start(std::move(g));
+    co_await _hints_resource_manager.register_manager(_hints_for_views_manager, g);
+    co_await _hints_resource_manager.start(g);
 }
 
 void storage_proxy::allow_replaying_hints() noexcept {
@@ -6382,7 +6383,7 @@ future<> storage_proxy::change_hints_host_filter(db::hints::host_filter new_filt
     co_await _hints_directory_initializer.ensure_created_and_verified();
     co_await _hints_directory_initializer.ensure_rebalanced();
     // This function is idempotent
-    co_await _hints_resource_manager.register_manager(_hints_manager);
+    co_await _hints_resource_manager.register_manager(_hints_manager, _remote->gossiper());
     co_await _hints_manager.change_host_filter(std::move(new_filter));
 }
 
@@ -6494,7 +6495,12 @@ void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {
     (void) _hints_for_views_manager.drain_for(endpoint);
 }
 
-void storage_proxy::on_up(const gms::inet_address& endpoint) {};
+void storage_proxy::on_up(const gms::inet_address& endpoint) {
+    if (endpoint == utils::fb_utilities::get_broadcast_address()) {
+        start_hints_manager(_remote->gossiper()).get();
+        allow_replaying_hints();
+    }
+};
 
 void storage_proxy::cancel_write_handlers(noncopyable_function<bool(const abstract_write_response_handler&)> filter_fun) {
     assert(thread::running_in_thread());

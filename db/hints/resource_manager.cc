@@ -174,12 +174,10 @@ void space_watchdog::on_timer() {
     }
 }
 
-future<> resource_manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
-    _gossiper_ptr = std::move(gossiper_ptr);
-
-    return with_semaphore(_operation_lock, 1, [this] () {
-        return parallel_for_each(_shard_managers, [this](manager& m) {
-            return m.start(_gossiper_ptr);
+future<> resource_manager::start(const gms::gossiper& gossiper) {
+    return with_semaphore(_operation_lock, 1, [&] () {
+        return parallel_for_each(_shard_managers, [&](manager& m) {
+            return m.start(&gossiper);
         }).then([this]() {
             return do_for_each(_shard_managers, [this](manager& m) {
                 return prepare_per_device_limits(m);
@@ -209,9 +207,9 @@ future<> resource_manager::stop() noexcept {
     });
 }
 
-future<> resource_manager::register_manager(manager& m) {
-    return with_semaphore(_operation_lock, 1, [this, &m] () {
-        return with_semaphore(_space_watchdog.update_lock(), 1, [this, &m] {
+future<> resource_manager::register_manager(manager& m, const gms::gossiper& gossiper) {
+    return with_semaphore(_operation_lock, 1, [&] () {
+        return with_semaphore(_space_watchdog.update_lock(), 1, [&] {
             const auto [it, inserted] = _shard_managers.insert(m);
             if (!inserted) {
                 // Already registered
@@ -223,7 +221,7 @@ future<> resource_manager::register_manager(manager& m) {
             }
 
             // If the resource_manager was started, start the hints manager, too.
-            return m.start(_gossiper_ptr).then([this, &m] {
+            return m.start(&gossiper).then([this, &m] {
                 // Calculate device limits for this manager so that it is accounted for
                 // by the space_watchdog
                 return prepare_per_device_limits(m).then([this, &m] {
