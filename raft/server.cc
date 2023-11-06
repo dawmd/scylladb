@@ -350,6 +350,7 @@ future<> server_impl::start() {
 
     _applied_idx = index_t{0};
     if (snapshot.id) {
+        logger.warn("LOAD SNAPSHOT: {}", __func__);
         co_await _state_machine->load_snapshot(snapshot.id);
         _applied_idx = snapshot.idx;
     }
@@ -1210,6 +1211,7 @@ future<> server_impl::applier_fiber() {
                 auto size = commands.size();
                 if (size) {
                     try {
+                        logger.warn("APPLY IN applier_fiber");
                         co_await _state_machine->apply(std::move(commands));
                     } catch (abort_requested_exception& e) {
                         logger.info("[{}] applier fiber stopped because state machine was aborted: {}", _id, e);
@@ -1261,6 +1263,7 @@ future<> server_impl::applier_fiber() {
                 assert(snp.idx >= _applied_idx);
                 // Apply snapshot it to the state machine
                 logger.trace("[{}] apply_fiber applying snapshot {}", _id, snp.id);
+        logger.warn("LOAD SNAPSHOT: {}", __func__);
                 co_await _state_machine->load_snapshot(snp.id);
                 drop_waiters(snp.idx);
                 _applied_idx = snp.idx;

@@ -387,6 +387,7 @@ future<> storage_service::topology_state_load() {
         co_await _messaging.local().ban_host(locator::host_id{id.uuid()});
     }
 
+    slogger.warn("{}: MUTATE TOKEN", __func__);
     co_await mutate_token_metadata(seastar::coroutine::lambda([this, &id2ip, &am] (mutable_token_metadata_ptr tmptr) -> future<> {
         co_await tmptr->clear_gently(); // drop previous state
 
@@ -545,6 +546,7 @@ future<> storage_service::topology_state_load() {
 }
 
 future<> storage_service::topology_transition() {
+    slogger.warn("TOPOLOGY TRANSITION");
     assert(this_shard_id() == 0);
     co_await topology_state_load(); // reload new state
 
@@ -3205,6 +3207,7 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
     }
 
     slogger.debug("Setting tokens to {}", bootstrap_tokens);
+    slogger.warn("{}: MUTATE TOKEN", __func__);
     co_await mutate_token_metadata([this, &bootstrap_tokens] (mutable_token_metadata_ptr tmptr) {
         // This node must know about its chosen tokens before other nodes do
         // since they may start sending writes to this node after it gossips status = NORMAL.
@@ -3346,6 +3349,7 @@ future<> storage_service::bootstrap(std::unordered_set<token>& bootstrap_tokens,
                 // When is_repair_based_node_ops_enabled is true, the bootstrap node
                 // will use node_ops_cmd to bootstrap, node_ops_cmd will update the pending ranges.
                 slogger.debug("bootstrap: update pending ranges: endpoint={} bootstrap_tokens={}", get_broadcast_address(), bootstrap_tokens);
+    slogger.warn("{}: MUTATE TOKEN", __func__);
                 mutate_token_metadata([this, &bootstrap_tokens] (mutable_token_metadata_ptr tmptr) {
                     auto endpoint = get_broadcast_address();
                     tmptr->update_topology(endpoint, _snitch.local()->get_location(), locator::node::state::bootstrapping);
@@ -3803,6 +3807,7 @@ future<> storage_service::on_remove(gms::inet_address endpoint, gms::permit_id p
     // } else {
         tmptr->remove_endpoint_without_topo(endpoint);
     // }
+    slogger.warn("ON REMOVE {}", endpoint);
     co_await update_topology_change_info(tmptr, ::format("on_remove {}", endpoint));
     co_await replicate_to_all_cores(std::move(tmptr));
 }
@@ -4576,6 +4581,7 @@ future<> storage_service::raft_decommission() {
 
     if (!std::get<0>(res).failed()) {
         // Need to set it otherwise gossiper will try to send shutdown on exit
+        slogger.warn("GOSSIPER ADDING LEFT STATUS");
         co_await _gossiper.add_local_application_state({{ gms::application_state::STATUS, gms::versioned_value::left({}, _gossiper.now().time_since_epoch().count()) }});
     } else {
         const auto err = "Decommission failed. See earlier errors";
@@ -4589,6 +4595,7 @@ future<> storage_service::decommission() {
         return seastar::async([&ss] {
             std::exception_ptr leave_group0_ex;
             if (ss._raft_topology_change_enabled) {
+                slogger.warn("DECOMMISSION WILL BE ON RAFT");
                 ss.raft_decommission().get();
             } else {
                 bool left_token_ring = false;
@@ -4735,6 +4742,7 @@ future<> storage_service::decommission() {
             //
             // mutate_token_metadata is apparently atomic, but it can fail, I guess.
             // Think what to do with that.
+    slogger.warn("{}: MUTATE TOKEN", __func__);
             ss.mutate_token_metadata([&ss] (mutable_token_metadata_ptr tmptr) {
                 auto endpoint = ss.get_broadcast_address();
                 tmptr->remove_endpoint_from_topo(endpoint);
@@ -4873,6 +4881,7 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
         auto tmptr = get_mutable_token_metadata_ptr().get();
         tmptr->remove_endpoint(replace_address); // README: CHANGING THIS TO remove_endpoint causes a segmentation fault on node1
         update_topology_change_info(tmptr, ::format("excise {}", replace_address)).get();
+        slogger.warn("RUN REPLACE OPS");
         replicate_to_all_cores(std::move(tmptr)).get();
         tmlock.reset();
     } catch (...) {
@@ -5064,6 +5073,7 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
                     auto tmptr = ss.get_mutable_token_metadata_ptr().get();
                     tmptr->remove_endpoint_from_topo(endpoint);
                     ss.update_topology_change_info(tmptr, ::format("removed endpoint from token metadata in removenode")).get();
+                    slogger.warn("REMOVENODE REPLICATE");
                     ss.replicate_to_all_cores(std::move(tmptr)).get();
                     tmlock.reset();
 
@@ -5373,6 +5383,7 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
         } else if (req.cmd == node_ops_cmd::replace_prepare_pending_ranges) {
             // Update the pending_ranges for the replacing node
             slogger.debug("replace[{}]: Updated pending_ranges from coordinator={}", req.ops_uuid, coordinator);
+    slogger.warn("{}: MUTATE TOKEN", __func__);
             mutate_token_metadata([&req, this] (mutable_token_metadata_ptr tmptr) mutable {
                 return update_topology_change_info(tmptr, ::format("replace {}", req.replace_nodes));
             }).get();
@@ -5391,6 +5402,7 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
                 slogger.warn("{}", msg);
                 throw std::runtime_error(msg);
             }
+    slogger.warn("{}: MUTATE TOKEN", __func__);
             mutate_token_metadata([coordinator, &req, this] (mutable_token_metadata_ptr tmptr) mutable {
                 for (auto& x: req.bootstrap_nodes) {
                     auto& endpoint = x.first;
@@ -5767,6 +5779,7 @@ future<> storage_service::excise(std::unordered_set<token> tokens, inet_address 
     tmptr->remove_bootstrap_tokens(tokens);
 
     co_await update_topology_change_info(tmptr, ::format("excise {}", endpoint));
+    slogger.warn("EXCISE REPLICATE");
     co_await replicate_to_all_cores(std::move(tmptr));
     tmlock.reset();
 
@@ -5788,6 +5801,7 @@ future<> storage_service::excise(std::unordered_set<token> tokens, inet_address 
 future<> storage_service::leave_ring() {
     co_await _cdc_gens.local().leave_ring();
     co_await _sys_ks.local().set_bootstrap_state(db::system_keyspace::bootstrap_state::NEEDS_BOOTSTRAP);
+    slogger.warn("{}: MUTATE TOKEN", __func__);
     co_await mutate_token_metadata([this] (mutable_token_metadata_ptr tmptr) {
         auto endpoint = get_broadcast_address();
         tmptr->remove_endpoint_without_topo(endpoint);
@@ -5950,6 +5964,7 @@ future<> storage_service::mutate_token_metadata(std::function<future<> (mutable_
     }
     auto tmptr = co_await get_mutable_token_metadata_ptr();
     co_await func(tmptr);
+    slogger.warn("MUTATE TOKEN REPLICATE");
     co_await replicate_to_all_cores(std::move(tmptr));
 }
 
@@ -5967,6 +5982,7 @@ future<> storage_service::update_topology_change_info(mutable_token_metadata_ptr
 }
 
 future<> storage_service::update_topology_change_info(sstring reason, acquire_merge_lock acquire_merge_lock) {
+    slogger.warn("{}: MUTATE TOKEN", __func__);
     return mutate_token_metadata([this, reason = std::move(reason)] (mutable_token_metadata_ptr tmptr) mutable {
         return update_topology_change_info(std::move(tmptr), std::move(reason));
     }, acquire_merge_lock);
@@ -6000,6 +6016,7 @@ future<> storage_service::load_tablet_metadata() {
     if (!_db.local().get_config().check_experimental(db::experimental_features_t::feature::TABLETS)) {
         return make_ready_future<>();
     }
+    slogger.warn("{}: MUTATE TOKEN", __func__);
     return mutate_token_metadata([this] (mutable_token_metadata_ptr tmptr) -> future<> {
         tmptr->set_tablets(co_await replica::read_tablet_metadata(*_qp));
     }, acquire_merge_lock::no);
@@ -6008,6 +6025,7 @@ future<> storage_service::load_tablet_metadata() {
 future<> storage_service::snitch_reconfigured() {
     assert(this_shard_id() == 0);
     auto& snitch = _snitch.local();
+    slogger.warn("{}: MUTATE TOKEN", __func__);
     co_await mutate_token_metadata([&snitch] (mutable_token_metadata_ptr tmptr) -> future<> {
         // re-read local rack and DC info
         tmptr->update_topology(utils::fb_utilities::get_broadcast_address(), snitch->get_location());
@@ -6069,6 +6087,7 @@ future<raft_topology_cmd_result> storage_service::raft_topology_cmd_handler(shar
         // which can cause the fence command to apply an invalid fence version.
         const auto version = _topology_state_machine._topology.version;
 
+        slogger.warn("CMD = {}", cmd.cmd);
         switch (cmd.cmd) {
             case raft_topology_cmd::command::barrier: {
                 // This barrier might have been issued by the topology coordinator
@@ -6182,6 +6201,7 @@ future<raft_topology_cmd_result> storage_service::raft_topology_cmd_handler(shar
                                     }
                                     ignored_ips.insert(*ip);
                                 }
+                                slogger.warn("REPLACING WITH REPAIR");
                                 co_await _repair.local().replace_with_repair(get_token_metadata_ptr(), rs.ring.value().tokens, std::move(ignored_ips));
                             } else {
                                 dht::boot_strapper bs(_db, _stream_manager, _abort_source, get_broadcast_address(),

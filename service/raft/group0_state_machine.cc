@@ -126,6 +126,7 @@ future<> group0_state_machine::merge_and_apply(group0_state_machine_merger& merg
     },
     [&] (topology_change& chng) -> future<> {
         co_await write_mutations_to_database(_sp, cmd.creator_addr, std::move(chng.mutations));
+        slogger.warn("TOPOLOGY TRANSITION: merge and apply");
         co_await _ss.topology_transition();
     },
     [&] (write_mutations& muts) -> future<> {
@@ -172,6 +173,7 @@ future<> group0_state_machine::apply(std::vector<raft::command_cref> command) {
 
         auto size = m.cmd_size(cmd);
         if (!m.can_merge(cmd, size)) {
+            slogger.warn("MERGE AND APPLY IN apply 1");
             co_await merge_and_apply(m);
         }
 
@@ -180,6 +182,7 @@ future<> group0_state_machine::apply(std::vector<raft::command_cref> command) {
 
     if (!m.empty()) {
         // apply remainder
+            slogger.warn("MERGE AND APPLY IN apply 2");
         co_await merge_and_apply(m);
     }
 }
@@ -196,6 +199,7 @@ future<> group0_state_machine::load_snapshot(raft::snapshot_id id) {
     // topology_state_load applies persisted state machine state into
     // memory and thus needs to be protected with apply mutex
     auto read_apply_mutex_holder = co_await _client.hold_read_apply_mutex();
+    slogger.warn("LOAD SNAPSHOT: {}", id);
     co_await _ss.topology_state_load();
     _ss._topology_state_machine.event.broadcast();
 }

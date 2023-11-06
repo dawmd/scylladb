@@ -1301,6 +1301,7 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
             auto holder = co_await group0_client.hold_read_apply_mutex();
             apilog.info("Reloading Raft topology state");
             // Using topology_transition() instead of topology_state_load(), because the former notifies listeners
+            apilog.warn("TOPOLOGY TRANSITION IN set storage service");
             co_await ss.topology_transition();
             apilog.info("Reloaded Raft topology state");
         });

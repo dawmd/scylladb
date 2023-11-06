@@ -466,6 +466,7 @@ future<> token_metadata_impl::update_normal_tokens(std::unordered_set<token> tok
     // c. update _token_to_endpoint_map with the new endpoint->token mappings
     //    - set `should_sort_tokens` if new tokens were added
     remove_by_value(_bootstrap_tokens, endpoint);
+    tlogger.warn("LEAVING ENDPOINT BEING ERASED: {}", endpoint);
     _leaving_endpoints.erase(endpoint);
     invalidate_cached_rings();
     for (const token& t : tokens)

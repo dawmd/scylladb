@@ -396,7 +396,7 @@ class PythonTestSuite(TestSuite):
                 cluster_name=create_cfg.cluster_name,
                 ip_addr=create_cfg.ip_addr,
                 seeds=create_cfg.seeds,
-                cmdline_options=cmdline_options + ['--default-log-level=trace'],
+                cmdline_options=cmdline_options + ['--default-log-level=debug', '--logger-log-level', 'repair=warn', '--logger-log-level', 'paging=warn', '--logger-log-level', 'hints_manager=warn', '--logger-log-level', 'system_keyspace=warn', '--logger-log-level', 'compaction_manager=warn', '--logger-log-level', 'mutation_fragment_stream_validator=warn', '--logger-log-level', 'cql_server=warn'],
                 config_options=config_options,
                 property_file=create_cfg.property_file)
 

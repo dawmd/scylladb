@@ -6490,10 +6490,10 @@ future<> storage_proxy::wait_for_hint_sync_point(const db::hints::sync_point spo
 }
 
 void storage_proxy::on_join_cluster(const gms::inet_address& endpoint) {
-    if (endpoint == utils::fb_utilities::get_broadcast_address()) {
-        slogger.info("Starting hinted handoff manager");
-        start_hints_manager().get();
-    }
+    // if (endpoint == utils::fb_utilities::get_broadcast_address()) {
+    //     slogger.info("Starting hinted handoff manager");
+    //     start_hints_manager(_remote->gossiper).get();
+    // }
 };
 
 void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {

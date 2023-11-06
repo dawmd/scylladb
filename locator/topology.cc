@@ -258,6 +258,7 @@ const node* topology::update_node(node* node, std::optional<host_id> opt_id, std
         return node;
     }
 
+    tlogger.warn("UNINDEXING NODE: {}", node->endpoint());
     unindex_node(node);
     // The following block must not throw
     try {
@@ -295,7 +296,7 @@ bool topology::remove_node(host_id id) {
 }
 
 void topology::remove_node(const node* node) {
-    tlogger.debug("{}: popping {}", node->endpoint());
+    tlogger.debug("{}: popping {}", fmt::ptr(this), node->endpoint());
     pop_node(node);
 }
 
