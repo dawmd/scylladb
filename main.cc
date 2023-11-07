@@ -1193,7 +1193,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             const auto listen_address = utils::resolve(cfg->listen_address, family).get0();
             const auto host_id = initialize_local_info_thread(sys_ks, snitch, listen_address, *cfg);
 
-          shared_token_metadata::mutate_on_all_shards(token_metadata, [host_id, endpoint = utils::fb_utilities::get_broadcast_address()] (locator::token_metadata2& tm) {
+          shared_token_metadata::mutate_on_all_shards(token_metadata, [host_id, endpoint = utils::fb_utilities::get_broadcast_address()] (locator::token_metadata& tm) {
               // Makes local host id available in topology cfg as soon as possible.
               // Raft topology discard the endpoint-to-id map, so the local id can
               // still be found in the config.
