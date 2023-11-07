@@ -633,17 +633,10 @@ private:
                 host_id = linfo.host_id;
                 _sys_ks.local().save_local_info(std::move(linfo), _snitch.local()->get_location()).get();
             }
-            locator::shared_token_metadata::mutate_on_all_shards(_token_metadata, [hostid = host_id] (locator::token_metadata& tm) {
+            locator::shared_token_metadata::mutate_on_all_shards(_token_metadata, [hostid = host_id] (locator::token_metadata2& tm) {
                 auto& topo = tm.get_topology();
                 topo.set_host_id_cfg(hostid);
                 topo.add_or_update_endpoint(utils::fb_utilities::get_broadcast_address(),
-                                            hostid,
-                                            std::nullopt,
-                                            locator::node::state::normal,
-                                            smp::count);
-                auto& topo_new = tm.get_new()->get_topology();
-                topo_new.set_host_id_cfg(hostid);
-                topo_new.add_or_update_endpoint(utils::fb_utilities::get_broadcast_address(),
                                                 hostid,
                                                 std::nullopt,
                                                 locator::node::state::normal,
