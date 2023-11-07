@@ -159,11 +159,6 @@ private:
 
 class topology {
 public:
-    enum class key_kind {
-        inet_address,
-        host_id,
-    };
-
     struct config {
         inet_address this_endpoint;
         host_id this_host_id;
@@ -172,7 +167,7 @@ public:
 
         bool operator==(const config&) const = default;
     };
-    topology(config cfg, key_kind k);
+    topology(config cfg);
     topology(topology&&) noexcept;
 
     topology& operator=(topology&&) noexcept;
@@ -394,8 +389,6 @@ private:
 
     // pre-calculated
     std::unordered_set<sstring> _datacenters;
-
-    key_kind _key_kind;
 
     void calculate_datacenters();
 

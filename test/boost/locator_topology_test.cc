@@ -38,7 +38,7 @@ SEASTAR_THREAD_TEST_CASE(test_add_node) {
         .local_dc_rack = endpoint_dc_rack::default_location,
     };
 
-    auto topo = topology(cfg, topology::key_kind::inet_address);
+    auto topo = topology(cfg);
 
     set_abort_on_internal_error(false);
     auto reset_on_internal_abort = seastar::defer([] {
@@ -76,7 +76,7 @@ SEASTAR_THREAD_TEST_CASE(test_moving) {
         .local_dc_rack = endpoint_dc_rack::default_location,
     };
 
-    auto topo = topology(cfg, topology::key_kind::inet_address);
+    auto topo = topology(cfg);
 
     topo.add_node(id1, ep1, endpoint_dc_rack::default_location, node::state::normal);
 
@@ -103,22 +103,23 @@ SEASTAR_THREAD_TEST_CASE(test_update_node) {
     utils::fb_utilities::set_broadcast_address(ep1);
     topology::config cfg = {
         .this_endpoint = ep1,
+        .this_host_id = id1,
         .local_dc_rack = endpoint_dc_rack::default_location,
     };
 
-    auto topo = topology(cfg, topology::key_kind::inet_address);
+    auto topo = topology(cfg);
 
     set_abort_on_internal_error(false);
     auto reset_on_internal_abort = seastar::defer([] {
         set_abort_on_internal_error(true);
     });
 
-    topo.add_or_update_endpoint(ep1, endpoint_dc_rack::default_location, node::state::normal);
+    topo.add_or_update_endpoint(std::nullopt, id1, endpoint_dc_rack::default_location, node::state::normal);
 
     auto node = topo.this_node();
     auto mutable_node = const_cast<locator::node*>(node);
 
-    node = topo.update_node(mutable_node, id1, std::nullopt, std::nullopt, std::nullopt);
+    node = topo.update_node(mutable_node, std::nullopt, ep1, std::nullopt, std::nullopt);
     BOOST_REQUIRE_EQUAL(topo.find_node(id1), node);
     mutable_node = const_cast<locator::node*>(node);
 
@@ -199,7 +200,7 @@ SEASTAR_THREAD_TEST_CASE(test_remove_endpoint) {
         .local_dc_rack = dc_rack1
     };
 
-    auto topo = topology(cfg, topology::key_kind::inet_address);
+    auto topo = topology(cfg);
 
     topo.add_node(id1, ep1, dc_rack1, node::state::normal);
     topo.add_node(id2, ep2, dc_rack2, node::state::normal);
