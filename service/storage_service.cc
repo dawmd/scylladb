@@ -373,9 +373,11 @@ future<> storage_service::topology_state_load() {
         co_return *ip;
     };
 
+        slogger.warn("LEFT NODES IN STATE LOAD: {}", _topology_state_machine._topology.left_nodes);
     for (const auto& id: _topology_state_machine._topology.left_nodes) {
         auto ip = co_await id2ip(id);
         if (_gossiper.get_live_members().contains(ip) || _gossiper.get_unreachable_members().contains(ip)) {
+            slogger.warn("REMOVE ENDPOINT FROM STATE LOAD: {}", ip);
             co_await remove_endpoint(ip, gms::null_permit_id);
         }
 

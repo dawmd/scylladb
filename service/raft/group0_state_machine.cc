@@ -125,8 +125,8 @@ future<> group0_state_machine::merge_and_apply(group0_state_machine_merger& merg
         _client.set_query_result(cmd.new_state_id, std::move(result));
     },
     [&] (topology_change& chng) -> future<> {
+        slogger.warn("TOPOLOGY TRANSITION: merge and apply: {}", chng.mutations);
         co_await write_mutations_to_database(_sp, cmd.creator_addr, std::move(chng.mutations));
-        slogger.warn("TOPOLOGY TRANSITION: merge and apply");
         co_await _ss.topology_transition();
     },
     [&] (write_mutations& muts) -> future<> {
