@@ -179,7 +179,8 @@ future<> resource_manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
 
     return with_semaphore(_operation_lock, 1, [this] () {
         return parallel_for_each(_shard_managers, [this](manager& m) {
-            return m.start(_gossiper_ptr);
+            m.set_up(_gossiper_ptr);
+            return m.start();
         }).then([this]() {
             return do_for_each(_shard_managers, [this](manager& m) {
                 return prepare_per_device_limits(m);
@@ -223,7 +224,8 @@ future<> resource_manager::register_manager(manager& m) {
             }
 
             // If the resource_manager was started, start the hints manager, too.
-            return m.start(_gossiper_ptr).then([this, &m] {
+            m.set_up(_gossiper_ptr);
+            return m.start().then([this, &m] {
                 // Calculate device limits for this manager so that it is accounted for
                 // by the space_watchdog
                 return prepare_per_device_limits(m).then([this, &m] {
