@@ -52,6 +52,7 @@
 #include <boost/range/algorithm/partition.hpp>
 #include <boost/intrusive/list.hpp>
 #include <boost/outcome/result.hpp>
+#include "utils/fb_utilities.hh"
 #include "utils/latency.hh"
 #include "schema/schema.hh"
 #include "query_ranges_to_vnodes.hh"
@@ -3038,7 +3039,7 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
 
     auto all = boost::range::join(natural_endpoints, pending_endpoints);
 
-    if (cannot_hint(all, type)) {
+    if (_hints_manager.running() && cannot_hint(all, type)) {
         get_stats().writes_failed_due_to_too_many_in_flight_hints++;
         // avoid OOMing due to excess hints.  we need to do this check even for "live" nodes, since we can
         // still generate hints for those if it's overloaded or simply dead but not yet known-to-be-dead.
@@ -6498,7 +6499,12 @@ void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {
     (void) _hints_for_views_manager.drain_for(endpoint);
 }
 
-void storage_proxy::on_up(const gms::inet_address& endpoint) {};
+void storage_proxy::on_up(const gms::inet_address& endpoint) {
+    if (endpoint == utils::fb_utilities::get_broadcast_address()) {
+        slogger.warn("Starting the hint manager!");
+        start_hints_manager().get();
+    }
+};
 
 void storage_proxy::cancel_write_handlers(noncopyable_function<bool(const abstract_write_response_handler&)> filter_fun) {
     assert(thread::running_in_thread());

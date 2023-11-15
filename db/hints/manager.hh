@@ -289,6 +289,10 @@ public:
 
     void update_backlog(size_t backlog, size_t max_backlog);
 
+    bool running() noexcept {
+        return started() && !stopping() && !draining_all();
+    }
+
 private:
     bool stopping() const noexcept {
         return _state.contains(state::stopping);
