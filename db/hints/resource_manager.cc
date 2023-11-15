@@ -174,9 +174,11 @@ void space_watchdog::on_timer() {
     }
 }
 
-future<> resource_manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
+void resource_manager::set_up(shared_ptr<gms::gossiper> gossiper_ptr) {
     _gossiper_ptr = std::move(gossiper_ptr);
+}
 
+future<> resource_manager::start() {
     return with_semaphore(_operation_lock, 1, [this] () {
         return parallel_for_each(_shard_managers, [this](manager& m) {
             m.set_up(_gossiper_ptr);
