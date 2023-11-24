@@ -396,7 +396,13 @@ class PythonTestSuite(TestSuite):
                 cluster_name=create_cfg.cluster_name,
                 ip_addr=create_cfg.ip_addr,
                 seeds=create_cfg.seeds,
-                cmdline_options=cmdline_options,
+                cmdline_options=cmdline_options + [
+                    '--default-log-level=warn',
+                    '--logger-log-level', 'init=info',
+                    '--logger-log-level', 'storage_service=debug',
+                    '--logger-log-level', 'storage_proxy=debug',
+                    '--logger-log-level', 'hints_manager=debug',
+                    '--logger-log-level', 'topology=trace'],
                 config_options=config_options,
                 property_file=create_cfg.property_file)
 

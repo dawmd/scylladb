@@ -52,6 +52,7 @@
 #include <boost/range/algorithm/partition.hpp>
 #include <boost/intrusive/list.hpp>
 #include <boost/outcome/result.hpp>
+#include "utils/fb_utilities.hh"
 #include "utils/latency.hh"
 #include "schema/schema.hh"
 #include "query_ranges_to_vnodes.hh"
@@ -3037,8 +3038,12 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
     pending_endpoints.erase(itend, pending_endpoints.end());
 
     auto all = boost::range::join(natural_endpoints, pending_endpoints);
+    for (const auto& e : all) {
+        slogger.warn("\tEndpoint = {}", e);
+    }
 
-    if (cannot_hint(all, type)) {
+    assert(_hints_manager.running() || (all.size() == 1 && all[0] == utils::fb_utilities::get_broadcast_address()));
+    if (_hints_manager.running() && cannot_hint(all, type)) {
         get_stats().writes_failed_due_to_too_many_in_flight_hints++;
         // avoid OOMing due to excess hints.  we need to do this check even for "live" nodes, since we can
         // still generate hints for those if it's overloaded or simply dead but not yet known-to-be-dead.
