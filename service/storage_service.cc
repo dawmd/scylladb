@@ -332,6 +332,7 @@ static locator::node::state to_topology_node_state(node_state ns) {
 }
 
 future<> storage_service::topology_state_load() {
+    slogger.info("TOPOLOGY STATE LOAD");
 #ifdef SEASTAR_DEBUG
     static bool running = false;
     assert(!running); // The function is not re-entrant
@@ -376,6 +377,7 @@ future<> storage_service::topology_state_load() {
     for (const auto& id: _topology_state_machine._topology.left_nodes) {
         auto ip = co_await id2ip(id);
         if (_gossiper.get_live_members().contains(ip) || _gossiper.get_unreachable_members().contains(ip)) {
+            slogger.warn("Removing an endpoint: {}", ip);
             co_await remove_endpoint(ip, gms::null_permit_id);
         }
 
@@ -388,11 +390,13 @@ future<> storage_service::topology_state_load() {
     }
 
     co_await mutate_token_metadata(seastar::coroutine::lambda([this, &id2ip, &am] (mutable_token_metadata_ptr tmptr) -> future<> {
+        slogger.info("Topology before mutating in reloading: {}", tmptr->get_topology());
         co_await tmptr->clear_gently(); // drop previous state
 
         tmptr->set_version(_topology_state_machine._topology.version);
 
         auto update_topology = [&] (locator::host_id id, inet_address ip, const replica_state& rs) {
+            slogger.info("Update topology: ({}, {})", id, ip);
             tmptr->update_topology(ip, locator::endpoint_dc_rack{rs.datacenter, rs.rack},
                                    to_topology_node_state(rs.state), rs.shard_count);
             tmptr->update_host_id(id, ip);
@@ -427,6 +431,7 @@ future<> storage_service::topology_state_load() {
         };
 
         for (const auto& [id, rs]: _topology_state_machine._topology.normal_nodes) {
+            slogger.info("Adding a normal node: ({})", id);
             co_await add_normal_node(id, rs);
         }
 
@@ -2968,21 +2973,23 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
     // (we won't be part of the storage ring though until we add a counterId to our state, below.)
     // Seed the host ID-to-endpoint map with our own ID.
     auto local_host_id = get_token_metadata().get_my_id();
-    if (!replacing_a_node_with_diff_ip) {
+    // if (!replacing_a_node_with_diff_ip) {
         auto endpoint = get_broadcast_address();
         auto eps = _gossiper.get_endpoint_state_ptr(endpoint);
         if (eps) {
             auto replace_host_id = _gossiper.get_host_id(get_broadcast_address());
             slogger.info("Host {}/{} is replacing {}/{} using the same address", local_host_id, endpoint, replace_host_id, endpoint);
         }
+        slogger.info("Updating host ID: ({}, {})", local_host_id, get_broadcast_address());
         tmptr->update_host_id(local_host_id, get_broadcast_address());
-    }
+    // }
 
     // Replicate the tokens early because once gossip runs other nodes
     // might send reads/writes to this node. Replicate it early to make
     // sure the tokens are valid on all the shards.
     co_await replicate_to_all_cores(std::move(tmptr));
     tmlock.reset();
+    slogger.warn("Topology way before starting the hint manager: {}", get_token_metadata().get_topology());
 
     auto broadcast_rpc_address = utils::fb_utilities::get_broadcast_rpc_address();
     // Ensure we know our own actual Schema UUID in preparation for updates
@@ -3026,7 +3033,9 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
 
     auto generation_number = gms::generation_type(co_await _sys_ks.local().increment_and_get_generation());
     auto advertise = gms::advertise_myself(!replacing_a_node_with_same_ip);
+    slogger.warn("Topology B4: {}", get_token_metadata().get_topology());
     co_await _gossiper.start_gossiping(generation_number, app_states, advertise);
+    slogger.warn("Topology B3: {}", get_token_metadata().get_topology());
 
     if (!_raft_topology_change_enabled && should_bootstrap()) {
         // Wait for NORMAL state handlers to finish for existing nodes now, so that connection dropping
@@ -3074,8 +3083,14 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
         co_await _gossiper.wait_alive(sync_nodes, wait_for_live_nodes_timeout);
         slogger.info("Nodes {} are alive", sync_nodes);
     }
+    slogger.warn("Topology B2: {}", get_token_metadata().get_topology());
 
     assert(_group0);
+
+    slogger.warn("Topology right before starting the hint manager: {}", get_token_metadata().get_topology());
+    co_await proxy.invoke_on_all([g = _gossiper.shared_from_this()] (storage_proxy& local_proxy) {
+        return local_proxy.start_hints_manager(g);
+    });
 
     join_node_request_params join_params {
         .host_id = _group0->load_my_id(),
@@ -3094,6 +3109,7 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
         join_params.replaced_id = raft_replace_info->raft_id;
         join_params.ignore_nodes = utils::split_comma_separated_list(_db.local().get_config().ignore_dead_nodes_for_replace());
     }
+    slogger.warn("Topology B1: {}", get_token_metadata().get_topology());
 
     // if the node is bootstrapped the functin will do nothing since we already created group0 in main.cc
     ::shared_ptr<group0_handshaker> handshaker = _raft_topology_change_enabled
@@ -3101,6 +3117,8 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
             : _group0->make_legacy_handshaker(false);
     co_await _group0->setup_group0(_sys_ks.local(), initial_contact_nodes, std::move(handshaker),
             raft_replace_info, *this, _qp, _migration_manager.local(), _raft_topology_change_enabled);
+
+    slogger.warn("Topology B0: {}", get_token_metadata().get_topology());
 
     raft::server* raft_server = co_await [this] () -> future<raft::server*> {
         if (!_raft_topology_change_enabled) {

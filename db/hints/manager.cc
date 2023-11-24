@@ -258,6 +258,10 @@ void manager::forbid_hints_for_eps_with_pending_hints() {
 }
 
 sync_point::shard_rps manager::calculate_current_sync_point(std::span<const endpoint_id> target_eps) const {
+    for (const auto& endpoint : target_eps) {
+        check_ep(__func__, endpoint);
+    }
+
     sync_point::shard_rps rps;
 
     for (auto addr : target_eps) {
@@ -345,6 +349,8 @@ bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const froze
         return false;
     }
 
+    check_ep(__func__, ep);
+
     try {
         manager_logger.trace("Going to store a hint to {}", ep);
         tracing::trace(tr_state, "Going to store a hint to {}", ep);
@@ -360,6 +366,7 @@ bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const froze
 }
 
 bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
+    check_ep(__func__, ep);
     // There is no need to check the DC here because if there is an in-flight hint for this
     // endpoint, then this means that its DC has already been checked and found to be ok.
     return _stats.size_of_hints_in_progress > MAX_SIZE_OF_HINTS_IN_PROGRESS
@@ -369,6 +376,7 @@ bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
 }
 
 bool manager::can_hint_for(endpoint_id ep) const noexcept {
+    check_ep(__func__, ep);
     if (utils::fb_utilities::is_me(ep)) {
         return false;
     }
@@ -471,6 +479,7 @@ future<> manager::change_host_filter(host_filter filter) {
 
 bool manager::check_dc_for(endpoint_id ep) const noexcept {
     try {
+        check_ep(__func__, ep);
         // If target's DC is not a "hintable" DCs - don't hint.
         // If there is an end point manager then DC has already been checked and found to be ok.
         return _host_filter.is_enabled_for_all() || have_ep_manager(ep) ||
@@ -485,6 +494,8 @@ future<> manager::drain_for(endpoint_id endpoint) noexcept {
     if (!started() || stopping() || draining_all()) {
         co_return;
     }
+    // It's not really necessary to check it here as far as starting the hint manager issue goes, I think.
+    // check_ep(__func__, endpoint);
 
     manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", endpoint);
 
@@ -549,6 +560,14 @@ void manager::update_backlog(size_t backlog, size_t max_backlog) {
 
 future<> manager::with_file_update_mutex_for(endpoint_id ep, noncopyable_function<future<> ()> func) {
     return _ep_managers.at(ep).with_file_update_mutex(std::move(func));
+}
+
+// Check if there's information about an endpoint in the token metadata ~ topology.
+void manager::check_ep(std::string_view f, endpoint_id ep) const noexcept {
+    const auto tmptr = _proxy.get_token_metadata_ptr();
+    manager_logger.warn("[{}, {}]: Checking {}. Topology: {}", f, fmt::ptr(&tmptr->get_topology()), ep, tmptr->get_topology());
+    auto opt_hid = tmptr->get_host_id_if_known(ep);
+    assert(opt_hid.has_value());
 }
 
 } // namespace db::hints
