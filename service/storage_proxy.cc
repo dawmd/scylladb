@@ -6369,12 +6369,16 @@ storage_proxy::query_nonsingular_data_locally(schema_ptr s, lw_shared_ptr<query:
     co_return ret;
 }
 
-future<> storage_proxy::start_hints_manager(shared_ptr<gms::gossiper> g) {
+void storage_proxy::set_gossiper_for_resource_manager(shared_ptr<gms::gossiper> gossiper_ptr) noexcept {
+    _hints_resource_manager.set_gossiper(gossiper_ptr);
+}
+
+future<> storage_proxy::start_hints_manager() {
     if (!_hints_manager.is_disabled_for_all()) {
         co_await _hints_resource_manager.register_manager(_hints_manager);
     }
     co_await _hints_resource_manager.register_manager(_hints_for_views_manager);
-    co_await _hints_resource_manager.start(std::move(g));
+    co_await _hints_resource_manager.start();
 }
 
 void storage_proxy::allow_replaying_hints() noexcept {

@@ -189,10 +189,11 @@ void manager::register_metrics(const sstring& group_name) {
     });
 }
 
-future<> manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
+void manager::set_gossiper(shared_ptr<gms::gossiper> gossiper_ptr) noexcept {
     _gossiper_anchor = std::move(gossiper_ptr);
+}
 
-
+future<> manager::start() {
     co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),
             [this] (fs::path datadir, directory_entry de) {
         endpoint_id ep = endpoint_id{de.name};
@@ -565,9 +566,10 @@ future<> manager::with_file_update_mutex_for(endpoint_id ep, noncopyable_functio
 // Check if there's information about an endpoint in the token metadata ~ topology.
 void manager::check_ep(std::string_view f, endpoint_id ep) const noexcept {
     const auto tmptr = _proxy.get_token_metadata_ptr();
-    manager_logger.warn("[{}, {}]: Checking {}. Topology: {}", f, fmt::ptr(&tmptr->get_topology()), ep, tmptr->get_topology());
     auto opt_hid = tmptr->get_host_id_if_known(ep);
-    assert(opt_hid.has_value());
+    auto this_node = tmptr->get_topology().this_node();
+    manager_logger.warn("[{}, {}]: Checking {} (this node == null: {}). Topology: {}", f, fmt::ptr(&tmptr->get_topology()), ep, this_node == nullptr, tmptr->get_topology());
+    assert(opt_hid.has_value() || ((void) tmptr->get_my_id(), utils::fb_utilities::get_broadcast_address() == ep));
 }
 
 } // namespace db::hints

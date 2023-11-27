@@ -391,6 +391,9 @@ future<> storage_service::topology_state_load() {
 
     co_await mutate_token_metadata(seastar::coroutine::lambda([this, &id2ip, &am] (mutable_token_metadata_ptr tmptr) -> future<> {
         slogger.info("Topology before mutating in reloading: {}", tmptr->get_topology());
+        const auto prev_host_id = tmptr->get_my_id();
+        const auto prev_ip = get_broadcast_address();
+
         co_await tmptr->clear_gently(); // drop previous state
 
         tmptr->set_version(_topology_state_machine._topology.version);
@@ -523,6 +526,12 @@ future<> storage_service::topology_state_load() {
                 on_fatal_internal_error(slogger, ::format("Unexpected state {} for node {}", rs.state, id));
             }
         }
+
+        if (!tmptr->get_topology().has_node(prev_host_id) && !tmptr->get_topology().has_node(prev_ip)) {
+            tmptr->get_topology().add_or_update_endpoint(prev_ip, prev_host_id);
+        }
+        slogger.info("Topology: {}", tmptr->get_topology());
+        // assert(tmptr->get_host_id_if_known(prev_ip).has_value());
 
         if (_db.local().get_config().check_experimental(db::experimental_features_t::feature::TABLETS)) {
             tmptr->set_tablets(co_await replica::read_tablet_metadata(_qp));
@@ -3088,8 +3097,10 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
     assert(_group0);
 
     slogger.warn("Topology right before starting the hint manager: {}", get_token_metadata().get_topology());
-    co_await proxy.invoke_on_all([g = _gossiper.shared_from_this()] (storage_proxy& local_proxy) {
-        return local_proxy.start_hints_manager(g);
+    co_await proxy.invoke_on_all([] (storage_proxy& local_proxy) {
+        return local_proxy.start_hints_manager().then([&local_proxy] {
+            return local_proxy.allow_replaying_hints();
+        });
     });
 
     join_node_request_params join_params {

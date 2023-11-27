@@ -140,8 +140,9 @@ public:
     }
 
 public:
+    void set_gossiper(shared_ptr<gms::gossiper> gossiper_ptr) noexcept;
     void register_metrics(const sstring& group_name);
-    future<> start(shared_ptr<gms::gossiper> gossiper_ptr);
+    future<> start();
     future<> stop();
     bool store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept;
 
