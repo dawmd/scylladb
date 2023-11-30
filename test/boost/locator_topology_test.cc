@@ -114,7 +114,7 @@ SEASTAR_THREAD_TEST_CASE(test_update_node) {
         set_abort_on_internal_error(true);
     });
 
-    topo.add_or_update_endpoint(std::nullopt, id1, endpoint_dc_rack::default_location, node::state::normal);
+    topo.add_or_update_endpoint(id1, std::nullopt, endpoint_dc_rack::default_location, node::state::normal);
 
     auto node = topo.this_node();
     auto mutable_node = const_cast<locator::node*>(node);

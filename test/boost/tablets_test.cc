@@ -434,7 +434,7 @@ SEASTAR_TEST_CASE(test_sharder) {
         auto table1 = table_id(utils::UUID_gen::get_time_UUID());
 
         token_metadata tokm(token_metadata::config{ .topo_cfg{ .this_host_id = h1 } });
-        tokm.get_topology().add_or_update_endpoint(utils::fb_utilities::get_broadcast_address(), h1);
+        tokm.get_topology().add_or_update_endpoint(h1, utils::fb_utilities::get_broadcast_address());
 
         std::vector<tablet_id> tablet_ids;
         {
