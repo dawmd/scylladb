@@ -81,11 +81,11 @@ private:
     using node_to_hint_store_factory_type = internal::node_to_hint_store_factory_type;
 
     enum class state {
-        started,        // Hinting is currently allowed (start() has completed).
-        replay_allowed, // Replaying (sending) hints is allowed.
-        draining_all,   // Accepting new hints is not allowed. All endpoint managers
+        started = 1,        // Hinting is currently allowed (start() has completed).
+        replay_allowed = 2, // Replaying (sending) hints is allowed.
+        draining_all = 4,   // Accepting new hints is not allowed. All endpoint managers
                         // are being drained because the node is leaving the cluster.
-        stopping        // Accepting new hints is not allowed. Stopping this manager
+        stopping = 8       // Accepting new hints is not allowed. Stopping this manager
                         // is in progress (stop() has been called).
     };
 
@@ -290,9 +290,7 @@ public:
 
     void update_backlog(size_t backlog, size_t max_backlog);
 
-    bool running() const noexcept {
-        return started() && !stopping() && !draining_all();
-    }
+    bool running() const noexcept;
 
 private:
     bool stopping() const noexcept {
@@ -303,13 +301,9 @@ private:
         _state.set(state::stopping);
     }
 
-    bool started() const noexcept {
-        return _state.contains(state::started);
-    }
+    bool started() const noexcept;
 
-    void set_started() noexcept {
-        _state.set(state::started);
-    }
+    void set_started() noexcept;
 
     bool replay_allowed() const noexcept {
         return _state.contains(state::replay_allowed);

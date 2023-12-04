@@ -471,11 +471,13 @@ public:
     }
 
     future<> execute(std::function<void(mutation)> mutation_sink) override {
+        vtlog.info("EXECUTE 1");
         co_await add_partition(mutation_sink, "gossip_active", [this] () -> future<sstring> {
             return _ss.is_gossip_running().then([] (bool running){
                 return format("{}", running);
             });
         });
+        vtlog.info("EXECUTE 2");
         co_await add_partition(mutation_sink, "load", [this] () -> future<sstring> {
             return map_reduce_tables<int64_t>([] (replica::table& tbl) {
                 return tbl.get_stats().live_disk_space_used;
@@ -483,8 +485,13 @@ public:
                 return format("{}", load);
             });
         });
+        vtlog.info("EXECUTE 3");
         add_partition(mutation_sink, "uptime", format("{} seconds", std::chrono::duration_cast<std::chrono::seconds>(engine().uptime()).count()));
+        
+        vtlog.info("EXECUTE 4");
         add_partition(mutation_sink, "trace_probability", format("{:.2}", tracing::tracing::get_local_tracing_instance().get_trace_probability()));
+        
+        vtlog.info("EXECUTE 5");
         co_await add_partition(mutation_sink, "memory", [this] () {
             struct stats {
                 // take the pre-reserved memory into account, as seastar only returns
@@ -509,6 +516,7 @@ public:
                         {"free", format("{}", s.free)}};
             });
         });
+        vtlog.info("EXECUTE 6");
         co_await add_partition(mutation_sink, "memtable", [this] () {
             struct stats {
                 uint64_t total = 0;
@@ -532,6 +540,7 @@ public:
                         {"entries", format("{}", s.entries)}};
             });
         });
+        vtlog.info("EXECUTE 7");
         co_await add_partition(mutation_sink, "cache", [this] () {
             struct stats {
                 uint64_t total = 0;
@@ -580,6 +589,7 @@ public:
                         {"requests_recent", format("{}", static_cast<uint64_t>(s.requests_moving_average.mean_rate))}};
             });
         });
+        vtlog.info("EXECUTE 8");
         co_await add_partition(mutation_sink, "incremental_backup_enabled", [this] () {
             return _db.map_reduce0([] (replica::database& db) {
                 return boost::algorithm::any_of(db.get_keyspaces(), [] (const auto& id_and_ks) {
@@ -589,6 +599,7 @@ public:
                 return res ? "true" : "false";
             });
         });
+        vtlog.info("EXECUTE 9");
     }
 };
 

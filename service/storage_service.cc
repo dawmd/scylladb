@@ -2865,7 +2865,7 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
         std::unordered_set<gms::inet_address> initial_contact_nodes,
         std::unordered_set<gms::inet_address> loaded_endpoints,
         std::unordered_map<gms::inet_address, sstring> loaded_peer_features,
-        std::chrono::milliseconds delay, bool hhm) {
+        std::chrono::milliseconds delay, bool hh_enabled, bool hhm) {
     std::unordered_set<token> bootstrap_tokens;
     std::map<gms::application_state, gms::versioned_value> app_states;
     /* The timestamp of the CDC streams generation that this node has proposed when joining.
@@ -3096,13 +3096,16 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
 
     assert(_group0);
 
+    co_await proxy.invoke_on_all([hh_enabled] (storage_proxy& local_proxy) {
+        local_proxy.set_hh_enabled(hh_enabled);
+    });
+
     if (hhm) {
         slogger.warn("Topology right before starting the hint manager: {}", get_token_metadata().get_topology());
         co_await proxy.invoke_on_all([] (storage_proxy& local_proxy) {
-            return local_proxy.start_hints_manager().then([&local_proxy] {
-                return local_proxy.allow_replaying_hints();
-            });
+            return local_proxy.start_hints_manager();
         });
+        slogger.warn("Hint managers have started!");
     }
 
     join_node_request_params join_params {
@@ -4028,7 +4031,8 @@ void storage_service::set_group0(raft_group0& group0, bool raft_topology_change_
     _raft_topology_change_enabled = raft_topology_change_enabled;
 }
 
-future<> storage_service::join_cluster(sharded<db::system_distributed_keyspace>& sys_dist_ks, sharded<service::storage_proxy>& proxy, bool hhm) {
+future<> storage_service::join_cluster(sharded<db::system_distributed_keyspace>& sys_dist_ks,
+        sharded<service::storage_proxy>& proxy, bool hh_enabled, bool hhm) {
     assert(this_shard_id() == 0);
 
     set_mode(mode::STARTING);
@@ -4093,7 +4097,8 @@ future<> storage_service::join_cluster(sharded<db::system_distributed_keyspace>&
     for (auto& x : loaded_peer_features) {
         slogger.info("peer={}, supported_features={}", x.first, x.second);
     }
-    co_return co_await join_token_ring(sys_dist_ks, proxy, std::move(initial_contact_nodes), std::move(loaded_endpoints), std::move(loaded_peer_features), get_ring_delay(), hhm);
+    co_return co_await join_token_ring(sys_dist_ks, proxy, std::move(initial_contact_nodes),
+            std::move(loaded_endpoints), std::move(loaded_peer_features), get_ring_delay(), hh_enabled, hhm);
 }
 
 future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmptr) noexcept {

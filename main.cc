@@ -1685,7 +1685,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                 return proxy.invoke_on_all([&gossiper] (service::storage_proxy& local_proxy) {
                     return local_proxy.set_gossiper_for_resource_manager(gossiper.local().shared_from_this());
                 }).then([&] {
-                    return ss.local().join_cluster(sys_dist_ks, proxy);
+                    return ss.local().join_cluster(sys_dist_ks, proxy, !spcfg.hinted_handoff_enabled.is_disabled_for_all());
                 });
             }).get();
 
@@ -1782,8 +1782,8 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             gossiper.local().wait_for_gossip_to_settle().get();
             api::set_server_gossip_settle(ctx, gossiper).get();
 
-            // supervisor::notify("allow replaying hints");
-            // proxy.invoke_on_all(&service::storage_proxy::allow_replaying_hints).get();
+            supervisor::notify("allow replaying hints");
+            proxy.invoke_on_all(&service::storage_proxy::allow_replaying_hints).get();
 
             api::set_hinted_handoff(ctx, proxy).get();
             auto stop_hinted_handoff_api = defer_verbose_shutdown("hinted handoff API", [&ctx] {

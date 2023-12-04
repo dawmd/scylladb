@@ -299,6 +299,7 @@ private:
     cdc::cdc_service* _cdc = nullptr;
 
     cdc_stats _cdc_stats;
+    bool _hh_enabled = false;
 private:
     future<result<coordinator_query_result>> query_singular(lw_shared_ptr<query::read_command> cmd,
             dht::partition_range_vector&& partition_ranges,
@@ -664,6 +665,9 @@ public:
     mutation get_batchlog_mutation_for(const std::vector<mutation>& mutations, const utils::UUID& id, int32_t version, db_clock::time_point now);
 
     future<> stop();
+    void set_hh_enabled(bool hh_enabled) noexcept {
+        _hh_enabled = hh_enabled;
+    }
     void set_gossiper_for_resource_manager(shared_ptr<gms::gossiper> gossiper_ptr) noexcept;
     future<> start_hints_manager();
     void allow_replaying_hints() noexcept;

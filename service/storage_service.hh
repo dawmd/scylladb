@@ -323,7 +323,8 @@ public:
     future<> check_for_endpoint_collision(std::unordered_set<gms::inet_address> initial_contact_nodes,
             const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features);
 
-    future<> join_cluster(sharded<db::system_distributed_keyspace>& sys_dist_ks, sharded<service::storage_proxy>& proxy, bool hhm = true);
+    future<> join_cluster(sharded<db::system_distributed_keyspace>& sys_dist_ks,
+            sharded<service::storage_proxy>& proxy, bool hh_enabled, bool hhm = true);
 
     void set_group0(service::raft_group0&, bool raft_topology_change_enabled);
 
@@ -340,7 +341,7 @@ private:
             std::unordered_set<gms::inet_address> initial_contact_nodes,
             std::unordered_set<gms::inet_address> loaded_endpoints,
             std::unordered_map<gms::inet_address, sstring> loaded_peer_features,
-            std::chrono::milliseconds, bool);
+            std::chrono::milliseconds, bool, bool);
     future<> start_sys_dist_ks();
 public:
 

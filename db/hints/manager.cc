@@ -207,6 +207,7 @@ future<> manager::start() {
     
     co_await compute_hints_dir_device_id();
     set_started();
+    manager_logger.info("HH Manager has started!! {}", started());
 }
 
 future<> manager::stop() {
@@ -570,6 +571,21 @@ void manager::check_ep(std::string_view f, endpoint_id ep) const noexcept {
     auto this_node = tmptr->get_topology().this_node();
     manager_logger.warn("[{}, {}]: Checking {} (this node == null: {}). Topology: {}", f, fmt::ptr(&tmptr->get_topology()), ep, this_node == nullptr, tmptr->get_topology());
     assert(opt_hid.has_value() || ((void) tmptr->get_my_id(), utils::fb_utilities::get_broadcast_address() == ep));
+}
+
+bool manager::running() const noexcept {
+    manager_logger.info("manager::started() = {}", _state.contains(state::started));
+    return started();
+}
+
+void manager::set_started() noexcept {
+    manager_logger.info("Setting started");
+    _state.set(state::started);
+}
+
+bool manager::started() const noexcept {
+    manager_logger.info("Checking started for {}", fmt::ptr(this));
+    return _state.contains(state::started);
 }
 
 } // namespace db::hints
