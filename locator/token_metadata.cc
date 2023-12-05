@@ -168,8 +168,11 @@ public:
     /// Return the unique host ID for an end-point or nullopt if not found.
     std::optional<host_id> get_host_id_if_known(inet_address endpoint) const;
 
-    /** Return the end-point for a unique host ID */
-    std::optional<inet_address> get_endpoint_for_host_id(host_id) const;
+    /** Return the end-point for a unique host ID or nullopt if not found.*/
+    std::optional<inet_address> get_endpoint_for_host_id_if_known(host_id) const;
+
+    /** Return the end-point for a unique host ID.*/
+    inet_address get_endpoint_for_host_id(host_id) const;
 
     /** @return a copy of the endpoint-to-id map for read-only operations */
     std::unordered_map<inet_address, host_id> get_endpoint_to_host_id_map_for_reading() const;
@@ -575,11 +578,20 @@ std::optional<host_id> token_metadata_impl<NodeId>::get_host_id_if_known(inet_ad
 }
 
 template <typename NodeId>
-std::optional<inet_address> token_metadata_impl<NodeId>::get_endpoint_for_host_id(host_id host_id) const {
+std::optional<inet_address> token_metadata_impl<NodeId>::get_endpoint_for_host_id_if_known(host_id host_id) const {
     if (const auto* node = _topology.find_node(host_id)) [[likely]] {
         return node->endpoint();
     } else {
         return std::nullopt;
+    }
+}
+
+template <typename NodeId>
+inet_address token_metadata_impl<NodeId>::get_endpoint_for_host_id(host_id host_id) const {
+    if (const auto* node = _topology.find_node(host_id)) [[likely]] {
+        return node->endpoint();
+    } else {
+        on_internal_error(tlogger, format("endpoint for host_id {} is not found", host_id));
     }
 }
 
@@ -1098,6 +1110,12 @@ generic_token_metadata<NodeId>::get_host_id_if_known(inet_address endpoint) cons
 
 template <typename NodeId>
 std::optional<typename generic_token_metadata<NodeId>::inet_address>
+generic_token_metadata<NodeId>::get_endpoint_for_host_id_if_known(host_id host_id) const {
+    return _impl->get_endpoint_for_host_id_if_known(host_id);
+}
+
+template <typename NodeId>
+typename generic_token_metadata<NodeId>::inet_address
 generic_token_metadata<NodeId>::get_endpoint_for_host_id(host_id host_id) const {
     return _impl->get_endpoint_for_host_id(host_id);
 }
@@ -1446,7 +1464,7 @@ host_id_or_endpoint::host_id_or_endpoint(const sstring& s, param_type restrict) 
 template <typename NodeId>
 void host_id_or_endpoint::resolve(const generic_token_metadata<NodeId>& tm) {
     if (id) {
-        auto endpoint_opt = tm.get_endpoint_for_host_id(id);
+        auto endpoint_opt = tm.get_endpoint_for_host_id_if_known(id);
         if (!endpoint_opt) {
             throw std::runtime_error(format("Host ID {} not found in the cluster", id));
         }
