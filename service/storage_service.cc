@@ -5263,7 +5263,7 @@ void storage_service::node_ops_insert(node_ops_id ops_uuid,
     on_node_ops_registered(ops_uuid);
 }
 
-future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_address coordinator, node_ops_cmd_request req) {
+future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_address coordinator, locator::host_id, node_ops_cmd_request req) {
     return seastar::async([this, coordinator, req = std::move(req)] () mutable {
         auto ops_uuid = req.ops_uuid;
         slogger.debug("node_ops_cmd_handler cmd={}, ops_uuid={}", req.cmd, ops_uuid);
@@ -6855,8 +6855,12 @@ future<join_node_response_result> storage_service::join_node_response_handler(jo
 void storage_service::init_messaging_service(bool raft_topology_change_enabled) {
     _messaging.local().register_node_ops_cmd([this] (const rpc::client_info& cinfo, node_ops_cmd_request req) {
         auto coordinator = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
-        return container().invoke_on(0, [coordinator, req = std::move(req)] (auto& ss) mutable {
-            return ss.node_ops_cmd_handler(coordinator, std::move(req));
+        auto coordinator_host_id = cinfo.retrieve_auxiliary_opt<locator::host_id>("host_id");
+        if (!coordinator_host_id) {
+            throw std::runtime_error("Coordinator host_id not found");
+        }
+        return container().invoke_on(0, [coordinator, coordinator_host_id, req = std::move(req)] (auto& ss) mutable {
+            return ss.node_ops_cmd_handler(coordinator, *coordinator_host_id, std::move(req));
         });
     });
     if (raft_topology_change_enabled) {
