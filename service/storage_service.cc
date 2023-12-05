@@ -6888,17 +6888,15 @@ future<> storage_service::force_remove_completion() {
                 auto leaving = tm.get_leaving_endpoints();
                 slogger.warn("Removal not confirmed, Leaving={}", leaving);
                 for (auto endpoint : leaving) {
-                    locator::host_id host_id;
-                    auto tokens = tm.get_tokens(endpoint);
-                    try {
-                        host_id = tm.get_host_id(endpoint);
-                    } catch (...) {
+                    const auto host_id = tm.get_host_id_if_known(endpoint);
+                    if (!host_id) {
                         slogger.warn("No host_id is found for endpoint {}", endpoint);
                         continue;
                     }
+                    auto tokens = tm.get_tokens(endpoint);
                     auto permit = co_await ss._gossiper.lock_endpoint(endpoint, gms::null_permit_id);
                     const auto& pid = permit.id();
-                    co_await ss._gossiper.advertise_token_removed(endpoint, host_id, pid);
+                    co_await ss._gossiper.advertise_token_removed(endpoint, *host_id, pid);
                     std::unordered_set<token> tokens_set(tokens.begin(), tokens.end());
                     co_await ss.excise(tokens_set, endpoint, pid);
 
@@ -6906,7 +6904,7 @@ future<> storage_service::force_remove_completion() {
                     assert(ss._group0);
                     bool raft_available = co_await ss._group0->wait_for_raft();
                     if (raft_available) {
-                        co_await ss._group0->remove_from_group0(raft::server_id{host_id.uuid()});
+                        co_await ss._group0->remove_from_group0(raft::server_id{host_id->uuid()});
                     }
                 }
             } else {
