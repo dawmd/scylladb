@@ -3225,6 +3225,10 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
 
     assert(_group0);
 
+    co_await proxy.invoke_on_all([] (storage_proxy& local_proxy) {
+        return local_proxy.start_hints_manager();
+    });
+
     join_node_request_params join_params {
         .host_id = _group0->load_my_id(),
         .cluster_name = _db.local().get_config().cluster_name(),
