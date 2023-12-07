@@ -1548,7 +1548,8 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
 
             proxy.invoke_on_all([&lifecycle_notifier, &gossiper] (service::storage_proxy& local_proxy) {
                 lifecycle_notifier.local().register_subscriber(&local_proxy);
-                return local_proxy.start_hints_manager(gossiper.local().shared_from_this());
+                local_proxy.set_hh_gossiper(gossiper.local().shared_from_this());
+                return local_proxy.start_hints_manager();
             }).get();
 
             auto drain_proxy = defer_verbose_shutdown("drain storage proxy", [&proxy, &lifecycle_notifier] {
