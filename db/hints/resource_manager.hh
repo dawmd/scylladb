@@ -182,7 +182,8 @@ public:
     future<semaphore_units<named_semaphore::exception_factory>> get_send_units_for(size_t buf_size);
     size_t sending_queue_length() const;
 
-    future<> start(shared_ptr<gms::gossiper> gossiper_ptr);
+    void set_gossiper(shared_ptr<gms::gossiper> gossiper_ptr) noexcept;
+    future<> start();
     future<> stop() noexcept;
 
     /// \brief Allows replaying hints for managers which are registered now or will be in the future.

@@ -664,7 +664,8 @@ public:
     mutation get_batchlog_mutation_for(const std::vector<mutation>& mutations, const utils::UUID& id, int32_t version, db_clock::time_point now);
 
     future<> stop();
-    future<> start_hints_manager(shared_ptr<gms::gossiper>);
+    void set_hh_gossiper(shared_ptr<gms::gossiper>) noexcept;
+    future<> start_hints_manager();
     void allow_replaying_hints() noexcept;
     future<> drain_on_shutdown();
 
