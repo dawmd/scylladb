@@ -204,6 +204,7 @@ public:
     /// \param ep End point identificator
     /// \return Number of hints in-flight to \param ep.
     uint64_t hints_in_progress_for(endpoint_id ep) const noexcept {
+        check_ep(__func__, ep);
         auto it = _ep_managers.find(ep);
         if (it == _ep_managers.end()) {
             return 0;
@@ -297,10 +298,12 @@ private:
         _state.set(state::stopping);
     }
 
+public:
     bool started() const noexcept {
         return _state.contains(state::started);
     }
 
+private:
     void set_started() noexcept {
         _state.set(state::started);
     }
@@ -313,9 +316,11 @@ private:
         _state.set(state::draining_all);
     }
 
-    bool draining_all() noexcept {
+    bool draining_all() const noexcept {
         return _state.contains(state::draining_all);
     }
+
+    void check_ep(std::string_view, endpoint_id) const;
 };
 
 } // namespace db::hints
