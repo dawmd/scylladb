@@ -195,6 +195,10 @@ public:
     void del_leaving_endpoint(host_id endpoint);
 
     void remove_endpoint(host_id endpoint);
+    void save_temporary_mapping(host_id endpoint);
+    void remove_temporary_endpoint(host_id endpoint);
+    std::optional<gms::inet_address> get_temporary_mapping(host_id hid) const;
+    std::optional<host_id> get_temporary_mapping(gms::inet_address hid) const;
 
     // Checks if the node is part of the token ring. If yes, the node is one of
     // the nodes that owns the tokens and inside the set _normal_token_owners.

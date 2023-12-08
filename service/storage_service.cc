@@ -4895,6 +4895,13 @@ void storage_service::run_bootstrap_ops(std::unordered_set<token>& bootstrap_tok
 
 // Runs inside seastar::async context
 void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_tokens, replacement_info replace_info) {
+    slogger.info("RUN REPLACE OPS: replace_info: (hid: {}, ep: {})", replace_info.host_id, replace_info.address);
+    const auto prev_hid = get_token_metadata().get_topology().this_node()->host_id();
+    mutate_token_metadata([prev_hid] (mutable_token_metadata_ptr tmptr) {
+        tmptr->save_temporary_mapping(prev_hid);
+        return make_ready_future<>();
+    }).get();
+
     node_ops_ctl ctl(*this, node_ops_cmd::replace_prepare, replace_info.host_id, replace_info.address);
     auto stop_ctl = deferred_stop(ctl);
     const auto& uuid = ctl.uuid();
@@ -4949,8 +4956,17 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
         slogger.info("replace[{}]: Allow any nodes to mark replacing node={} as alive", uuid,  get_broadcast_address());
     } catch (...) {
         // we need to revert the effect of prepare verb the replace ops is failed
+        mutate_token_metadata([prev_hid] (mutable_token_metadata_ptr tmptr) {
+            tmptr->remove_temporary_endpoint(prev_hid);
+            return make_ready_future<>();
+        }).get();
         ctl.abort_on_error(node_ops_cmd::replace_abort, std::current_exception()).get();
     }
+
+    mutate_token_metadata([prev_hid] (mutable_token_metadata_ptr tmptr) {
+        tmptr->remove_temporary_endpoint(prev_hid);
+        return make_ready_future<>();
+    }).get();
 }
 
 future<> storage_service::raft_removenode(locator::host_id host_id, std::list<locator::host_id_or_endpoint> ignore_nodes_params) {
@@ -5040,6 +5056,11 @@ future<> storage_service::raft_removenode(locator::host_id host_id, std::list<lo
 future<> storage_service::removenode(locator::host_id host_id, std::list<locator::host_id_or_endpoint> ignore_nodes_params) {
     return run_with_api_lock(sstring("removenode"), [host_id, ignore_nodes_params = std::move(ignore_nodes_params)] (storage_service& ss) mutable {
         return seastar::async([&ss, host_id, ignore_nodes_params = std::move(ignore_nodes_params)] () mutable {
+            ss.mutate_token_metadata([host_id] (mutable_token_metadata_ptr tmptr) {
+                tmptr->save_temporary_mapping(host_id);
+                return make_ready_future<>();
+            }).get();
+
             if (ss._raft_topology_change_enabled) {
                 ss.raft_removenode(host_id, std::move(ignore_nodes_params)).get();
                 return;
@@ -5160,6 +5181,11 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
                     uuid, std::current_exception());
                 throw;
             }
+
+            ss.mutate_token_metadata([host_id] (mutable_token_metadata_ptr tmptr) {
+                tmptr->remove_temporary_endpoint(host_id);
+                return make_ready_future<>();
+            }).get();
 
             slogger.info("removenode[{}]: Finished removenode operation, host id={}", uuid, host_id);
         });

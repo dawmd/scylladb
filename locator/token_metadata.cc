@@ -8,6 +8,7 @@
 
 #include "token_metadata.hh"
 #include <optional>
+#include "gms/inet_address.hh"
 #include "locator/snitch_base.hh"
 #include "locator/abstract_replication_strategy.hh"
 #include "locator/tablets.hh"
@@ -76,6 +77,8 @@ private:
     // The initial valid version is 1;
     token_metadata::version_t _version = 0;
     token_metadata::version_tracker_t _version_tracker;
+
+    std::unordered_map<host_id, gms::inet_address> _temporary_mappings;
 
     // Note: if any member is added to this class
     // clone_async() must be updated to copy that member.
@@ -176,6 +179,10 @@ public:
     void del_leaving_endpoint(host_id endpoint);
 public:
     void remove_endpoint(host_id endpoint);
+    void save_temporary_mapping(host_id endpoint);
+    void remove_temporary_endpoint(host_id endpoint);
+    std::optional<gms::inet_address> get_temporary_mapping(host_id hid) const;
+    std::optional<host_id> get_temporary_mapping(gms::inet_address hid) const;
 
     bool is_normal_token_owner(host_id endpoint) const;
 
@@ -638,6 +645,35 @@ void token_metadata_impl::remove_endpoint(host_id endpoint) {
     invalidate_cached_rings();
 }
 
+void token_metadata_impl::save_temporary_mapping(host_id endpoint) {
+    std::optional<gms::inet_address> opt_ep = get_endpoint_for_host_id_if_known(endpoint);
+    if (opt_ep) {
+        _temporary_mappings.emplace(endpoint, *opt_ep);
+        remove_endpoint(endpoint);
+    }
+}
+
+void token_metadata_impl::remove_temporary_endpoint(host_id endpoint) {
+    _temporary_mappings.erase(endpoint);
+}
+
+std::optional<gms::inet_address> token_metadata_impl::get_temporary_mapping(host_id hid) const {
+    auto it = _temporary_mappings.find(hid);
+    if (it != _temporary_mappings.end()) {
+        return {it->second};
+    }
+    return {};
+}
+
+std::optional<host_id> token_metadata_impl::get_temporary_mapping(gms::inet_address ep) const {
+    for (const auto& [hid, ip] : _temporary_mappings) {
+        if (ep == ip) {
+            return {hid};
+        }
+    }
+    return {};
+}
+
 token token_metadata_impl::get_predecessor(token t) const {
     auto& tokens = sorted_tokens();
     auto it = std::lower_bound(tokens.begin(), tokens.end(), t);
@@ -1016,6 +1052,22 @@ void
 token_metadata::remove_endpoint(host_id endpoint) {
     _impl->remove_endpoint(endpoint);
     _impl->sort_tokens();
+}
+
+void token_metadata::save_temporary_mapping(host_id endpoint) {
+    _impl->save_temporary_mapping(endpoint);
+}
+
+void token_metadata::remove_temporary_endpoint(host_id endpoint) {
+    _impl->remove_temporary_endpoint(endpoint);
+}
+
+std::optional<gms::inet_address> token_metadata::get_temporary_mapping(host_id hid) const {
+    return _impl->get_temporary_mapping(hid);
+}
+
+std::optional<host_id> token_metadata::get_temporary_mapping(gms::inet_address ep) const {
+    return _impl->get_temporary_mapping(ep);
 }
 
 bool
