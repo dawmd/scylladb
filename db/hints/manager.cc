@@ -566,9 +566,13 @@ future<> manager::with_file_update_mutex_for(endpoint_id ep, noncopyable_functio
 void manager::check_ep(std::string_view f, endpoint_id ep) const {
     const auto tmptr = _proxy.get_token_metadata_ptr();
     auto opt_hid = tmptr->get_host_id_if_known(ep);
-    auto this_node = tmptr->get_topology().this_node();
-    manager_logger.warn("[{}, {}]: Checking {} (this node == null: {}). Topology: {}", f, fmt::ptr(&tmptr->get_topology()), ep, this_node == nullptr, tmptr->get_topology());
-    assert(opt_hid.has_value() || ((void) tmptr->get_my_id(), utils::fb_utilities::get_broadcast_address() == ep));
+    // auto this_node = tmptr->get_topology().this_node();
+    auto opt_tmp_hid = tmptr->get_temporary_mapping(ep);
+    // manager_logger.warn("[{}, {}]: Checking {} (this node == null: {}). Topology: {}", f, fmt::ptr(&tmptr->get_topology()), ep, this_node == nullptr, tmptr->get_topology());
+    if (!(opt_hid.has_value() || ((void) tmptr->get_my_id(), utils::fb_utilities::get_broadcast_address() == ep) || opt_tmp_hid.has_value())) {
+        manager_logger.warn("We're about to fail... ({}, {})", f, ep);
+    }
+    // assert(opt_hid.has_value() || ((void) tmptr->get_my_id(), utils::fb_utilities::get_broadcast_address() == ep) || opt_tmp_hid.has_value());
 }
 
 } // namespace db::hints

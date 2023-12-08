@@ -52,6 +52,7 @@
 #include <boost/range/algorithm/partition.hpp>
 #include <boost/intrusive/list.hpp>
 #include <boost/outcome/result.hpp>
+#include "utils/fb_utilities.hh"
 #include "utils/latency.hh"
 #include "schema/schema.hh"
 #include "query_ranges_to_vnodes.hh"
@@ -1474,6 +1475,13 @@ public:
             // we are here because either cl was achieved, but targets left in the handler are not
             // responding, so a hint should be written for them, or cl == any in which case
             // hints are counted towards consistency, so we need to write hints and count how much was written
+            const auto& tm = _effective_replication_map_ptr->get_token_metadata();
+            for (const auto& ep : get_targets()) {
+                if (!(tm.get_host_id_if_known(ep).has_value() || ep == utils::fb_utilities::get_broadcast_address() || tm.get_temporary_mapping(ep).has_value())) {
+                    slogger.info("{} about to fail for {}", __func__, ep);
+                    assert(false);
+                }
+            }
             auto hints = _proxy->hint_to_dead_endpoints(_mutation_holder, get_targets(), _type, get_trace_state());
             signal(hints);
             if (_cl == db::consistency_level::ANY && hints) {
@@ -1547,6 +1555,11 @@ public:
         return _dead_endpoints;
     }
     bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) {
+        auto tmptr = _proxy->get_token_metadata_ptr();
+        if (!(tmptr->get_host_id_if_known(ep).has_value() || ep == utils::fb_utilities::get_broadcast_address() || tmptr->get_temporary_mapping(ep).has_value())) {
+            slogger.info("SP::abstract::store_hint about to fail for {}", ep);
+            // assert(false);
+        }
         return _mutation_holder->store_hint(hm, ep, tr_state);
     }
     future<> apply_locally(storage_proxy::clock_type::time_point timeout, tracing::trace_state_ptr tr_state) {
@@ -3049,6 +3062,16 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
 
     auto all = boost::range::join(natural_endpoints, pending_endpoints);
 
+    const auto& tm = erm->get_token_metadata();
+    for (const auto& ep : all) {
+        if (!(tm.get_host_id_if_known(ep).has_value() || tm.get_temporary_mapping(ep).has_value() || ep == utils::fb_utilities::get_broadcast_address())) {
+            slogger.warn("We're about to fail in storage proxy..., ({})", ep);
+            assert(false);
+        } else {
+            slogger.info("There IS a mapping for {}", ep);
+        }
+    }
+
     if (cannot_hint(all, type)) {
         get_stats().writes_failed_due_to_too_many_in_flight_hints++;
         // avoid OOMing due to excess hints.  we need to do this check even for "live" nodes, since we can
@@ -3162,6 +3185,13 @@ void
 storage_proxy::hint_to_dead_endpoints(response_id_type id, db::consistency_level cl) {
     auto& h = *get_write_response_handler(id);
 
+    const auto& tm = h._effective_replication_map_ptr->get_token_metadata();
+    for (const auto& ep : h.get_dead_endpoints()) {
+        if (!(tm.get_host_id_if_known(ep).has_value() || ep == utils::fb_utilities::get_broadcast_address() || tm.get_temporary_mapping(ep).has_value())) {
+            slogger.info("{} about to fail for {}", __func__, ep);
+            assert(false);
+        }
+    }
     size_t hints = hint_to_dead_endpoints(h._mutation_holder, h.get_dead_endpoints(), h._type, h.get_trace_state());
 
     if (cl == db::consistency_level::ANY) {
@@ -4050,7 +4080,12 @@ size_t storage_proxy::hint_to_dead_endpoints(std::unique_ptr<mutation_holder>& m
 {
     if (hints_enabled(type)) {
         db::hints::manager& hints_manager = hints_manager_for(type);
-        return boost::count_if(targets, [&mh, tr_state = std::move(tr_state), &hints_manager] (gms::inet_address target) mutable -> bool {
+        return boost::count_if(targets, [this, &mh, tr_state = std::move(tr_state), &hints_manager] (gms::inet_address target) mutable -> bool {
+            auto tmptr = this->get_token_metadata_ptr();
+            if (!(tmptr->get_host_id_if_known(target).has_value() || target == utils::fb_utilities::get_broadcast_address() || tmptr->get_temporary_mapping(target).has_value())) {
+                slogger.info("SP::store_hint about to fail for {}", target);
+                // assert(false);
+            }
             return mh->store_hint(hints_manager, target, tr_state);
         });
     } else {
@@ -6502,15 +6537,20 @@ future<> storage_proxy::wait_for_hint_sync_point(const db::hints::sync_point spo
     co_return;
 }
 
-void storage_proxy::on_join_cluster(const gms::inet_address& endpoint) {};
+void storage_proxy::on_join_cluster(const gms::inet_address& endpoint) {
+    slogger.info("ON JOIN CLUSTER: {}", endpoint);
+};
 
 void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {
+    slogger.info("ON LEAVE CLUSTER: {}", endpoint);
     // Discarding these futures is safe. They're awaited by db::hints::manager::stop().
-    (void) _hints_manager.drain_for(endpoint);
-    (void) _hints_for_views_manager.drain_for(endpoint);
+    _hints_manager.drain_for(endpoint).get();
+    _hints_for_views_manager.drain_for(endpoint).get();
 }
 
-void storage_proxy::on_up(const gms::inet_address& endpoint) {};
+void storage_proxy::on_up(const gms::inet_address& endpoint) {
+    slogger.info("ON UP: {}", endpoint);
+};
 
 void storage_proxy::cancel_write_handlers(noncopyable_function<bool(const abstract_write_response_handler&)> filter_fun) {
     assert(thread::running_in_thread());
