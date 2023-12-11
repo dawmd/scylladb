@@ -569,7 +569,7 @@ void manager::check_ep(std::string_view f, endpoint_id ep) const {
     // auto this_node = tmptr->get_topology().this_node();
     auto opt_tmp_hid = tmptr->get_temporary_mapping(ep);
     // manager_logger.warn("[{}, {}]: Checking {} (this node == null: {}). Topology: {}", f, fmt::ptr(&tmptr->get_topology()), ep, this_node == nullptr, tmptr->get_topology());
-    if (!(opt_hid.has_value() || ((void) tmptr->get_my_id(), utils::fb_utilities::get_broadcast_address() == ep) || opt_tmp_hid.has_value())) {
+    if (!(opt_hid.has_value() || _proxy.local_db().get_token_metadata().get_topology().is_me(ep) || opt_tmp_hid.has_value())) {
         manager_logger.warn("We're about to fail... ({}, {})", f, ep);
     }
     // assert(opt_hid.has_value() || ((void) tmptr->get_my_id(), utils::fb_utilities::get_broadcast_address() == ep) || opt_tmp_hid.has_value());

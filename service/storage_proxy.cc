@@ -52,7 +52,6 @@
 #include <boost/range/algorithm/partition.hpp>
 #include <boost/intrusive/list.hpp>
 #include <boost/outcome/result.hpp>
-#include "utils/fb_utilities.hh"
 #include "utils/latency.hh"
 #include "schema/schema.hh"
 #include "query_ranges_to_vnodes.hh"
@@ -1477,7 +1476,7 @@ public:
             // hints are counted towards consistency, so we need to write hints and count how much was written
             const auto& tm = _effective_replication_map_ptr->get_token_metadata();
             for (const auto& ep : get_targets()) {
-                if (!(tm.get_host_id_if_known(ep).has_value() || ep == utils::fb_utilities::get_broadcast_address() || tm.get_temporary_mapping(ep).has_value())) {
+                if (!(tm.get_host_id_if_known(ep).has_value() || tm.get_topology().is_me(ep) || tm.get_temporary_mapping(ep).has_value())) {
                     slogger.info("{} about to fail for {}", __func__, ep);
                     assert(false);
                 }
@@ -1556,7 +1555,7 @@ public:
     }
     bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) {
         auto tmptr = _proxy->get_token_metadata_ptr();
-        if (!(tmptr->get_host_id_if_known(ep).has_value() || ep == utils::fb_utilities::get_broadcast_address() || tmptr->get_temporary_mapping(ep).has_value())) {
+        if (!(tmptr->get_host_id_if_known(ep).has_value() || tmptr->get_topology().is_me(ep) || tmptr->get_temporary_mapping(ep).has_value())) {
             slogger.info("SP::abstract::store_hint about to fail for {}", ep);
             // assert(false);
         }
@@ -3064,7 +3063,7 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
 
     const auto& tm = erm->get_token_metadata();
     for (const auto& ep : all) {
-        if (!(tm.get_host_id_if_known(ep).has_value() || tm.get_temporary_mapping(ep).has_value() || ep == utils::fb_utilities::get_broadcast_address())) {
+        if (!(tm.get_host_id_if_known(ep).has_value() || tm.get_temporary_mapping(ep).has_value() || tm.get_topology().is_me(ep))) {
             slogger.warn("We're about to fail in storage proxy..., ({})", ep);
             assert(false);
         } else {
@@ -3187,7 +3186,7 @@ storage_proxy::hint_to_dead_endpoints(response_id_type id, db::consistency_level
 
     const auto& tm = h._effective_replication_map_ptr->get_token_metadata();
     for (const auto& ep : h.get_dead_endpoints()) {
-        if (!(tm.get_host_id_if_known(ep).has_value() || ep == utils::fb_utilities::get_broadcast_address() || tm.get_temporary_mapping(ep).has_value())) {
+        if (!(tm.get_host_id_if_known(ep).has_value() || tm.get_topology().is_me(ep) || tm.get_temporary_mapping(ep).has_value())) {
             slogger.info("{} about to fail for {}", __func__, ep);
             assert(false);
         }
@@ -4082,7 +4081,7 @@ size_t storage_proxy::hint_to_dead_endpoints(std::unique_ptr<mutation_holder>& m
         db::hints::manager& hints_manager = hints_manager_for(type);
         return boost::count_if(targets, [this, &mh, tr_state = std::move(tr_state), &hints_manager] (gms::inet_address target) mutable -> bool {
             auto tmptr = this->get_token_metadata_ptr();
-            if (!(tmptr->get_host_id_if_known(target).has_value() || target == utils::fb_utilities::get_broadcast_address() || tmptr->get_temporary_mapping(target).has_value())) {
+            if (!(tmptr->get_host_id_if_known(target).has_value() || tmptr->get_topology().is_me(target) || tmptr->get_temporary_mapping(target).has_value())) {
                 slogger.info("SP::store_hint about to fail for {}", target);
                 // assert(false);
             }
