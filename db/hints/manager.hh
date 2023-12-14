@@ -226,10 +226,12 @@ public:
         _eps_with_pending_hints.reserve(_ep_managers.size());
     }
 
+private:
     bool has_ep_with_pending_hints(endpoint_id key) const {
         return _eps_with_pending_hints.contains(key);
     }
 
+public:
     size_t ep_managers_size() const {
         return _ep_managers.size();
     }
