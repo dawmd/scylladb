@@ -154,11 +154,13 @@ public:
         return _host_filter;
     }
 
+private:
     /// \brief Check if a hint may be generated to the give end point
     /// \param ep end point to check
     /// \return true if we should generate the hint to the given end point if it becomes unavailable
     bool can_hint_for(endpoint_id ep) const noexcept;
 
+public:
     /// \brief Check if there aren't too many in-flight hints
     ///
     /// This function checks if there are too many "in-flight" hints on the current shard - hints that are being stored
@@ -175,11 +177,13 @@ public:
     /// \return TRUE if we are allowed to generate hint to the given end point but there are too many in-flight hints
     bool too_many_in_flight_hints_for(endpoint_id ep) const noexcept;
 
+private:
     /// \brief Check if DC \param ep belongs to is "hintable"
     /// \param ep End point identificator
     /// \return TRUE if hints are allowed to be generated to \param ep.
     bool check_dc_for(endpoint_id ep) const noexcept;
 
+public:
     /// Execute a given functor while having an endpoint's file update mutex locked.
     ///
     /// The caller must ensure that the passed endpoint_id is valid, i.e. this manager instance
@@ -200,6 +204,7 @@ public:
         return _stats.size_of_hints_in_progress;
     }
 
+private:
     /// \brief Get the number of in-flight (to the disk) hints to a given end point.
     /// \param ep End point identificator
     /// \return Number of hints in-flight to \param ep.
@@ -211,6 +216,7 @@ public:
         return it->second.hints_in_progress();
     }
 
+public:
     void add_ep_with_pending_hints(endpoint_id key) {
         _eps_with_pending_hints.insert(key);
     }
