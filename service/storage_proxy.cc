@@ -1471,6 +1471,13 @@ public:
     }
     void timeout_cb() {
         if (_cl_achieved || _cl == db::consistency_level::ANY) {
+            const auto& tm = _effective_replication_map_ptr->get_token_metadata();
+            for (const auto& ep : get_targets()) {
+                if (!(tm.get_host_id_if_known(ep).has_value() || tm.get_topology().is_me(ep))) {
+                    slogger.warn("[{}] About to fail for {}", __func__, ep);
+                    assert(false);
+                }
+            }
             // we are here because either cl was achieved, but targets left in the handler are not
             // responding, so a hint should be written for them, or cl == any in which case
             // hints are counted towards consistency, so we need to write hints and count how much was written
@@ -6422,6 +6429,7 @@ const db::hints::host_filter& storage_proxy::get_hints_host_filter() const {
     return _hints_manager.get_host_filter();
 }
 
+// These IPs MUST be mappable using storage_proxy's token_metadata...
 future<db::hints::sync_point> storage_proxy::create_hint_sync_point(std::vector<gms::inet_address> target_hosts) const {
     db::hints::sync_point spoint;
     spoint.regular_per_shard_rps.resize(smp::count);
