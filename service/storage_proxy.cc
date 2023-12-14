@@ -1547,6 +1547,11 @@ public:
         return _dead_endpoints;
     }
     bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) {
+        const auto& tm = _effective_replication_map_ptr->get_token_metadata();
+        if (!(tm.get_host_id_if_known(ep).has_value() || tm.get_topology().is_me(ep))) {
+            slogger.warn("[{}] about to fail for {}", __func__, ep);
+            assert(false);
+        }
         return _mutation_holder->store_hint(hm, ep, tr_state);
     }
     future<> apply_locally(storage_proxy::clock_type::time_point timeout, tracing::trace_state_ptr tr_state) {
