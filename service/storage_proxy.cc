@@ -3049,6 +3049,14 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
 
     auto all = boost::range::join(natural_endpoints, pending_endpoints);
 
+    const auto& tm = erm->get_token_metadata();
+    for (const auto& ep : all) {
+        if (!(tm.get_host_id_if_known(ep).has_value() || tm.get_topology().is_me(ep))) {
+            slogger.warn("We're about to fail for {}", ep);
+            assert(false);
+        }
+    }
+
     if (cannot_hint(all, type)) {
         get_stats().writes_failed_due_to_too_many_in_flight_hints++;
         // avoid OOMing due to excess hints.  we need to do this check even for "live" nodes, since we can
@@ -3162,6 +3170,13 @@ void
 storage_proxy::hint_to_dead_endpoints(response_id_type id, db::consistency_level cl) {
     auto& h = *get_write_response_handler(id);
 
+    const auto& tm = h._effective_replication_map_ptr->get_token_metadata();
+    for (const auto& ep : h.get_dead_endpoints()) {
+        if (!(tm.get_host_id_if_known(ep).has_value() || tm.get_topology().is_me(ep))) {
+            slogger.warn("[{}] About to fail for {}", __func__, ep);
+            assert(false);
+        }
+    }
     size_t hints = hint_to_dead_endpoints(h._mutation_holder, h.get_dead_endpoints(), h._type, h.get_trace_state());
 
     if (cl == db::consistency_level::ANY) {
