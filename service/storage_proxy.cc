@@ -6431,6 +6431,12 @@ const db::hints::host_filter& storage_proxy::get_hints_host_filter() const {
 
 // These IPs MUST be mappable using storage_proxy's token_metadata...
 future<db::hints::sync_point> storage_proxy::create_hint_sync_point(std::vector<gms::inet_address> target_hosts) const {
+    std::vector<locator::host_id> target_hids;
+    target_hids.reserve(target_hosts.size());
+    const auto tmptr = get_token_metadata_ptr();
+    for (const auto& ep : target_hosts) {
+        assert(tmptr->get_host_id_if_known(ep).has_value() || tmptr->get_topology().is_me(ep));
+    }
     db::hints::sync_point spoint;
     spoint.regular_per_shard_rps.resize(smp::count);
     spoint.mv_per_shard_rps.resize(smp::count);
