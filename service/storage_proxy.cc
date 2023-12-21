@@ -3049,7 +3049,9 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
 
     auto all = boost::range::join(natural_endpoints, pending_endpoints);
 
-    if (cannot_hint(all, type)) {
+    // If the manager hasn't started yet, no mutation will be performed to another node.
+    // No hint will need to be stored.
+    if (_hints_manager.started() && cannot_hint(all, type)) {
         get_stats().writes_failed_due_to_too_many_in_flight_hints++;
         // avoid OOMing due to excess hints.  we need to do this check even for "live" nodes, since we can
         // still generate hints for those if it's overloaded or simply dead but not yet known-to-be-dead.
