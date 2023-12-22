@@ -987,14 +987,14 @@ protected:
     schema_ptr _schema;
 public:
     virtual ~mutation_holder() {}
-    virtual bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) = 0;
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id hid, tracing::trace_state_ptr tr_state) = 0;
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
             fencing_token fence) = 0;
-    virtual future<> apply_remotely(storage_proxy& sp, gms::inet_address ep, const inet_address_vector_replica_set& forward,
+    virtual future<> apply_remotely(storage_proxy& sp, locator::host_id hid, const inet_address_vector_replica_set& forward,
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
-            fencing_token fence) = 0;
+            locator::effective_replication_map_ptr ermptr, fencing_token fence) = 0;
     virtual bool is_shared() = 0;
     size_t size() const {
         return _size;
@@ -1011,7 +1011,7 @@ public:
 
 // different mutation for each destination (for read repairs)
 class per_destination_mutation : public mutation_holder {
-    std::unordered_map<gms::inet_address, lw_shared_ptr<const frozen_mutation>> _mutations;
+    std::unordered_map<locator::host_id, lw_shared_ptr<const frozen_mutation>> _mutations;
     dht::token _token;
 public:
     per_destination_mutation(const std::unordered_map<gms::inet_address, std::optional<mutation>>& mutations) {
@@ -1026,10 +1026,10 @@ public:
             _mutations.emplace(m.first, std::move(fm));
         }
     }
-    virtual bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) override {
-        auto m = _mutations[ep];
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id hid, tracing::trace_state_ptr tr_state) override {
+        auto m = _mutations[hid];
         if (m) {
-            return hm.store_hint(ep, _schema, std::move(m), tr_state);
+            return hm.store_hint(hid, _schema, std::move(m), tr_state);
         } else {
             return false;
         }
@@ -1038,19 +1038,22 @@ public:
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
             fencing_token fence) override {
         const auto my_ip = sp.my_address();
-        auto m = _mutations[my_ip];
+        const auto my_hid = sp.get_token_metadata_ptr()->get_topology().my_host_id();
+        auto m = _mutations[my_hid];
         if (m) {
             tracing::trace(tr_state, "Executing a mutation locally");
             return sp.apply_fence(sp.mutate_locally(_schema, *m, std::move(tr_state), db::commitlog::force_sync::no, timeout, rate_limit_info), fence, my_ip);
         }
         return make_ready_future<>();
     }
-    virtual future<> apply_remotely(storage_proxy& sp, gms::inet_address ep, const inet_address_vector_replica_set& forward,
+    virtual future<> apply_remotely(storage_proxy& sp, locator::host_id hid, const inet_address_vector_replica_set& forward,
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
-            tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info, fencing_token fence) override {
-        auto m = _mutations[ep];
+            tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
+            locator::effective_replication_map_ptr ermptr, fencing_token fence) override {
+        auto m = _mutations[hid];
+        const auto ep = ermptr->get_token_metadata().get_endpoint_for_host_id(hid);
         if (m) {
-            tracing::trace(tr_state, "Sending a mutation to /{}", ep);
+            tracing::trace(tr_state, "Sending a mutation to /{}", hid);
             return sp.remote().send_mutation(netw::messaging_service::msg_addr{ep, 0}, timeout, tracing::make_trace_info(tr_state),
                     *m, forward, sp.my_address(), this_shard_id(),
                     response_id, rate_limit_info, fence);
@@ -1085,8 +1088,8 @@ public:
     }
     explicit shared_mutation(const mutation& m) : shared_mutation(frozen_mutation_and_schema{freeze(m), m.schema()}) {
     }
-    virtual bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) override {
-            return hm.store_hint(ep, _schema, _mutation, tr_state);
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id hid, tracing::trace_state_ptr tr_state) override {
+            return hm.store_hint(hid, _schema, _mutation, tr_state);
     }
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
@@ -1094,11 +1097,12 @@ public:
         tracing::trace(tr_state, "Executing a mutation locally");
         return sp.apply_fence(sp.mutate_locally(_schema, *_mutation, std::move(tr_state), db::commitlog::force_sync::no, timeout, rate_limit_info), fence, sp.my_address());
     }
-    virtual future<> apply_remotely(storage_proxy& sp, gms::inet_address ep, const inet_address_vector_replica_set& forward,
+    virtual future<> apply_remotely(storage_proxy& sp, locator::host_id hid, const inet_address_vector_replica_set& forward,
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
-            fencing_token fence) override {
-        tracing::trace(tr_state, "Sending a mutation to /{}", ep);
+            locator::effective_replication_map_ptr ermptr, fencing_token fence) override {
+        const auto ep = ermptr->get_token_metadata().get_endpoint_for_host_id(hid);
+        tracing::trace(tr_state, "Sending a mutation to /{}", hid);
         return sp.remote().send_mutation(netw::messaging_service::msg_addr{ep, 0}, timeout, tracing::make_trace_info(tr_state),
                 *_mutation, forward, sp.my_address(), this_shard_id(),
                 response_id, rate_limit_info, fence);
@@ -1115,7 +1119,7 @@ public:
 class hint_mutation : public shared_mutation {
 public:
     using shared_mutation::shared_mutation;
-    virtual bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) override {
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id hid, tracing::trace_state_ptr tr_state) override {
         throw std::runtime_error("Attempted to store a hint for a hint");
     }
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
@@ -1125,9 +1129,11 @@ public:
         // becomes unavailable - this might include the current node
         return sp.apply_fence(sp.mutate_hint(_schema, *_mutation, std::move(tr_state), timeout), fence, sp.my_address());
     }
-    virtual future<> apply_remotely(storage_proxy& sp, gms::inet_address ep, const inet_address_vector_replica_set& forward,
+    virtual future<> apply_remotely(storage_proxy& sp, locator::host_id hid, const inet_address_vector_replica_set& forward,
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
-            tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info, fencing_token fence) override {
+            tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
+            locator::effective_replication_map_ptr ermptr, fencing_token fence) override {
+        const auto ep = ermptr->get_token_metadata().get_endpoint_for_host_id(hid);
         return sp.remote().send_hint_mutation(
                 netw::messaging_service::msg_addr{ep, 0}, timeout, tr_state,
                 *_mutation, forward, sp.my_address(), this_shard_id(), response_id, rate_limit_info, fence);
@@ -1240,7 +1246,7 @@ public:
         _size = _proposal->update.representation().size();
         _schema = std::move(s);
     }
-    virtual bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) override {
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id, tracing::trace_state_ptr tr_state) override {
             return false; // CAS does not save hints yet
     }
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
@@ -1250,10 +1256,12 @@ public:
         // TODO: Enforce per partition rate limiting in paxos
         return paxos::paxos_state::learn(sp, sp.remote().system_keyspace(), _schema, *_proposal, timeout, tr_state);
     }
-    virtual future<> apply_remotely(storage_proxy& sp, gms::inet_address ep, const inet_address_vector_replica_set& forward,
+    virtual future<> apply_remotely(storage_proxy& sp, locator::host_id hid, const inet_address_vector_replica_set& forward,
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
-            tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info, fencing_token) override {
-        tracing::trace(tr_state, "Sending a learn to /{}", ep);
+            tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
+            locator::effective_replication_map_ptr ermptr, fencing_token) override {
+        const auto ep = ermptr->get_token_metadata().get_endpoint_for_host_id(hid);
+        tracing::trace(tr_state, "Sending a learn to /{}", hid);
         // TODO: Enforce per partition rate limiting in paxos
         return sp.remote().send_paxos_learn(
                 netw::messaging_service::msg_addr{ep, 0}, timeout, tracing::make_trace_info(tr_state),
@@ -1546,19 +1554,20 @@ public:
     const inet_address_vector_topology_change& get_dead_endpoints() const {
         return _dead_endpoints;
     }
-    bool store_hint(db::hints::manager& hm, gms::inet_address ep, tracing::trace_state_ptr tr_state) {
-        return _mutation_holder->store_hint(hm, ep, tr_state);
+    bool store_hint(db::hints::manager& hm, locator::host_id hid, tracing::trace_state_ptr tr_state) {
+        return _mutation_holder->store_hint(hm, hid, tr_state);
     }
     future<> apply_locally(storage_proxy::clock_type::time_point timeout, tracing::trace_state_ptr tr_state) {
         return _mutation_holder->apply_locally(*_proxy, timeout, std::move(tr_state),
             adjust_rate_limit_for_local_operation(_rate_limit_info),
             {_effective_replication_map_ptr->get_token_metadata().get_version()});
     }
-    future<> apply_remotely(gms::inet_address ep, const inet_address_vector_replica_set& forward,
+    future<> apply_remotely(locator::host_id hid, const inet_address_vector_replica_set& forward,
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state) {
-        return _mutation_holder->apply_remotely(*_proxy, ep, forward,
+        return _mutation_holder->apply_remotely(*_proxy, hid, forward,
             response_id, timeout, std::move(tr_state), _rate_limit_info,
+            _effective_replication_map_ptr,
             {_effective_replication_map_ptr->get_token_metadata().get_version()});
     }
     const schema_ptr& get_schema() const {
@@ -3164,7 +3173,15 @@ void
 storage_proxy::hint_to_dead_endpoints(response_id_type id, db::consistency_level cl) {
     auto& h = *get_write_response_handler(id);
 
-    size_t hints = hint_to_dead_endpoints(h._mutation_holder, h.get_dead_endpoints(), h._type, h.get_trace_state());
+    const auto& dead_endpoints = h.get_dead_endpoints();
+    const auto& tm = h._effective_replication_map_ptr->get_token_metadata();
+    std::vector<locator::host_id> hid_dead_endpoints(dead_endpoints.size());
+    
+    for (const auto& ep : dead_endpoints) {
+        hid_dead_endpoints.push_back(tm.get_host_id(ep));
+    }
+
+    size_t hints = hint_to_dead_endpoints(h._mutation_holder, hid_dead_endpoints, h._type, h.get_trace_state());
 
     if (cl == db::consistency_level::ANY) {
         // for cl==ANY hints are counted towards consistency
@@ -3979,7 +3996,7 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
     };
 
     // lambda for applying mutation remotely
-    auto rmutate = [this, handler_ptr, timeout, response_id, &global_stats] (gms::inet_address coordinator, const inet_address_vector_replica_set& forward) {
+    auto rmutate = [this, handler_ptr, timeout, response_id, &global_stats] (locator::host_id coordinator, const inet_address_vector_replica_set& forward) {
         auto msize = handler_ptr->get_mutation_size(); // can overestimate for repair writes
         global_stats.queued_write_bytes += msize;
 
@@ -4013,7 +4030,8 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
             if (coordinator == my_address) {
                 f = futurize_invoke(lmutate);
             } else {
-                f = futurize_invoke(rmutate, coordinator, forward);
+                const auto& tm = handler_ptr->_effective_replication_map_ptr->get_token_metadata();
+                f = futurize_invoke(rmutate, tm.get_host_id(coordinator), forward);
             }
         }
 
@@ -4052,7 +4070,7 @@ size_t storage_proxy::hint_to_dead_endpoints(std::unique_ptr<mutation_holder>& m
 {
     if (hints_enabled(type)) {
         db::hints::manager& hints_manager = hints_manager_for(type);
-        return boost::count_if(targets, [&mh, tr_state = std::move(tr_state), &hints_manager] (gms::inet_address target) mutable -> bool {
+        return boost::count_if(targets, [&mh, tr_state = std::move(tr_state), &hints_manager] (locator::host_id target) mutable -> bool {
             return mh->store_hint(hints_manager, target, tr_state);
         });
     } else {
