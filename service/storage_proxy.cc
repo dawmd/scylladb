@@ -6568,16 +6568,7 @@ future<> storage_proxy::wait_for_hint_sync_point(const db::hints::sync_point spo
 
 void storage_proxy::on_join_cluster(const gms::inet_address& endpoint) {};
 
-void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {
-    const auto tmptr = get_token_metadata_ptr();
-    auto maybe_hid = tmptr->get_host_id_if_known(endpoint);
-    if (!maybe_hid) {
-        if (tmptr->get_topology().is_me(endpoint)) {
-            maybe_hid = {tmptr->get_topology().my_host_id()};
-        } else {
-            on_internal_error(slogger, format("ON LEAVE CLUSTER, no host ID for {}", endpoint));
-        }
-    }
+void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint, const std::optional<locator::host_id>& maybe_hid) {
     const auto hid = *maybe_hid;
     // Discarding these futures is safe. They're awaited by db::hints::manager::stop().
     (void) _hints_manager.drain_for(hid);

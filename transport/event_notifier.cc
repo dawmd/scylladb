@@ -237,7 +237,7 @@ void cql_server::event_notifier::send_join_cluster(const gms::inet_address& endp
     }
 }
 
-void cql_server::event_notifier::on_leave_cluster(const gms::inet_address& endpoint)
+void cql_server::event_notifier::on_leave_cluster(const gms::inet_address& endpoint, const std::optional<locator::host_id>& maybe_hid)
 {
     for (auto&& conn : _topology_change_listeners) {
         using namespace cql_transport;
