@@ -1503,6 +1503,7 @@ public:
                         return convert_ep_to_hid_with_erm(ermptr, ep);
                     }));
 
+            slogger.info("HINT DEAD 1");
             auto hints = _proxy->hint_to_dead_endpoints(_mutation_holder, ermptr, hid_targets, _type, get_trace_state());
             signal(hints);
             if (_cl == db::consistency_level::ANY && hints) {
@@ -3205,14 +3206,22 @@ storage_proxy::hint_to_dead_endpoints(response_id_type id, db::consistency_level
     auto& h = *get_write_response_handler(id);
 
     const auto& dead_endpoints = h.get_dead_endpoints();
-    const auto& tm = h._effective_replication_map_ptr->get_token_metadata();
-    std::vector<locator::host_id> hid_dead_endpoints(dead_endpoints.size());
+    const auto ermptr = h._effective_replication_map_ptr;
+    const auto& tm = ermptr->get_token_metadata();
+    std::vector<locator::host_id> hid_dead_endpoints;
+    hid_dead_endpoints.reserve(dead_endpoints.size());
     
+    slogger.info("Dead endpoints before mapping: {}", dead_endpoints);
     for (const auto& ep : dead_endpoints) {
-        hid_dead_endpoints.push_back(tm.get_host_id(ep));
+        const auto hid = tm.get_host_id(ep);
+        slogger.info("\tMapping {} to {}", ep, hid);
+        hid_dead_endpoints.push_back(hid);
+        assert(ermptr->get_token_metadata().get_endpoint_for_host_id_if_known(hid).has_value());
     }
+    slogger.info("Mapped dead endpoints: {}", hid_dead_endpoints);
 
-    size_t hints = hint_to_dead_endpoints(h._mutation_holder, h._effective_replication_map_ptr, hid_dead_endpoints, h._type, h.get_trace_state());
+    slogger.info("HINT DEAD 2, my host ID = {}, my IP = {}", ermptr->get_token_metadata().get_topology().my_host_id(), ermptr->get_token_metadata().get_topology().my_address());
+    size_t hints = hint_to_dead_endpoints(h._mutation_holder, ermptr, hid_dead_endpoints, h._type, h.get_trace_state());
 
     if (cl == db::consistency_level::ANY) {
         // for cl==ANY hints are counted towards consistency
@@ -3269,6 +3278,7 @@ future<result<>> storage_proxy::mutate_begin(unique_response_handler_vector ids,
         // but request may complete before hint_to_dead_endpoints() is called and
         // response_id handler will be removed, so we will have to do hint with separate
         // frozen_mutation copy, or manage handler live time differently.
+        slogger.info("HINT DEAD 3");
         hint_to_dead_endpoints(response_id, cl);
 
         auto timeout = timeout_opt.value_or(clock_type::now() + std::chrono::milliseconds(_db.local().get_config().write_request_timeout_in_ms()));

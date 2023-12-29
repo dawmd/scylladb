@@ -88,7 +88,7 @@ endpoint_id convert_hid_to_ep_with_erm(locator::effective_replication_map_ptr er
     if (tm.get_topology().is_me(hid)) {
         return tm.get_topology().my_address();
     }
-    on_internal_error(manager_logger, seastar::format("No mapping for {} in the passed effective replication map", hid));
+    on_internal_error(manager_logger, seastar::format("No mapping for {} in the passed effective replication map. My host ID is {}", hid, tm.get_topology().my_host_id()));
 }
 
 [[maybe_unused]] std::optional<endpoint_id> maybe_convert_hid_to_ep_with_erm(locator::effective_replication_map_ptr ermptr, const locator::host_id& hid) {
