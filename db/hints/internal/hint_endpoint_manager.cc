@@ -119,7 +119,7 @@ future<> hint_endpoint_manager::stop(drain should_drain) noexcept {
     });
 }
 
-hint_endpoint_manager::hint_endpoint_manager(const endpoint_id& key, manager& shard_manager)
+hint_endpoint_manager::hint_endpoint_manager(const locator::host_id& key, manager& shard_manager)
     : _key(key)
     , _shard_manager(shard_manager)
     , _file_update_mutex_ptr(make_lw_shared<seastar::shared_mutex>())
@@ -149,7 +149,7 @@ hint_endpoint_manager::~hint_endpoint_manager() {
 
 future<hints_store_ptr> hint_endpoint_manager::get_or_load() {
     if (!_hints_store_anchor) {
-        return _shard_manager.store_factory().get_or_load(_key, [this] (const endpoint_id&) noexcept {
+        return _shard_manager.store_factory().get_or_load(_key, [this] (const locator::host_id&) noexcept {
             return add_store();
         }).then([this] (hints_store_ptr log_ptr) {
             _hints_store_anchor = log_ptr;

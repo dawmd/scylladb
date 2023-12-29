@@ -105,7 +105,7 @@ private:
     abort_source _stop_as;
     clock::time_point _next_flush_tp;
     clock::time_point _next_send_retry_tp;
-    endpoint_id _ep_key;
+    locator::host_id _ep_key;
     hint_endpoint_manager& _ep_manager;
     manager& _shard_manager;
     resource_manager& _resource_manager;
@@ -267,7 +267,7 @@ private:
     /// \return Ready, never exceptional, future when operation is complete.
     future<> flush_maybe() noexcept;
 
-    const endpoint_id& end_point_key() const noexcept {
+    const locator::host_id& end_point_key() const noexcept {
         return _ep_key;
     }
 

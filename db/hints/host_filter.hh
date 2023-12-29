@@ -14,6 +14,7 @@
 #include <string_view>
 
 #include <seastar/core/sstring.hh>
+#include "locator/host_id.hh"
 #include "seastarx.hh"
 
 namespace gms {
@@ -58,7 +59,7 @@ public:
     // Parses hint filtering configuration from a list of DCs.
     static host_filter parse_from_dc_list(sstring opt);
 
-    bool can_hint_for(const locator::topology& topo, gms::inet_address ep) const;
+    bool can_hint_for(const locator::topology& topo, locator::host_id ep) const;
 
     inline const std::unordered_set<sstring>& get_dcs() const {
         return _dcs;

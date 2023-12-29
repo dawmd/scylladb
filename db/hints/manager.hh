@@ -68,8 +68,6 @@ public:
 };
 
 class manager {
-public:
-    using endpoint_id = internal::endpoint_id;
 private:
     using hint_stats = internal::hint_stats;
     using drain = internal::drain;
@@ -119,10 +117,10 @@ private:
 
     resource_manager& _resource_manager;
 
-    std::unordered_map<endpoint_id, hint_endpoint_manager> _ep_managers;
+    std::unordered_map<locator::host_id, hint_endpoint_manager> _ep_managers;
     hint_stats _stats;
     seastar::metrics::metric_groups _metrics;
-    std::unordered_set<endpoint_id> _eps_with_pending_hints;
+    std::unordered_set<locator::host_id> _eps_with_pending_hints;
     seastar::named_semaphore _drain_lock = {1, named_semaphore_exception_factory{"drain lock"}};
 
 public:
@@ -143,7 +141,7 @@ public:
     void register_metrics(const sstring& group_name);
     future<> start(shared_ptr<gms::gossiper> gossiper_ptr);
     future<> stop();
-    bool store_hint(locator::host_id hid, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept;
+    bool store_hint(locator::host_id hid, locator::effective_replication_map_ptr ermptr, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept;
 
     /// \brief Changes the host_filter currently used, stopping and starting endpoint_managers relevant to the new host_filter.
     /// \param filter the new host_filter
@@ -157,7 +155,7 @@ public:
     /// \brief Check if a hint may be generated to the give end point
     /// \param ep end point to check
     /// \return true if we should generate the hint to the given end point if it becomes unavailable
-    bool can_hint_for(endpoint_id ep) const noexcept;
+    bool can_hint_for(locator::host_id ep, locator::effective_replication_map_ptr ermptr) const noexcept;
 
     /// \brief Check if there aren't too many in-flight hints
     ///
@@ -173,21 +171,21 @@ public:
     ///
     /// \param ep end point to check
     /// \return TRUE if we are allowed to generate hint to the given end point but there are too many in-flight hints
-    bool too_many_in_flight_hints_for(endpoint_id ep) const noexcept;
+    bool too_many_in_flight_hints_for(locator::host_id ep, locator::effective_replication_map_ptr ermptr) const noexcept;
 
     /// \brief Check if DC \param ep belongs to is "hintable"
     /// \param ep End point identificator
     /// \return TRUE if hints are allowed to be generated to \param ep.
-    bool check_dc_for(endpoint_id ep) const noexcept;
+    bool check_dc_for(locator::host_id ep) const noexcept;
 
     /// Execute a given functor while having an endpoint's file update mutex locked.
     ///
-    /// The caller must ensure that the passed endpoint_id is valid, i.e. this manager instance
+    /// The caller must ensure that the passed locator::host_id is valid, i.e. this manager instance
     /// really manages an endpoint manager corresponding to it. See @ref have_ep_manager.
     ///
     /// \param ep endpoint whose file update mutex should be locked
     /// \param func functor to be executed
-    future<> with_file_update_mutex_for(endpoint_id ep, noncopyable_function<future<> ()> func);
+    future<> with_file_update_mutex_for(locator::host_id ep, noncopyable_function<future<> ()> func);
 
     /// \brief Checks if hints are disabled for all endpoints
     /// \return TRUE if hints are disabled.
@@ -203,7 +201,7 @@ public:
     /// \brief Get the number of in-flight (to the disk) hints to a given end point.
     /// \param ep End point identificator
     /// \return Number of hints in-flight to \param ep.
-    uint64_t hints_in_progress_for(endpoint_id ep) const noexcept {
+    uint64_t hints_in_progress_for(locator::host_id ep) const noexcept {
         auto it = _ep_managers.find(ep);
         if (it == _ep_managers.end()) {
             return 0;
@@ -211,7 +209,7 @@ public:
         return it->second.hints_in_progress();
     }
 
-    void add_ep_with_pending_hints(endpoint_id key) {
+    void add_ep_with_pending_hints(locator::host_id key) {
         _eps_with_pending_hints.insert(key);
     }
 
@@ -220,7 +218,7 @@ public:
         _eps_with_pending_hints.reserve(_ep_managers.size());
     }
 
-    bool has_ep_with_pending_hints(endpoint_id key) const {
+    bool has_ep_with_pending_hints(locator::host_id key) const {
         return _eps_with_pending_hints.contains(key);
     }
 
@@ -245,7 +243,7 @@ public:
     }
 
     /// \brief Returns a set of replay positions for hint queues towards endpoints from the `target_eps`.
-    sync_point::shard_rps calculate_current_sync_point(std::span<const endpoint_id> target_eps) const;
+    sync_point::shard_rps calculate_current_sync_point(std::span<const internal::endpoint_id> target_eps) const;
 
     /// \brief Waits until hint replay reach replay positions described in `rps`.
     future<> wait_for_sync_point(abort_source& as, const sync_point::shard_rps& rps);
@@ -269,10 +267,10 @@ private:
         return _local_db;
     }
 
-    hint_endpoint_manager& get_ep_manager(endpoint_id ep);
+    hint_endpoint_manager& get_ep_manager(locator::host_id ep);
 
 public:
-    bool have_ep_manager(endpoint_id ep) const noexcept;
+    bool have_ep_manager(locator::host_id ep) const noexcept;
 
 public:
     /// \brief Initiate the draining when we detect that the node has left the cluster.
@@ -284,7 +282,7 @@ public:
     /// corresponding hint_endpoint_manager objects.
     ///
     /// \param endpoint node that left the cluster
-    future<> drain_for(endpoint_id endpoint) noexcept;
+    future<> drain_for(locator::host_id endpoint) noexcept;
 
     void update_backlog(size_t backlog, size_t max_backlog);
 

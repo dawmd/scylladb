@@ -11,9 +11,11 @@
 #include <random>
 #include <seastar/core/sleep.hh>
 #include <seastar/util/defer.hh>
+#include "gms/inet_address.hh"
 #include "partition_range_compat.hh"
 #include "db/consistency_level.hh"
 #include "db/commitlog/commitlog.hh"
+#include "seastar/core/on_internal_error.hh"
 #include "storage_proxy.hh"
 #include "unimplemented.hh"
 #include "mutation/mutation.hh"
@@ -126,6 +128,18 @@ seastar::metrics::label_instance current_scheduling_group_label() {
     return make_scheduling_group_label(current_scheduling_group());
 }
 
+}
+
+static locator::host_id convert_ep_to_hid_with_erm(locator::effective_replication_map_ptr ermptr, const gms::inet_address& ep) {
+    const auto& tm = ermptr->get_token_metadata();
+    const auto& maybe_hid = tm.get_host_id_if_known(ep);
+    if (maybe_hid) {
+        return *maybe_hid;
+    }
+    if (tm.get_topology().is_me(ep)) {
+        return tm.get_topology().my_host_id();
+    }
+    on_internal_error(slogger, seastar::format("No mapping for {} in the passed effective replication map", ep));
 }
 
 template<typename ResultType>
@@ -987,7 +1001,7 @@ protected:
     schema_ptr _schema;
 public:
     virtual ~mutation_holder() {}
-    virtual bool store_hint(db::hints::manager& hm, locator::host_id hid, tracing::trace_state_ptr tr_state) = 0;
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id hid, locator::effective_replication_map_ptr, tracing::trace_state_ptr tr_state) = 0;
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
             fencing_token fence) = 0;
@@ -1014,7 +1028,7 @@ class per_destination_mutation : public mutation_holder {
     std::unordered_map<locator::host_id, lw_shared_ptr<const frozen_mutation>> _mutations;
     dht::token _token;
 public:
-    per_destination_mutation(const std::unordered_map<gms::inet_address, std::optional<mutation>>& mutations) {
+    per_destination_mutation(const std::unordered_map<locator::host_id, std::optional<mutation>>& mutations) {
         for (auto&& m : mutations) {
             lw_shared_ptr<const frozen_mutation> fm;
             if (m.second) {
@@ -1026,10 +1040,10 @@ public:
             _mutations.emplace(m.first, std::move(fm));
         }
     }
-    virtual bool store_hint(db::hints::manager& hm, locator::host_id hid, tracing::trace_state_ptr tr_state) override {
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id hid, locator::effective_replication_map_ptr ermptr, tracing::trace_state_ptr tr_state) override {
         auto m = _mutations[hid];
         if (m) {
-            return hm.store_hint(hid, _schema, std::move(m), tr_state);
+            return hm.store_hint(hid, ermptr, _schema, std::move(m), tr_state);
         } else {
             return false;
         }
@@ -1088,8 +1102,8 @@ public:
     }
     explicit shared_mutation(const mutation& m) : shared_mutation(frozen_mutation_and_schema{freeze(m), m.schema()}) {
     }
-    virtual bool store_hint(db::hints::manager& hm, locator::host_id hid, tracing::trace_state_ptr tr_state) override {
-            return hm.store_hint(hid, _schema, _mutation, tr_state);
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id hid, locator::effective_replication_map_ptr ermptr, tracing::trace_state_ptr tr_state) override {
+            return hm.store_hint(hid, ermptr, _schema, _mutation, tr_state);
     }
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
@@ -1119,7 +1133,7 @@ public:
 class hint_mutation : public shared_mutation {
 public:
     using shared_mutation::shared_mutation;
-    virtual bool store_hint(db::hints::manager& hm, locator::host_id hid, tracing::trace_state_ptr tr_state) override {
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id hid, locator::effective_replication_map_ptr ermptr, tracing::trace_state_ptr tr_state) override {
         throw std::runtime_error("Attempted to store a hint for a hint");
     }
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
@@ -1246,7 +1260,7 @@ public:
         _size = _proposal->update.representation().size();
         _schema = std::move(s);
     }
-    virtual bool store_hint(db::hints::manager& hm, locator::host_id, tracing::trace_state_ptr tr_state) override {
+    virtual bool store_hint(db::hints::manager& hm, locator::host_id, locator::effective_replication_map_ptr ermptr, tracing::trace_state_ptr tr_state) override {
             return false; // CAS does not save hints yet
     }
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
@@ -1482,7 +1496,14 @@ public:
             // we are here because either cl was achieved, but targets left in the handler are not
             // responding, so a hint should be written for them, or cl == any in which case
             // hints are counted towards consistency, so we need to write hints and count how much was written
-            auto hints = _proxy->hint_to_dead_endpoints(_mutation_holder, get_targets(), _type, get_trace_state());
+
+            const auto ermptr = _effective_replication_map_ptr;
+            const auto hid_targets = boost::copy_range<std::vector<locator::host_id>>(get_targets()
+                    | boost::adaptors::transformed([ermptr] (const gms::inet_address& ep) {
+                        return convert_ep_to_hid_with_erm(ermptr, ep);
+                    }));
+
+            auto hints = _proxy->hint_to_dead_endpoints(_mutation_holder, ermptr, hid_targets, _type, get_trace_state());
             signal(hints);
             if (_cl == db::consistency_level::ANY && hints) {
                 slogger.trace("Wrote hint to satisfy CL.ANY after no replicas acknowledged the write");
@@ -1554,8 +1575,8 @@ public:
     const inet_address_vector_topology_change& get_dead_endpoints() const {
         return _dead_endpoints;
     }
-    bool store_hint(db::hints::manager& hm, locator::host_id hid, tracing::trace_state_ptr tr_state) {
-        return _mutation_holder->store_hint(hm, hid, tr_state);
+    bool store_hint(db::hints::manager& hm, locator::host_id hid, locator::effective_replication_map_ptr ermptr, tracing::trace_state_ptr tr_state) {
+        return _mutation_holder->store_hint(hm, hid, ermptr, tr_state);
     }
     future<> apply_locally(storage_proxy::clock_type::time_point timeout, tracing::trace_state_ptr tr_state) {
         return _mutation_holder->apply_locally(*_proxy, timeout, std::move(tr_state),
@@ -3057,10 +3078,14 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
     pending_endpoints.erase(itend, pending_endpoints.end());
 
     auto all = boost::range::join(natural_endpoints, pending_endpoints);
+    const auto all_hids = boost::copy_range<std::vector<locator::host_id>>(all
+            | boost::adaptors::transformed([&erm] (const gms::inet_address& ep) {
+                return convert_ep_to_hid_with_erm(erm, ep);
+            }));
 
     // If the manager hasn't started yet, no mutation will be performed to another node.
     // No hint will need to be stored.
-    if (_hints_manager.started() && cannot_hint(all, type)) {
+    if (_hints_manager.started() && cannot_hint(all_hids, erm, type)) {
         get_stats().writes_failed_due_to_too_many_in_flight_hints++;
         // avoid OOMing due to excess hints.  we need to do this check even for "live" nodes, since we can
         // still generate hints for those if it's overloaded or simply dead but not yet known-to-be-dead.
@@ -3121,9 +3146,15 @@ result<storage_proxy::response_id_type>
 storage_proxy::create_write_response_handler(const read_repair_mutation& mut, db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit) {
     inet_address_vector_replica_set endpoints;
     const auto& m = mut.value;
+    const auto ermptr = mut.ermp;
     endpoints.reserve(m.size());
     boost::copy(m | boost::adaptors::map_keys, std::inserter(endpoints, endpoints.begin()));
-    auto mh = std::make_unique<per_destination_mutation>(m);
+    const auto hid_m = boost::copy_range<std::unordered_map<locator::host_id, std::optional<mutation>>>(m
+            | boost::adaptors::transformed([ermptr] (const auto& pair) {
+                const auto& [ep, opt] = pair;
+                return std::make_pair(convert_ep_to_hid_with_erm(ermptr, ep), opt);
+            }));
+    auto mh = std::make_unique<per_destination_mutation>(hid_m);
 
     slogger.trace("creating write handler for read repair token: {} endpoint: {}", mh->token(), endpoints);
     tracing::trace(tr_state, "Creating write handler for read repair token: {} endpoint: {}", mh->token(), endpoints);
@@ -3181,7 +3212,7 @@ storage_proxy::hint_to_dead_endpoints(response_id_type id, db::consistency_level
         hid_dead_endpoints.push_back(tm.get_host_id(ep));
     }
 
-    size_t hints = hint_to_dead_endpoints(h._mutation_holder, hid_dead_endpoints, h._type, h.get_trace_state());
+    size_t hints = hint_to_dead_endpoints(h._mutation_holder, h._effective_replication_map_ptr, hid_dead_endpoints, h._type, h.get_trace_state());
 
     if (cl == db::consistency_level::ANY) {
         // for cl==ANY hints are counted towards consistency
@@ -3787,9 +3818,16 @@ mutation storage_proxy::do_get_batchlog_mutation_for(schema_ptr schema, const st
 }
 
 template<typename Range>
-bool storage_proxy::cannot_hint(const Range& targets, db::write_type type) const {
+bool storage_proxy::cannot_hint(const Range& targets, locator::effective_replication_map_ptr ermptr, db::write_type type) const {
     // if hints are disabled we "can always hint" since there's going to be no hint generated in this case
-    return hints_enabled(type) && boost::algorithm::any_of(targets, std::bind(&db::hints::manager::too_many_in_flight_hints_for, &_hints_manager, std::placeholders::_1));
+    return hints_enabled(type) && [&] {
+        for (const auto& target : targets) {
+            if (_hints_manager.too_many_in_flight_hints_for(target, ermptr)) {
+                return true;
+            }
+        }
+        return false;
+    } ();
 }
 
 future<> storage_proxy::send_to_endpoint(
@@ -4066,12 +4104,12 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
 
 // returns number of hints stored
 template<typename Range>
-size_t storage_proxy::hint_to_dead_endpoints(std::unique_ptr<mutation_holder>& mh, const Range& targets, db::write_type type, tracing::trace_state_ptr tr_state) noexcept
+size_t storage_proxy::hint_to_dead_endpoints(std::unique_ptr<mutation_holder>& mh, locator::effective_replication_map_ptr ermptr, const Range& targets, db::write_type type, tracing::trace_state_ptr tr_state) noexcept
 {
     if (hints_enabled(type)) {
         db::hints::manager& hints_manager = hints_manager_for(type);
-        return boost::count_if(targets, [&mh, tr_state = std::move(tr_state), &hints_manager] (locator::host_id target) mutable -> bool {
-            return mh->store_hint(hints_manager, target, tr_state);
+        return boost::count_if(targets, [&mh, ermptr, tr_state = std::move(tr_state), &hints_manager] (locator::host_id target) mutable -> bool {
+            return mh->store_hint(hints_manager, target, ermptr, tr_state);
         });
     } else {
         return 0;
@@ -6432,6 +6470,16 @@ future<db::hints::sync_point> storage_proxy::create_hint_sync_point(std::vector<
         const auto members_set = remote().gossiper().get_live_members();
         std::copy(members_set.begin(), members_set.end(), std::back_inserter(target_hosts));
     }
+
+    // const auto tmptr = get_token_metadata_ptr();
+    // std::vector<locator::host_id> target_hids(target_hosts.size());
+    // for (const auto& ep : target_hosts) {
+    //     const auto maybe_hid = tmptr->get_host_id_if_known(ep);
+    //     if (maybe_hid) {
+    //         target_hids.push_back(*maybe_hid);
+    //     }
+    // }
+
     co_await coroutine::parallel_for_each(boost::irange<unsigned>(0, smp::count), [this, &target_hosts, &spoint] (unsigned shard) -> future<> {
         const auto& sharded_sp = container();
         // sharded::invoke_on does not have a const-method version, so we cannot use it here
@@ -6521,9 +6569,19 @@ future<> storage_proxy::wait_for_hint_sync_point(const db::hints::sync_point spo
 void storage_proxy::on_join_cluster(const gms::inet_address& endpoint) {};
 
 void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {
+    const auto tmptr = get_token_metadata_ptr();
+    auto maybe_hid = tmptr->get_host_id_if_known(endpoint);
+    if (!maybe_hid) {
+        if (tmptr->get_topology().is_me(endpoint)) {
+            maybe_hid = {tmptr->get_topology().my_host_id()};
+        } else {
+            on_internal_error(slogger, format("ON LEAVE CLUSTER, no host ID for {}", endpoint));
+        }
+    }
+    const auto hid = *maybe_hid;
     // Discarding these futures is safe. They're awaited by db::hints::manager::stop().
-    (void) _hints_manager.drain_for(endpoint);
-    (void) _hints_for_views_manager.drain_for(endpoint);
+    (void) _hints_manager.drain_for(hid);
+    (void) _hints_for_views_manager.drain_for(hid);
 }
 
 void storage_proxy::on_up(const gms::inet_address& endpoint) {};

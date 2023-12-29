@@ -146,14 +146,14 @@ void space_watchdog::on_timer() {
                 // not hintable).
                 // If exists - let's take a file update lock so that files are not changed under our feet. Otherwise, simply
                 // continue to enumeration - there is no one to change them.
-                const internal::endpoint_id ep{de.name};
+                const locator::host_id ep{utils::UUID{de.name}};
 
                 if (shard_manager.have_ep_manager(ep)) {
                     return shard_manager.with_file_update_mutex_for(ep, [this, &shard_manager, dir = std::move(dir), ep_name = std::move(de.name)] () mutable {
-                        return scan_one_ep_dir(dir / ep_name, shard_manager, ep_key_type(ep_name));
+                        return scan_one_ep_dir(dir / ep_name, shard_manager, ep_key_type(utils::UUID{ep_name}));
                     });
                 } else {
-                    return scan_one_ep_dir(dir / de.name, shard_manager, ep_key_type(de.name));
+                    return scan_one_ep_dir(dir / de.name, shard_manager, ep_key_type(utils::UUID{de.name}));
                 }
             }).get();
         }

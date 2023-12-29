@@ -48,6 +48,34 @@
 namespace db::hints {
 namespace internal {
 
+namespace {
+
+[[maybe_unused]] endpoint_id convert_hid_to_ep_with_erm(locator::effective_replication_map_ptr ermptr, const locator::host_id& hid) {
+    const auto& tm = ermptr->get_token_metadata();
+    const auto& maybe_ep = tm.get_endpoint_for_host_id_if_known(hid);
+    if (maybe_ep) {
+        return *maybe_ep;
+    }
+    if (tm.get_topology().is_me(hid)) {
+        return tm.get_topology().my_address();
+    }
+    on_internal_error(manager_logger, seastar::format("No mapping for {} in the passed effective replication map", hid));
+}
+
+[[maybe_unused]] std::optional<endpoint_id> maybe_convert_hid_to_ep_with_erm(locator::effective_replication_map_ptr ermptr, const locator::host_id& hid) {
+    const auto& tm = ermptr->get_token_metadata();
+    const auto& maybe_ep = tm.get_endpoint_for_host_id_if_known(hid);
+    if (maybe_ep) {
+        return *maybe_ep;
+    }
+    if (tm.get_topology().is_me(hid)) {
+        return tm.get_topology().my_address();
+    }
+    return {};
+}
+
+} // anonymous namespace
+
 class no_column_mapping : public std::out_of_range {
 public:
     no_column_mapping(const table_schema_version& id) : std::out_of_range(format("column mapping for CF schema_version {} is missing", id)) {}
@@ -80,11 +108,13 @@ future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m, locator
     return futurize_invoke([this, m = std::move(m), ermp = std::move(ermp), &natural_endpoints] () mutable -> future<> {
         // The fact that we send with CL::ALL in both cases below ensures that new hints are not going
         // to be generated as a result of hints sending.
-        if (boost::range::find(natural_endpoints, end_point_key()) != natural_endpoints.end()) {
-            manager_logger.trace("Sending directly to {}", end_point_key());
-            return _proxy.send_hint_to_endpoint(std::move(m), std::move(ermp), end_point_key());
+        const auto ep = convert_hid_to_ep_with_erm(ermp, end_point_key());
+
+        if (boost::range::find(natural_endpoints, ep) != natural_endpoints.end()) {
+            manager_logger.trace("Sending directly to {}", ep);
+            return _proxy.send_hint_to_endpoint(std::move(m), std::move(ermp), ep);
         } else {
-            manager_logger.trace("Endpoints set has changed and {} is no longer a replica. Mutating from scratch...", end_point_key());
+            manager_logger.trace("Endpoints set has changed and {} is no longer a replica. Mutating from scratch...", ep);
             return _proxy.send_hint_to_all_replicas(std::move(m));
         }
     });
@@ -96,14 +126,18 @@ bool hint_sender::can_send() noexcept {
     }
 
     try {
-        if (_gossiper.is_alive(end_point_key())) {
+        const auto tmptr = _shard_manager._proxy.get_token_metadata_ptr();
+        // It cannot be this node.
+        auto maybe_ep = tmptr->get_endpoint_for_host_id_if_known(_ep_key);
+
+        if (maybe_ep && _gossiper.is_alive(*maybe_ep)) {
             _state.remove(state::ep_state_left_the_ring);
             return true;
         } else {
+            // The host ID might have disappeared from the `locator::topology` due to topology changes.
+            // In that case, we should send hints to all of the current replicas.
             if (!_state.contains(state::ep_state_left_the_ring)) {
-                const auto& tm = _shard_manager.local_db().get_token_metadata();
-                const auto host_id = tm.get_host_id_if_known(end_point_key());
-                _state.set_if<state::ep_state_left_the_ring>(!host_id || !tm.is_normal_token_owner(*host_id));
+                _state.set_if<state::ep_state_left_the_ring>(!tmptr->is_normal_token_owner(_ep_key));
             }
             // send the hints out if the destination Node is part of the ring - we will send to all new replicas in this case
             return _state.contains(state::ep_state_left_the_ring);

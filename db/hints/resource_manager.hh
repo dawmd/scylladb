@@ -20,6 +20,7 @@
 #include "utils/small_vector.hh"
 #include "utils/updateable_value.hh"
 #include "enum_set.hh"
+#include "locator/host_id.hh"
 
 // Usually we don't define namespace aliases in our headers
 // but this one is already entrenched.
@@ -46,7 +47,7 @@ class manager;
 
 class space_watchdog {
 private:
-    using ep_key_type = gms::inet_address;
+    using ep_key_type = locator::host_id;
     static const std::chrono::seconds _watchdog_period;
 
     struct manager_hash {

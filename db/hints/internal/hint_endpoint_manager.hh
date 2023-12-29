@@ -43,7 +43,7 @@ private:
     friend class hint_sender;
 
 private:
-    endpoint_id _key;
+    locator::host_id _key;
     manager& _shard_manager;
     hints_store_ptr _hints_store_anchor;
     seastar::gate _store_gate;
@@ -68,11 +68,11 @@ private:
     hint_sender _sender;
 
 public:
-    hint_endpoint_manager(const endpoint_id& key, manager& shard_manager);
+    hint_endpoint_manager(const locator::host_id& key, manager& shard_manager);
     hint_endpoint_manager(hint_endpoint_manager&&);
     ~hint_endpoint_manager();
 
-    const endpoint_id& end_point_key() const noexcept {
+    const locator::host_id& end_point_key() const noexcept {
         return _key;
     }
 

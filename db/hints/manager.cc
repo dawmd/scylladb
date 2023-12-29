@@ -34,6 +34,7 @@
 #include "mutation/mutation_partition_view.hh"
 #include "replica/database.hh"
 #include "service/storage_proxy.hh"
+#include "utils/UUID.hh"
 #include "utils/directories.hh"
 #include "utils/disk-error-handler.hh"
 #include "utils/div_ceil.hh"
@@ -51,6 +52,58 @@
 namespace db::hints {
 
 using namespace internal;
+
+namespace {
+
+[[maybe_unused]] locator::host_id convert_ep_to_hid_with_erm(locator::effective_replication_map_ptr ermptr, const endpoint_id& ep) {
+    const auto& tm = ermptr->get_token_metadata();
+    const auto& maybe_hid = tm.get_host_id_if_known(ep);
+    if (maybe_hid) {
+        return *maybe_hid;
+    }
+    if (tm.get_topology().is_me(ep)) {
+        return tm.get_topology().my_host_id();
+    }
+    on_internal_error(manager_logger, seastar::format("No mapping for {} in the passed effective replication map", ep));
+}
+
+[[maybe_unused]] std::optional<locator::host_id> maybe_convert_ep_to_hid_with_erm(locator::effective_replication_map_ptr ermptr, const endpoint_id& ep) {
+    const auto& tm = ermptr->get_token_metadata();
+    const auto& maybe_hid = tm.get_host_id_if_known(ep);
+    if (maybe_hid) [[likely]] {
+        return maybe_hid;
+    }
+    if (tm.get_topology().is_me(ep)) {
+        return {tm.get_topology().my_host_id()};
+    }
+    return {};
+}
+
+endpoint_id convert_hid_to_ep_with_erm(locator::effective_replication_map_ptr ermptr, const locator::host_id& hid) {
+    const auto& tm = ermptr->get_token_metadata();
+    const auto& maybe_ep = tm.get_endpoint_for_host_id_if_known(hid);
+    if (maybe_ep) {
+        return *maybe_ep;
+    }
+    if (tm.get_topology().is_me(hid)) {
+        return tm.get_topology().my_address();
+    }
+    on_internal_error(manager_logger, seastar::format("No mapping for {} in the passed effective replication map", hid));
+}
+
+[[maybe_unused]] std::optional<endpoint_id> maybe_convert_hid_to_ep_with_erm(locator::effective_replication_map_ptr ermptr, const locator::host_id& hid) {
+    const auto& tm = ermptr->get_token_metadata();
+    const auto& maybe_ep = tm.get_endpoint_for_host_id_if_known(hid);
+    if (maybe_ep) {
+        return *maybe_ep;
+    }
+    if (tm.get_topology().is_me(hid)) {
+        return tm.get_topology().my_address();
+    }
+    return {};
+}
+
+} // anonymous namespace
 
 class directory_initializer::impl {
 private:
@@ -194,7 +247,7 @@ future<> manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
 
     co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),
             [this] (fs::path datadir, directory_entry de) {
-        endpoint_id ep = endpoint_id{de.name};
+        const locator::host_id ep = locator::host_id{utils::UUID{de.name}};
 
         if (!check_dc_for(ep)) {
             return make_ready_future<>();
@@ -258,12 +311,18 @@ void manager::forbid_hints_for_eps_with_pending_hints() {
 
 sync_point::shard_rps manager::calculate_current_sync_point(std::span<const endpoint_id> target_eps) const {
     sync_point::shard_rps rps;
+    const auto tmptr = _proxy.get_token_metadata_ptr();
 
-    for (auto addr : target_eps) {
-        auto it = _ep_managers.find(addr);
+    for (auto ep : target_eps) {
+        const auto maybe_hid = tmptr->get_host_id_if_known(ep);
+        if (!maybe_hid) [[unlikely]] {
+            continue;
+        }
+
+        auto it = _ep_managers.find(*maybe_hid);
         if (it != _ep_managers.end()) {
             const hint_endpoint_manager& ep_man = it->second;
-            rps[ep_man.end_point_key()] = ep_man.last_written_replay_position();
+            rps[ep] = ep_man.last_written_replay_position();
         }
     }
 
@@ -283,9 +342,20 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
         local_as.request_abort();
     }
 
+    const auto tmptr = _proxy.get_token_metadata_ptr();
+    std::unordered_map<locator::host_id, replay_position> hids{};
+    hids.reserve(rps.size());
+
+    for (const auto& [ep, rp] : rps) {
+        const auto maybe_hid = tmptr->get_host_id_if_known(ep);
+        if (maybe_hid) [[likely]] {
+            hids.emplace(*maybe_hid, rp);
+        }
+    }
+
     bool was_aborted = false;
     co_await coroutine::parallel_for_each(_ep_managers,
-            coroutine::lambda([&rps, &local_as, &was_aborted] (auto& pair) -> future<> {
+            coroutine::lambda([&hids, &local_as, &was_aborted] (auto& pair) -> future<> {
         auto& [ep, ep_man] = pair;
 
         // When `rps` doesn't specify a replay position for a given endpoint, we use
@@ -297,8 +367,8 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
         // pass either rps[ep] or the default replay position to the endpoint manager because
         // some hints MIGHT need to be sent.
         const replay_position rp = [&] {
-            auto it = rps.find(ep);
-            if (it == rps.end()) {
+            auto it = hids.find(ep);
+            if (it == hids.end()) {
                 return replay_position{};
             }
             return it->second;
@@ -319,7 +389,7 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
     }
 }
 
-hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep) {
+hint_endpoint_manager& manager::get_ep_manager(locator::host_id ep) {
     auto [it, emplaced] = _ep_managers.try_emplace(ep, ep, *this);
     hint_endpoint_manager& ep_man = it->second;
 
@@ -331,14 +401,14 @@ hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep) {
     return ep_man;
 }
 
-bool manager::have_ep_manager(endpoint_id ep) const noexcept {
+bool manager::have_ep_manager(locator::host_id ep) const noexcept {
     return _ep_managers.contains(ep);
 }
 
-bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm,
+bool manager::store_hint(locator::host_id ep, locator::effective_replication_map_ptr ermptr, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm,
         tracing::trace_state_ptr tr_state) noexcept
 {
-    if (stopping() || draining_all() || !started() || !can_hint_for(ep)) {
+    if (stopping() || draining_all() || !started() || !can_hint_for(ep, ermptr)) {
         manager_logger.trace("Can't store a hint to {}", ep);
         ++_stats.dropped;
         return false;
@@ -358,16 +428,20 @@ bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const froze
     }
 }
 
-bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
+bool manager::too_many_in_flight_hints_for(locator::host_id ep, locator::effective_replication_map_ptr ermptr) const noexcept {
     // There is no need to check the DC here because if there is an in-flight hint for this
     // endpoint, then this means that its DC has already been checked and found to be ok.
-    return _stats.size_of_hints_in_progress > MAX_SIZE_OF_HINTS_IN_PROGRESS
+    if (!(_stats.size_of_hints_in_progress > MAX_SIZE_OF_HINTS_IN_PROGRESS
             && _proxy.local_db().get_token_metadata().get_topology().is_me(ep)
-            && hints_in_progress_for(ep) > 0
-            && local_gossiper().get_endpoint_downtime(ep) <= _max_hint_window_us;
+            && hints_in_progress_for(ep) > 0)) {
+        return false;
+    }
+
+    const auto ip = convert_hid_to_ep_with_erm(ermptr, ep);
+    return local_gossiper().get_endpoint_downtime(ip) <= _max_hint_window_us;
 }
 
-bool manager::can_hint_for(endpoint_id ep) const noexcept {
+bool manager::can_hint_for(locator::host_id ep, locator::effective_replication_map_ptr ermptr) const noexcept {
     if (_proxy.local_db().get_token_metadata().get_topology().is_me(ep)) {
         return false;
     }
@@ -396,7 +470,8 @@ bool manager::can_hint_for(endpoint_id ep) const noexcept {
     }
 
     // Check if the endpoint has been down for too long.
-    const auto ep_downtime = local_gossiper().get_endpoint_downtime(ep);
+    const auto ip = convert_hid_to_ep_with_erm(ermptr, ep);
+    const auto ep_downtime = local_gossiper().get_endpoint_downtime(ip);
     if (ep_downtime > _max_hint_window_us) {
         manager_logger.trace("{} has been down for {}, not hinting", ep, ep_downtime);
         return false;
@@ -431,7 +506,7 @@ future<> manager::change_host_filter(host_filter filter) {
         // for some of them
         co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),
                 [this] (fs::path datadir, directory_entry de) {
-            const endpoint_id ep = endpoint_id{de.name};
+            const locator::host_id ep = locator::host_id{utils::UUID{de.name}};
 
             const auto& topology = _proxy.get_token_metadata_ptr()->get_topology();
             if (_ep_managers.contains(ep) || !_host_filter.can_hint_for(topology, ep)) {
@@ -468,7 +543,7 @@ future<> manager::change_host_filter(host_filter filter) {
     }
 }
 
-bool manager::check_dc_for(endpoint_id ep) const noexcept {
+bool manager::check_dc_for(locator::host_id ep) const noexcept {
     try {
         // If target's DC is not a "hintable" DCs - don't hint.
         // If there is an end point manager then DC has already been checked and found to be ok.
@@ -480,7 +555,7 @@ bool manager::check_dc_for(endpoint_id ep) const noexcept {
     }
 }
 
-future<> manager::drain_for(endpoint_id endpoint) noexcept {
+future<> manager::drain_for(locator::host_id endpoint) noexcept {
     if (!started() || stopping() || draining_all()) {
         co_return;
     }
@@ -546,7 +621,7 @@ void manager::update_backlog(size_t backlog, size_t max_backlog) {
     }
 }
 
-future<> manager::with_file_update_mutex_for(endpoint_id ep, noncopyable_function<future<> ()> func) {
+future<> manager::with_file_update_mutex_for(locator::host_id ep, noncopyable_function<future<> ()> func) {
     return _ep_managers.at(ep).with_file_update_mutex(std::move(func));
 }
 
