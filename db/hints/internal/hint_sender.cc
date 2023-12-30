@@ -108,13 +108,13 @@ future<> hint_sender::do_send_one_mutation(frozen_mutation_and_schema m, locator
     return futurize_invoke([this, m = std::move(m), ermp = std::move(ermp), &natural_endpoints] () mutable -> future<> {
         // The fact that we send with CL::ALL in both cases below ensures that new hints are not going
         // to be generated as a result of hints sending.
-        const auto ep = convert_hid_to_ep_with_erm(ermp, end_point_key());
+        const auto maybe_ep = maybe_convert_hid_to_ep_with_erm(ermp, end_point_key());
 
-        if (boost::range::find(natural_endpoints, ep) != natural_endpoints.end()) {
-            manager_logger.trace("Sending directly to {}", ep);
-            return _proxy.send_hint_to_endpoint(std::move(m), std::move(ermp), ep);
+        if (maybe_ep && boost::range::find(natural_endpoints, *maybe_ep) != natural_endpoints.end()) {
+            manager_logger.trace("Sending directly to {}", *maybe_ep);
+            return _proxy.send_hint_to_endpoint(std::move(m), std::move(ermp), *maybe_ep);
         } else {
-            manager_logger.trace("Endpoints set has changed and {} is no longer a replica. Mutating from scratch...", ep);
+            manager_logger.trace("Endpoints set has changed and {} is no longer a replica. Mutating from scratch...", end_point_key());
             return _proxy.send_hint_to_all_replicas(std::move(m));
         }
     });
