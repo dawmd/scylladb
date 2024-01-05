@@ -405,23 +405,30 @@ bool manager::have_ep_manager(locator::host_id ep) const noexcept {
     return _ep_managers.contains(ep);
 }
 
-bool manager::store_hint(locator::host_id ep, locator::effective_replication_map_ptr ermptr, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm,
+bool manager::store_hint(locator::host_id hid, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm,
         tracing::trace_state_ptr tr_state) noexcept
 {
-    if (stopping() || draining_all() || !started() || !can_hint_for(ep, ermptr)) {
-        manager_logger.trace("Can't store a hint to {}", ep);
+    if (stopping() || draining_all() || !started()) {
+        manager_logger.trace("Can't store a hint to {}", hid);
+        ++_stats.dropped;
+        return false;
+    }
+    const auto erm = _local_db.find_column_family(s).get_effective_replication_map();
+
+    if (!can_hint_for(hid, erm)) {
+        manager_logger.trace("Can't store a hint to {}", hid);
         ++_stats.dropped;
         return false;
     }
 
     try {
-        manager_logger.trace("Going to store a hint to {}", ep);
-        tracing::trace(tr_state, "Going to store a hint to {}", ep);
+        manager_logger.trace("Going to store a hint to {}", hid);
+        tracing::trace(tr_state, "Going to store a hint to {}", hid);
 
-        return get_ep_manager(ep).store_hint(std::move(s), std::move(fm), tr_state);
+        return get_ep_manager(hid).store_hint(std::move(s), std::move(fm), tr_state);
     } catch (...) {
-        manager_logger.trace("Failed to store a hint to {}: {}", ep, std::current_exception());
-        tracing::trace(tr_state, "Failed to store a hint to {}: {}", ep, std::current_exception());
+        manager_logger.trace("Failed to store a hint to {}: {}", hid, std::current_exception());
+        tracing::trace(tr_state, "Failed to store a hint to {}: {}", hid, std::current_exception());
 
         ++_stats.errors;
         return false;
