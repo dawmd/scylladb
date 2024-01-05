@@ -247,6 +247,8 @@ void cql_server::event_notifier::on_leave_cluster(const gms::inet_address& endpo
     }
 }
 
+void cql_server::event_notifier::on_leave_cluster(const locator::host_id& endpoint) {}
+
 void cql_server::event_notifier::on_up(const gms::inet_address& endpoint)
 {
     if (_endpoints_pending_joined_notification.erase(endpoint)) {

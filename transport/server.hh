@@ -329,6 +329,7 @@ public:
 
     virtual void on_join_cluster(const gms::inet_address& endpoint) override;
     virtual void on_leave_cluster(const gms::inet_address& endpoint) override;
+    virtual void on_leave_cluster(const locator::host_id& endpoint) override;
     virtual void on_up(const gms::inet_address& endpoint) override;
     virtual void on_down(const gms::inet_address& endpoint) override;
 };

@@ -439,6 +439,8 @@ void service_level_controller::on_leave_cluster(const gms::inet_address& endpoin
     }
 }
 
+void service_level_controller::on_leave_cluster(const locator::host_id& endpoint) {}
+
 void service_level_controller::on_up(const gms::inet_address& endpoint) { }
 
 void service_level_controller::on_down(const gms::inet_address& endpoint) { }

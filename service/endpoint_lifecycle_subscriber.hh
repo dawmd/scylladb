@@ -11,6 +11,7 @@
 #pragma once
 
 #include "gms/inet_address.hh"
+#include "locator/host_id.hh"
 #include "utils/atomic_vector.hh"
 
 namespace service {
@@ -44,6 +45,13 @@ public:
     virtual void on_leave_cluster(const gms::inet_address& endpoint) = 0;
 
     /**
+     * Called when a new node leave the cluster (decommission or removeToken).
+     *
+     * @param endpoint the endpoint that is leaving.
+    */
+    virtual void on_leave_cluster(const locator::host_id& endpoint) = 0;
+
+    /**
      * Called when a node is marked UP.
      *
      * @param endpoint the endpoint marked UP.
@@ -67,6 +75,7 @@ public:
 
     future<> notify_down(gms::inet_address endpoint);
     future<> notify_left(gms::inet_address endpoint);
+    future<> notify_left(locator::host_id endpoint);
     future<> notify_up(gms::inet_address endpoint);
     future<> notify_joined(gms::inet_address endpoint);
 };

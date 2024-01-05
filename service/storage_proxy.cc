@@ -6537,6 +6537,8 @@ void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint) {
     (void) _hints_for_views_manager.drain_for(endpoint);
 }
 
+void storage_proxy::on_leave_cluster(const locator::host_id& endpoint) {}
+
 void storage_proxy::on_up(const gms::inet_address& endpoint) {};
 
 void storage_proxy::cancel_write_handlers(noncopyable_function<bool(const abstract_write_response_handler&)> filter_fun) {
