@@ -48,6 +48,22 @@
 namespace db::hints {
 namespace internal {
 
+namespace {
+
+[[maybe_unused]] std::optional<gms::inet_address> maybe_convert_hid_to_ep_with_erm(
+        locator::effective_replication_map_ptr ermptr, const locator::host_id& hid) {
+    const auto& tm = ermptr->get_token_metadata();
+    if (auto maybe_ep = tm.get_endpoint_for_host_id_if_known(hid)) {
+        return *maybe_ep;
+    }
+    if (tm.get_topology().is_me(hid)) {
+        return tm.get_topology().my_address();
+    }
+    return {};
+}
+
+} // anonymous namespace
+
 class no_column_mapping : public std::out_of_range {
 public:
     no_column_mapping(const table_schema_version& id) : std::out_of_range(format("column mapping for CF schema_version {} is missing", id)) {}
