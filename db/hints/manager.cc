@@ -31,6 +31,7 @@
 #include "replica/database.hh"
 #include "service/storage_proxy.hh"
 #include "utils/directories.hh"
+#include "utils/disk-error-handler.hh"
 #include "utils/error_injection.hh"
 #include "utils/lister.hh"
 #include "seastarx.hh"
@@ -182,9 +183,13 @@ void manager::register_metrics(const sstring& group_name) {
 future<> manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
     _gossiper_anchor = std::move(gossiper_ptr);
 
+    co_await migrate_ip_directories();
 
     co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),
             [this] (fs::path datadir, directory_entry de) {
+        // The call to `migrate_ip_directories` above ensures that all of the names
+        // of the directory's contents represent valid `locator::host_id`s,
+        // so it's safe not to perform any additional checks here.
         endpoint_id ep = endpoint_id{utils::UUID{de.name}};
 
         if (!check_dc_for(ep)) {
@@ -567,6 +572,89 @@ void manager::update_backlog(size_t backlog, size_t max_backlog) {
 
 future<> manager::with_file_update_mutex_for(endpoint_id ep, noncopyable_function<future<> ()> func) {
     return _ep_managers.at(ep).with_file_update_mutex(std::move(func));
+}
+
+future<> manager::migrate_ip_directories() {
+    // We want to have a consistent topology throughout the calls in the lambda below.
+    // It's imperative because we cannot allow for a host ID to have mulitple IPs while
+    // this function is being executed.
+    //
+    // Imagine the following scenario of consecutive steps to visualize it:
+    //  (1) We rename the directory corresponding to ip_1 to host_id_1.
+    //  (2) The node corresponding to host_id_1 changes its IP to ip_2.
+    //  (3) We move on to processing a directory correspondiong to ip_2.
+    //      At this step, a failure occurs because ::rename(2) (so `seastar::rename_file` by extension too)
+    //      assumes that the new directory name (or more specifically, its path) doesn't exist.
+    //
+    // We utilize the useful property of token metadata here that ensures the topology stays immutable
+    // as long as we access it via this pointer.
+    auto tmptr = _proxy.get_token_metadata_ptr();
+
+    try {
+        // When upgrading Scylla, rename directories so that all of them use host IDs.
+        // If there is no mapping from an IP to a host ID, drop a directory by effectively removing it
+        // and its contents. Hinted Handoff is a "best-effort" mechanism -- there is no reason to deal
+        // with such edge cases, especially because this can only happen once -- during an upgrade.
+        co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),
+                [tmptr] (fs::path datadir, directory_entry de) -> future<> {
+            auto remove_directory = [] (fs::path p, const std::string_view reason) -> future<> {
+                // We cannot map the IP to the corresponding host ID either because
+                // the relevant mapping doesn't exist anymore or an error occurred. Drop it.
+                //
+                // We only care about directories named after IPs during an upgrade.
+                // In normal circumstances, this whole lambda should be equivalent to a no-op,
+                // i.e. it should have no side effects.
+                manager_logger.warn("Removing {}: {}", reason, p.filename());
+                return lister::rmdir(p);
+            };
+
+            auto parse_name = [] (const sstring& name) -> std::optional<locator::host_id_or_endpoint> {
+                try {
+                    return locator::host_id_or_endpoint{name};
+                } catch (...) {
+                    return {};
+                }
+            };
+
+            // Old path: `<...>/<shard id>/<IP>`.
+            const fs::path current_path = datadir / de.name;
+            auto maybe_parsed_name = parse_name(de.name);
+
+            if (!maybe_parsed_name) {
+                return remove_directory(current_path, "The directory's name {} is neither IP, nor host ID.");
+            }
+            
+            if (maybe_parsed_name.value().has_host_id()) {
+                return make_ready_future<>();
+            }
+
+            try {
+                // This either finds the corresponding host ID or throws an exception.
+                maybe_parsed_name.value().resolve(*tmptr);
+            } catch (...) {
+                return remove_directory(current_path, "Not able to map the IP to a host ID.");
+            }
+
+            // New path: `<...>/<shard id>/<host ID>`.
+            const fs::path hid_path = datadir / maybe_parsed_name.value().id.to_sstring();
+
+            // Here, we rely on the atomicity of ::rename(2) and the fact that we're the only
+            // ones performing actions related to `current_path` and `hid_path` at the moment.
+            // See the System Calls Manual and this post:
+            //   https://stackoverflow.com/questions/7054844/is-rename-atomic
+            // for more information.
+            return io_check(rename_file, current_path.native(), hid_path.native()).then([&] {
+                manager_logger.info("Successfully renamed directory {} to {}", current_path.filename(), hid_path.filename());
+            }).handle_exception([remove_directory, current_path] (auto&& e) {
+                return remove_directory(current_path, seastar::format("Not able to rename the directory: {}", e));
+            }).finally([&] {
+                return io_check(sync_directory, datadir.native());
+            });
+        });
+    } catch (...) {
+        on_internal_error(manager_logger,
+                seastar::format("Criticial error occured when renaming hint directories: {}", std::current_exception()));
+    }
 }
 
 } // namespace db::hints
