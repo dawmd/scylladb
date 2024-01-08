@@ -317,6 +317,15 @@ private:
     bool draining_all() noexcept {
         return _state.contains(state::draining_all);
     }
+
+    /// Renames host directories named after IPs to host IDs.
+    ///
+    /// In the past, hosts were identified by their IPs. Now we use host IDs for that purpose,
+    /// but we want to ensure that old hints don't get lost if possible. This function serves
+    /// this purpose. It's only necessary when upgrading Scylla.
+    ///
+    /// This function should ONLY be called by `manager::start()`.
+    future<> migrate_ip_directories();
 };
 
 } // namespace db::hints
