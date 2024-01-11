@@ -16,7 +16,7 @@ Hinted Handoff is a feature that allows replaying failed writes. The mutation an
 
 ## Hints generation
  * Once the WRITE mutation fails with a timeout we create a _hints_queue_ for the target node.
-   * The queue is specified by a destination node IP.
+   * The queue is specified by a destination node host ID.
 
  * Each hint is specified by:
    * Mutation.
@@ -31,7 +31,7 @@ As long as hints are appended to the queue the files are closed and flushed to t
 
 We are going to reuse the commitlog infrastructure for writing hints to disk - it provides both the internal buffering and the memory consumption control.
 
-Hints to the specific destination are stored under the _hints_directory_/\<shard ID>/\<node IP> directory.
+Hints to the specific destination are stored under the _hints_directory_/\<shard ID>/\<node host ID> directory.
 
 ### When new hints may be dropped?
  * A new hint is going to be dropped when there are more than 10MB "in progress" (yet to be stored) hints per-shard and when there are  "in progress" hints to the destination the current hint is aimed to. 
