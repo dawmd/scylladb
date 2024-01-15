@@ -8,7 +8,9 @@
  * SPDX-License-Identifier: (AGPL-3.0-or-later and Apache-2.0)
  */
 
+#include <fmt/format.h>
 #include <seastar/core/coroutine.hh>
+#include <stdexcept>
 #include "alter_keyspace_statement.hh"
 #include "prepared_statement.hh"
 #include "service/migration_manager.hh"
@@ -36,6 +38,20 @@ future<> cql3::statements::alter_keyspace_statement::check_access(query_processo
     return state.has_keyspace_access(_name, auth::permission::ALTER);
 }
 
+static bool validate_rf_difference(const std::string_view curr_rf, const std::string_view new_rf) {
+    auto to_number = [] (const std::string_view rf) {
+        int result;
+        // We assume the passed string view represents a valid decimal number,
+        // so we don't need the error code.
+        (void) std::from_chars(rf.begin(), rf.end(), result);
+        return result;
+    };
+
+    // We want to ensure that each DC's RF is going to change by at most 1
+    // because in that case the old and new quorums must overlap.
+    return std::abs(to_number(curr_rf) - to_number(new_rf)) <= 1;
+}
+
 void cql3::statements::alter_keyspace_statement::validate(query_processor& qp, const service::client_state& state) const {
         auto tmp = _name;
         std::transform(tmp.begin(), tmp.end(), tmp.begin(), ::tolower);
@@ -50,6 +66,17 @@ void cql3::statements::alter_keyspace_statement::validate(query_processor& qp, c
         }
         try {
             auto ks = qp.db().find_keyspace(_name);
+
+            if (ks.get_replication_strategy().uses_tablets()) {
+                const std::map<sstring, sstring>& current_rfs = ks.metadata()->strategy_options();
+                for (const auto& [new_dc, new_rf] : _attrs->get_replication_options()) {
+                    auto it = current_rfs.find(new_dc);
+                    if (it != current_rfs.end() && !validate_rf_difference(it->second, new_rf)) {
+                        throw exceptions::invalid_request_exception("Cannot modify replication factor of any DC by more than 1 at a time.");
+                    }
+                }
+            }
+
             data_dictionary::storage_options current_options = ks.metadata()->get_storage_options();
             data_dictionary::storage_options new_options = _attrs->get_storage_options();
             if (!current_options.can_update_to(new_options)) {
