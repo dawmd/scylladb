@@ -13,8 +13,8 @@
 #############################################################################
 
 import pytest
-from util import unique_name
-from cassandra.protocol import ConfigurationException
+from util import unique_name, new_test_keyspace
+from cassandra.protocol import ConfigurationException, InvalidRequest
 
 # A fixture similar to "test_keyspace", just creates a keyspace that enables
 # tablets with initial_tablets=128
@@ -45,3 +45,34 @@ def test_create_loop_with_tablets(cql, test_keyspace_128_tablets):
     for i in range(100):
         cql.execute(f"CREATE TABLE {table} (p int PRIMARY KEY, v int)")
         cql.execute("DROP TABLE " + table)
+
+# We want to ensure that we can only change the RF of any DC by at most 1 at a time
+# if we use tablets. That provides us with the guarantee that the old and the new QUORUM
+# overlap by at least one node.
+def test_alter_tablet_keyspace(cql, this_dc):
+    with new_test_keyspace(cql, f"WITH REPLICATION = {{ 'class' : 'NetworkTopologyStrategy', '{this_dc}' : 1 }} "
+                                f"AND TABLETS = {{ 'enabled': true, 'initial': 128 }}") as keyspace:
+        def change_opt_rf(rf_opt, new_rf):
+            cql.execute(f"ALTER KEYSPACE {keyspace} WITH REPLICATION = {{ 'class' : 'NetworkTopologyStrategy', '{rf_opt}' : {new_rf} }}")
+        def change_dc_rf(new_rf):
+            change_opt_rf(this_dc, new_rf)
+        def change_default_rf(new_rf):
+            change_opt_rf("replication_factor", new_rf)
+
+        change_dc_rf(2)
+        change_dc_rf(3)
+
+        with pytest.raises(InvalidRequest):
+            change_dc_rf(5)
+        with pytest.raises(InvalidRequest):
+            change_dc_rf(1)
+        with pytest.raises(InvalidRequest):
+            change_dc_rf(10)
+
+        # Changing the default replication factor doesn't affect any of the existing DCs,
+        # so we can change it arbitrarily.
+        change_default_rf(4)
+        change_default_rf(2)
+        change_default_rf(8)
+        change_default_rf(1)
+        change_default_rf(10)
