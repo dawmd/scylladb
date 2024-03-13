@@ -12,6 +12,7 @@
 #include "log.hh"
 #include <boost/range/algorithm/for_each.hpp>
 #include <boost/range/adaptor/map.hpp>
+#include <seastar/core/semaphore.hh>
 #include "utils/disk-error-handler.hh"
 #include "seastarx.hh"
 #include <seastar/core/sleep.hh>
@@ -73,7 +74,9 @@ void space_watchdog::start() {
         while (!_as.abort_requested()) {
             try {
                 const auto units = get_units(_update_lock, 1).get();
-                on_timer();
+                if (_status == status::RUNNING) {
+                    on_timer();
+                }
             } catch (...) {
                 resource_manager_logger.trace("space_watchdog: unexpected exception - stop all hints generators");
                 // Stop all hint generators if space_watchdog callback failed
@@ -188,6 +191,18 @@ void space_watchdog::on_timer() {
     }
 }
 
+future<> space_watchdog::suspend() noexcept {
+    _status = status::SUSPENDED;
+    // Each call to `space_watchdog::on_timer` follows taking this mutex.
+    // This line ensures that `on_timer` will not be running once we exit
+    // this function.
+    co_await seastar::get_units(_update_lock, 1);
+}
+
+void space_watchdog::resume() noexcept {
+    _status = status::RUNNING;
+}
+
 future<> resource_manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
     _gossiper_ptr = std::move(gossiper_ptr);
 
@@ -278,7 +293,11 @@ future<> resource_manager::prepare_per_device_limits(manager& shard_manager) {
 }
 
 future<> resource_manager::suspend_scanning() noexcept {
-    co_await _space_watchdog.suspend_scanning();
+    co_await _space_watchdog.suspend();
+}
+
+void resource_manager::resume_scanning() noexcept {
+    _space_watchdog.resume();
 }
 
 }
