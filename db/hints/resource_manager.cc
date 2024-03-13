@@ -277,5 +277,9 @@ future<> resource_manager::prepare_per_device_limits(manager& shard_manager) {
     }
 }
 
+future<> resource_manager::suspend_scanning() noexcept {
+    co_await _space_watchdog.suspend_scanning();
+}
+
 }
 }

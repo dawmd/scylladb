@@ -90,6 +90,8 @@ public:
         return _update_lock;
     }
 
+    future<> suspend_scanning() noexcept;
+
 private:
     /// \brief Check that hints don't occupy too much disk space.
     ///
@@ -194,6 +196,8 @@ public:
     /// The hints::managers can be added either before or after resource_manager starts.
     /// If resource_manager is already started, the hints manager will also be started.
     future<> register_manager(manager& m);
+
+    future<> suspend_scanning() noexcept;
 };
 
 }

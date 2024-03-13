@@ -82,6 +82,9 @@ private:
 
     enum class state {
         started,        // Hinting is currently allowed (start() has completed).
+        migrating,      // The hint manager is being migrated from using IPs to name
+                        // hint directories to using host IDs for that purpose. No new
+                        // incoming hints will be accepted as long as this is the state.
         replay_allowed, // Replaying (sending) hints is allowed.
         draining_all,   // Accepting new hints is not allowed. All endpoint managers
                         // are being drained because the node is leaving the cluster.
@@ -91,6 +94,7 @@ private:
 
     using state_set = enum_set<super_enum<state,
         state::started,
+        state::migrating,
         state::replay_allowed,
         state::draining_all,
         state::stopping>>;
@@ -127,6 +131,7 @@ private:
     seastar::named_semaphore _drain_lock = {1, named_semaphore_exception_factory{"drain lock"}};
 
     bool _uses_host_id = false;
+    future<> _migrating = make_ready_future();
 
 public:
     manager(service::storage_proxy& proxy, sstring hints_directory, host_filter filter,
@@ -334,6 +339,9 @@ private:
     ///
     /// This function should ONLY be called by `manager::start()`.
     future<> migrate_ip_directories();
+    future<> perform_migration();
+
+    future<> initialize_ep_managers();
 };
 
 } // namespace db::hints

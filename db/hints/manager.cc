@@ -32,6 +32,7 @@
 #include "locator/abstract_replication_strategy.hh"
 #include "locator/token_metadata.hh"
 #include "replica/database.hh"
+#include "seastar/core/file.hh"
 #include "service/storage_proxy.hh"
 #include "utils/directories.hh"
 #include "utils/disk-error-handler.hh"
@@ -142,7 +143,6 @@ manager::manager(service::storage_proxy& proxy, sstring hints_directory, host_fi
     , _local_db(db.local())
     , _resource_manager(res_manager)
 {
-    _uses_host_id = true;
     if (utils::get_local_injector().enter("decrease_hints_flush_period")) {
         hints_flush_period = std::chrono::seconds{1};
     }
@@ -188,11 +188,11 @@ void manager::register_metrics(const sstring& group_name) {
 
 future<> manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
     _gossiper_anchor = std::move(gossiper_ptr);
-    _uses_host_id = true;
 
-    // co_await migrate_ip_directories();
-
-    // manager_logger.info("Migrating hint directories has finished");
+    if (_proxy.features().host_id_based_hinted_handoff) {
+        _uses_host_id = true;
+        co_await migrate_ip_directories();
+    }
 
     /* RAII for tmptr */ {
         const auto tmptr = _proxy.get_token_metadata_ptr();
@@ -229,6 +229,13 @@ future<> manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
 
     co_await compute_hints_dir_device_id();
     set_started();
+
+
+    if (!_proxy.features().host_id_based_hinted_handoff) {
+        _proxy.features().host_id_based_hinted_handoff.when_enabled([this] {
+            (void) perform_migration();
+        });
+    }
 }
 
 future<> manager::stop() {
@@ -724,6 +731,77 @@ future<> manager::migrate_ip_directories() {
         on_internal_error(manager_logger,
                 seastar::format("Criticial error occured when renaming hint directories: {}", std::current_exception()));
     }
+}
+
+future<> manager::perform_migration() {
+    // Algorithm:
+    //   Step 1. Prevent accepting incoming hints.
+    //   Step 2. Stop endpoint managers.
+    //   Step 3. Stop resource manager scanning the hint directories. This step is necessary because
+    //           we're going to modify their contents. Race conditions are unacceptable.
+    //   Step 4. Rename hint directories from IPs to host IDs.
+    //   Step 5. Create new endpoint managers.
+    //   Step 6. Start accepting incoming hints again.
+
+    _state.set(state::migrating);
+
+    for (auto& [_, ep_mgr] : _ep_managers) {
+        co_await ep_mgr.stop(drain::no);
+    }
+    _ep_managers.clear();
+
+    co_await _resource_manager.suspend_scanning();
+
+    co_await migrate_ip_directories();
+    _state.remove(state::migrating);
+    co_await initialize_ep_managers();
+}
+
+// The function assumes that if `_uses_host_id == true`, then there are no directories that represent IP addresses,
+// i.e. every directory is either valid and represents a host ID, or is invalid (so it should be ignored anyway).
+future<> manager::initialize_ep_managers() {
+    auto maybe_create_ep_mgr = [this] (locator::host_id host_id, gms::inet_address ip) -> future<> {
+        if (!check_dc_for(host_id)) {
+            co_return;
+        }
+
+        co_await get_ep_manager(host_id, ip).populate_segments_to_replay();
+    };
+
+    // We dispatch here to not hold on to the token metadata if hinted handoff is host-ID-based.
+    // In that case, there are no directories that represent IP addresses, so we won't need to use it.
+    // We want to avoid a situation when topology changes are prevented while we hold on to this pointer.
+    const auto tmptr = _uses_host_id ? nullptr : _proxy.get_token_metadata_ptr();
+
+    co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),
+            [&] (fs::path directory, directory_entry de) -> future<> {
+        auto maybe_host_id_or_ep = std::invoke([&] () -> std::optional<locator::host_id_or_endpoint> {
+            try {
+                return locator::host_id_or_endpoint{de.name};
+            } catch (...) {
+                // The name represents neither an IP address, nor a host ID.
+                return std::nullopt;
+            }
+        });
+
+        // The directory is invalid, so there's nothing more to do.
+        if (!maybe_host_id_or_ep) {
+            co_return;
+        }
+
+        if (!_uses_host_id) {
+            try {
+                maybe_host_id_or_ep->resolve(*tmptr);
+            } catch (...) {
+                co_return;
+            }
+        }
+
+        // If hinted handoff is host-ID-based, `get_ep_manager` will NOT use the passed IP address,
+        // so we simply pass the default value there.
+        const auto& ip = _uses_host_id ? gms::inet_address{} : maybe_host_id_or_ep->endpoint;
+        co_await maybe_create_ep_mgr(maybe_host_id_or_ep->id, ip);
+    });
 }
 
 } // namespace db::hints
