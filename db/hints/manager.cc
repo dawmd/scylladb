@@ -142,6 +142,7 @@ manager::manager(service::storage_proxy& proxy, sstring hints_directory, host_fi
     , _local_db(db.local())
     , _resource_manager(res_manager)
 {
+    _uses_host_id = true;
     if (utils::get_local_injector().enter("decrease_hints_flush_period")) {
         hints_flush_period = std::chrono::seconds{1};
     }
@@ -187,10 +188,11 @@ void manager::register_metrics(const sstring& group_name) {
 
 future<> manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
     _gossiper_anchor = std::move(gossiper_ptr);
+    _uses_host_id = true;
 
-    co_await migrate_ip_directories();
+    // co_await migrate_ip_directories();
 
-    manager_logger.info("Migrating hint directories has finished");
+    // manager_logger.info("Migrating hint directories has finished");
 
     /* RAII for tmptr */ {
         const auto tmptr = _proxy.get_token_metadata_ptr();
@@ -378,7 +380,8 @@ hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep, gms::inet_address
     }
 
     (void) _hint_directory_mgr.insert_mapping(ep, ip);
-    auto [it, _] = _ep_managers.insert({ep, hint_endpoint_manager{ep, _hints_dir / ip.to_sstring(), *this}});
+    const auto dir = _hints_dir / (_uses_host_id ? ep.to_sstring() : ip.to_sstring());
+    auto [it, _] = _ep_managers.insert({ep, hint_endpoint_manager{ep, std::move(dir), *this}});
     hint_endpoint_manager& ep_man = it->second;
 
     manager_logger.trace("Created an endpoint manager for {}", ep);

@@ -126,6 +126,8 @@ private:
     std::unordered_set<std::variant<locator::host_id, gms::inet_address>> _eps_with_pending_hints;
     seastar::named_semaphore _drain_lock = {1, named_semaphore_exception_factory{"drain lock"}};
 
+    bool _uses_host_id = false;
+
 public:
     manager(service::storage_proxy& proxy, sstring hints_directory, host_filter filter,
             int64_t max_hint_window_ms, resource_manager& res_manager, sharded<replica::database>& db);
