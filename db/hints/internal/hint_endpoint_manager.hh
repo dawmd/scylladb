@@ -22,6 +22,7 @@
 #include "db/hints/internal/hint_sender.hh"
 #include "db/hints/internal/hint_storage.hh"
 #include "db/hints/resource_manager.hh"
+#include "gms/inet_address.hh"
 #include "utils/runtime.hh"
 #include "enum_set.hh"
 
@@ -68,7 +69,7 @@ private:
     hint_sender _sender;
 
 public:
-    hint_endpoint_manager(const endpoint_id& key, manager& shard_manager);
+    hint_endpoint_manager(const endpoint_id& key, std::filesystem::path hint_dir, manager& shard_manager);
     hint_endpoint_manager(hint_endpoint_manager&&);
     ~hint_endpoint_manager();
 

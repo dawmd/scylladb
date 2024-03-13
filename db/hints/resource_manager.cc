@@ -7,6 +7,7 @@
  */
 
 #include "resource_manager.hh"
+#include "locator/token_metadata.hh"
 #include "manager.hh"
 #include "log.hh"
 #include <boost/range/algorithm/for_each.hpp>
@@ -146,14 +147,27 @@ void space_watchdog::on_timer() {
                 // not hintable).
                 // If exists - let's take a file update lock so that files are not changed under our feet. Otherwise, simply
                 // continue to enumeration - there is no one to change them.
-                const internal::endpoint_id ep{utils::UUID{de.name}};
+                locator::host_id_or_endpoint host_id_or_ep{de.name};
 
-                if (shard_manager.have_ep_manager(ep)) {
-                    return shard_manager.with_file_update_mutex_for(ep, [this, ep, &shard_manager, dir = std::move(dir), ep_name = std::move(de.name)] () mutable {
-                        return scan_one_ep_dir(dir / ep_name, shard_manager, ep);
+                const auto maybe_host_id = std::invoke([&] () -> std::optional<locator::host_id> {
+                    if (host_id_or_ep.has_host_id()) {
+                        return host_id_or_ep.id;
+                    }
+                    return shard_manager.get_host_id_for_dir(host_id_or_ep.endpoint);
+                });
+
+                if (maybe_host_id && shard_manager.have_ep_manager(*maybe_host_id)) {
+                    const locator::host_id host_id = *maybe_host_id;
+
+                    return shard_manager.with_file_update_mutex_for(host_id,
+                            [this, host_id, &shard_manager, dir = std::move(dir), ep_name = std::move(de.name)] () mutable {
+                        return scan_one_ep_dir(dir / ep_name, shard_manager, host_id);
                     });
+                } else if (maybe_host_id) {
+                    return scan_one_ep_dir(dir / de.name, shard_manager, host_id_or_ep.id);
                 } else {
-                    return scan_one_ep_dir(dir / de.name, shard_manager, ep);
+                    // Unfortunately, we need to do this...
+                    return make_ready_future();
                 }
             }).get();
         }

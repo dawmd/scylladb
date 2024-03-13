@@ -78,6 +78,7 @@ private:
 
     using hint_endpoint_manager = internal::hint_endpoint_manager;
     using node_to_hint_store_factory_type = internal::node_to_hint_store_factory_type;
+    using hint_directory_manager = internal::hint_directory_manager;
 
     enum class state {
         started,        // Hinting is currently allowed (start() has completed).
@@ -119,21 +120,22 @@ private:
     resource_manager& _resource_manager;
 
     std::unordered_map<endpoint_id, hint_endpoint_manager> _ep_managers;
+    hint_directory_manager _hint_directory_mgr;
     hint_stats _stats;
     seastar::metrics::metric_groups _metrics;
-    std::unordered_set<endpoint_id> _eps_with_pending_hints;
+    std::unordered_set<std::variant<locator::host_id, gms::inet_address>> _eps_with_pending_hints;
     seastar::named_semaphore _drain_lock = {1, named_semaphore_exception_factory{"drain lock"}};
 
 public:
     manager(service::storage_proxy& proxy, sstring hints_directory, host_filter filter,
             int64_t max_hint_window_ms, resource_manager& res_manager, sharded<replica::database>& db);
-    
+
     manager(const manager&) = delete;
     manager& operator=(const manager&) = delete;
 
     manager(manager&&) = delete;
     manager& operator=(manager&&) = delete;
-    
+
     ~manager() noexcept {
         assert(_ep_managers.empty());
     }
@@ -142,7 +144,7 @@ public:
     void register_metrics(const sstring& group_name);
     future<> start(shared_ptr<gms::gossiper> gossiper_ptr);
     future<> stop();
-    bool store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept;
+    bool store_hint(endpoint_id ep, gms::inet_address ip, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm, tracing::trace_state_ptr tr_state) noexcept;
 
     /// \brief Changes the host_filter currently used, stopping and starting endpoint_managers relevant to the new host_filter.
     /// \param filter the new host_filter
@@ -186,7 +188,7 @@ public:
     ///
     /// \param ep endpoint whose file update mutex should be locked
     /// \param func functor to be executed
-    future<> with_file_update_mutex_for(endpoint_id ep, noncopyable_function<future<> ()> func);
+    future<> with_file_update_mutex_for(std::variant<locator::host_id, gms::inet_address> ep, noncopyable_function<future<> ()> func);
 
     /// \brief Checks if hints are disabled for all endpoints
     /// \return TRUE if hints are disabled.
@@ -210,7 +212,7 @@ public:
         return it->second.hints_in_progress();
     }
 
-    void add_ep_with_pending_hints(endpoint_id key) {
+    void add_ep_with_pending_hints(std::variant<locator::host_id, gms::inet_address> key) {
         _eps_with_pending_hints.insert(key);
     }
 
@@ -219,7 +221,7 @@ public:
         _eps_with_pending_hints.reserve(_ep_managers.size());
     }
 
-    bool has_ep_with_pending_hints(endpoint_id key) const {
+    bool has_ep_with_pending_hints(std::variant<locator::host_id, gms::inet_address> key) const {
         return _eps_with_pending_hints.contains(key);
     }
 
@@ -268,10 +270,14 @@ private:
         return _local_db;
     }
 
-    hint_endpoint_manager& get_ep_manager(endpoint_id ep);
+    hint_endpoint_manager& get_ep_manager(endpoint_id ep, gms::inet_address ip);
 
 public:
-    bool have_ep_manager(endpoint_id ep) const noexcept;
+    bool have_ep_manager(std::variant<locator::host_id, gms::inet_address> ep) const noexcept;
+
+    std::optional<locator::host_id> get_host_id_for_dir(const gms::inet_address& ip) const noexcept {
+        return _hint_directory_mgr.get_mapping(ip);
+    }
 
 public:
     /// \brief Initiate the draining when we detect that the node has left the cluster.

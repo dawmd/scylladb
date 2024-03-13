@@ -10,6 +10,7 @@
 #include "db/hints/manager.hh"
 
 // Seastar features.
+#include <bits/ranges_algo.h>
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/future.hh>
@@ -27,7 +28,9 @@
 // Scylla includes.
 #include "db/hints/internal/hint_logger.hh"
 #include "gms/gossiper.hh"
+#include "gms/inet_address.hh"
 #include "locator/abstract_replication_strategy.hh"
+#include "locator/token_metadata.hh"
 #include "replica/database.hh"
 #include "service/storage_proxy.hh"
 #include "utils/directories.hh"
@@ -39,6 +42,8 @@
 // STD.
 #include <algorithm>
 #include <exception>
+#include <stdexcept>
+#include <variant>
 
 namespace db::hints {
 
@@ -71,13 +76,13 @@ public:
         }
 
         const auto units = co_await seastar::get_units(_lock, 1);
-        
+
         utils::directories::set dir_set;
         dir_set.add_sharded(_hints_directory);
-        
+
         manager_logger.debug("Creating and validating hint directories: {}", _hints_directory);
         co_await _dirs.create_and_verify(std::move(dir_set));
-        
+
         _state = state::created_and_validated;
     }
 
@@ -91,7 +96,7 @@ public:
         }
 
         const auto units = co_await seastar::get_units(_lock, 1);
-        
+
         manager_logger.debug("Rebalancing hints in {}", _hints_directory);
         co_await rebalance_hints(fs::path{_hints_directory});
 
@@ -170,7 +175,7 @@ void manager::register_metrics(const sstring& group_name) {
         sm::make_counter("corrupted_files", _stats.corrupted_files,
                         sm::description("Number of hints files that were discarded during sending because the file was corrupted.")),
 
-        sm::make_gauge("pending_drains", 
+        sm::make_gauge("pending_drains",
                         sm::description("Number of tasks waiting in the queue for draining hints"),
                         [this] { return _drain_lock.waiters(); }),
 
@@ -187,26 +192,45 @@ future<> manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
 
     manager_logger.info("Migrating hint directories has finished");
 
-    co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),
-            [this] (fs::path datadir, directory_entry de) {
-        // The call to `migrate_ip_directories` above ensures that all of the names
-        // of the directory's contents represent valid `locator::host_id`s,
-        // so it's safe not to perform any additional checks here.
-        endpoint_id ep = endpoint_id{utils::UUID{de.name}};
+    /* RAII for tmptr */ {
+        const auto tmptr = _proxy.get_token_metadata_ptr();
 
-        if (!check_dc_for(ep)) {
-            return make_ready_future<>();
-        }
+        co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),
+                [this, tmptr] (fs::path datadir, directory_entry de) {
+            // The call to `migrate_ip_directories` above ensures that all of the names
+            // of the directory's contents represent valid `locator::host_id`s,
+            // so it's safe not to perform any additional checks here.
+            locator::host_id_or_endpoint host_id_or_ep{de.name};
 
-        return get_ep_manager(ep).populate_segments_to_replay();
-    });
-    
+            try {
+                host_id_or_ep.resolve(*tmptr);
+            } catch (...) {
+                // TODO: Print a warning
+                manager_logger.error("Error 1 {}", de.name);
+                return make_ready_future();
+            }
+
+            const auto [host_id, ip] = std::make_pair(host_id_or_ep.id, host_id_or_ep.endpoint);
+
+            // If converting an IP to a host ID (or vice versa) is NOT possible here,
+            // do NOT create an endpoint manager.
+            if (!check_dc_for(host_id)) {
+                return make_ready_future<>();
+            }
+
+            // It's impossible that two host IDs share the same IP. We rely on that here.
+
+            manager_logger.info("POPULATING START {} / {}", host_id, ip);
+            return get_ep_manager(host_id, ip).populate_segments_to_replay();
+        });
+    }
+
     co_await compute_hints_dir_device_id();
     set_started();
 }
 
 future<> manager::stop() {
-    manager_logger.info("Asked to stop a shard hint manager");
+    manager_logger.info("Asked to stop a shard hint manager. Stored hints: {}", _stats.written);
 
     set_stopping();
 
@@ -215,6 +239,7 @@ future<> manager::stop() {
             return ep_man.stop();
         }).finally([this] {
             _ep_managers.clear();
+            _hint_directory_mgr.clear();
             manager_logger.info("Shard hint manager has stopped");
         });
     });
@@ -243,9 +268,11 @@ void manager::forbid_hints() {
 }
 
 void manager::forbid_hints_for_eps_with_pending_hints() {
-    manager_logger.trace("space_watchdog: Going to block hints to: {}", _eps_with_pending_hints);
-    
+    // manager_logger.trace("space_watchdog: Going to block hints to: {}", _eps_with_pending_hints);
+
     for (auto& [_, ep_man] : _ep_managers) {
+        // TODO: We HAVE TO pass either the host ID, or the IP of the endpoint manager
+        //       depending on what the name of the directory it manages represents.
         if (has_ep_with_pending_hints(ep_man.end_point_key())) {
             ep_man.forbid_hints();
         } else {
@@ -320,7 +347,7 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
             }
             return it->second;
         } ();
-        
+
         try {
             co_await ep_man.wait_until_hints_are_replayed_up_to(local_as, rp);
         } catch (abort_requested_exception&) {
@@ -336,23 +363,38 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
     }
 }
 
-hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep) {
-    auto [it, emplaced] = _ep_managers.try_emplace(ep, ep, *this);
+hint_endpoint_manager& manager::get_ep_manager(endpoint_id ep, gms::inet_address ip) {
+    const auto maybe_mapping = _hint_directory_mgr.get_mapping(ep, ip);
+    if (maybe_mapping) {
+        try {
+            return _ep_managers.at(maybe_mapping->first);
+        } catch (...) {
+            manager_logger.info("THERE IS A MAPPING: {}. My EP = {}, my IP = {}. ERROR: {}", *maybe_mapping, ep, ip, std::current_exception());
+            _hint_directory_mgr.print();
+            auto keys = boost::copy_range<std::vector<locator::host_id>>(_ep_managers | boost::adaptors::map_keys);
+            manager_logger.info("EP MGRS (empty?: {}): {}", _ep_managers.empty(), keys);
+            throw;
+        }
+    }
+
+    (void) _hint_directory_mgr.insert_mapping(ep, ip);
+    auto [it, _] = _ep_managers.insert({ep, hint_endpoint_manager{ep, _hints_dir / ip.to_sstring(), *this}});
     hint_endpoint_manager& ep_man = it->second;
 
-    if (emplaced) {
-        manager_logger.trace("Created an endpoint manager for {}", ep);
-        ep_man.start();    
-    }
+    manager_logger.trace("Created an endpoint manager for {}", ep);
+    ep_man.start();
 
     return ep_man;
 }
 
-bool manager::have_ep_manager(endpoint_id ep) const noexcept {
-    return _ep_managers.contains(ep);
+bool manager::have_ep_manager(std::variant<locator::host_id, gms::inet_address> ep) const noexcept {
+    if (std::holds_alternative<locator::host_id>(ep)) {
+        return _ep_managers.contains(std::get<locator::host_id>(ep));
+    }
+    return _hint_directory_mgr.has_mapping(std::get<gms::inet_address>(ep));
 }
 
-bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm,
+bool manager::store_hint(endpoint_id ep, gms::inet_address ip, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm,
         tracing::trace_state_ptr tr_state) noexcept
 {
     if (stopping() || draining_all() || !started() || !can_hint_for(ep)) {
@@ -365,7 +407,8 @@ bool manager::store_hint(endpoint_id ep, schema_ptr s, lw_shared_ptr<const froze
         manager_logger.trace("Going to store a hint to {}", ep);
         tracing::trace(tr_state, "Going to store a hint to {}", ep);
 
-        return get_ep_manager(ep).store_hint(std::move(s), std::move(fm), tr_state);
+        manager_logger.info("TRYING TO STORE A HINT TO {}", ep);
+        return get_ep_manager(ep, ip).store_hint(std::move(s), std::move(fm), tr_state);
     } catch (...) {
         manager_logger.trace("Failed to store a hint to {}: {}", ep, std::current_exception());
         tracing::trace(tr_state, "Failed to store a hint to {}: {}", ep, std::current_exception());
@@ -379,11 +422,11 @@ bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
     // There is no need to check the DC here because if there is an in-flight hint for this
     // endpoint, then this means that its DC has already been checked and found to be ok.
     if (!(_stats.size_of_hints_in_progress > MAX_SIZE_OF_HINTS_IN_PROGRESS
-            && _proxy.local_db().get_token_metadata().get_topology().is_me(ep)
+            && !_proxy.local_db().get_token_metadata().get_topology().is_me(ep)
             && hints_in_progress_for(ep) > 0)) {
         return false;
     }
-    
+
     return std::ranges::any_of(local_gossiper().get_nodes_with_host_id(ep), [this] (const auto& ip) {
         return local_gossiper().get_endpoint_downtime(ip) <= _max_hint_window_us;
     });
@@ -455,16 +498,29 @@ future<> manager::change_host_filter(host_filter filter) {
     try {
         // Iterate over existing hint directories and see if we can enable an endpoint manager
         // for some of them
-        co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),
-                [this] (fs::path datadir, directory_entry de) {
-            const endpoint_id ep = endpoint_id{utils::UUID{de.name}};
+        const auto tmptr = _proxy.get_token_metadata_ptr();
 
-            const auto& topology = _proxy.get_token_metadata_ptr()->get_topology();
-            if (_ep_managers.contains(ep) || !_host_filter.can_hint_for(topology, ep)) {
+        co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),
+                [this, tmptr] (fs::path datadir, directory_entry de) {
+            locator::host_id_or_endpoint host_id_or_ep{de.name};
+
+            try {
+                host_id_or_ep.resolve(*tmptr);
+            } catch (...) {
+                // TODO: Print a warning.
+                manager_logger.error("Error 2 {}", de.name);
                 return make_ready_future();
             }
 
-            return get_ep_manager(ep).populate_segments_to_replay();
+            const auto [host_id, ip] = std::make_pair(host_id_or_ep.id, host_id_or_ep.endpoint);
+
+            const auto& topology = _proxy.get_token_metadata_ptr()->get_topology();
+            if (_ep_managers.contains(host_id) || !_host_filter.can_hint_for(topology, host_id)) {
+                return make_ready_future();
+            }
+
+            manager_logger.info("CHANGING HOST FILTER {} / {}", host_id, ip);
+            return get_ep_manager(host_id, ip).populate_segments_to_replay();
         });
     } catch (...) {
         // Revert the changes in the filter. The code below will stop the additional managers
@@ -472,7 +528,7 @@ future<> manager::change_host_filter(host_filter filter) {
         _host_filter = std::move(filter);
         eptr = std::current_exception();
     }
-    
+
     try {
         // Remove endpoint managers which are rejected by the filter.
         co_await coroutine::parallel_for_each(_ep_managers, [this] (auto& pair) {
@@ -481,9 +537,10 @@ future<> manager::change_host_filter(host_filter filter) {
             if (_host_filter.can_hint_for(_proxy.get_token_metadata_ptr()->get_topology(), ep)) {
                 return make_ready_future<>();
             }
-            
+
             return ep_man.stop(drain::no).finally([this, ep] {
                 _ep_managers.erase(ep);
+                _hint_directory_mgr.remove_mapping(ep);
             });
         });
     } catch (...) {
@@ -529,7 +586,7 @@ future<> manager::drain_for(endpoint_id endpoint) noexcept {
 
     if (_proxy.local_db().get_token_metadata().get_topology().is_me(endpoint)) {
         set_draining_all();
-        
+
         try {
             co_await coroutine::parallel_for_each(_ep_managers | boost::adaptors::map_values,
                     [&drain_ep_manager] (hint_endpoint_manager& ep_man) {
@@ -540,9 +597,10 @@ future<> manager::drain_for(endpoint_id endpoint) noexcept {
         }
 
         _ep_managers.clear();
+        _hint_directory_mgr.clear();
     } else {
         auto it = _ep_managers.find(endpoint);
-        
+
         if (it != _ep_managers.end()) {
             try {
                 co_await drain_ep_manager(it->second);
@@ -554,6 +612,7 @@ future<> manager::drain_for(endpoint_id endpoint) noexcept {
             // so iterators could have been invalidated.
             // This never throws.
             _ep_managers.erase(endpoint);
+            _hint_directory_mgr.remove_mapping(endpoint);
         }
     }
 
@@ -572,8 +631,14 @@ void manager::update_backlog(size_t backlog, size_t max_backlog) {
     }
 }
 
-future<> manager::with_file_update_mutex_for(endpoint_id ep, noncopyable_function<future<> ()> func) {
-    return _ep_managers.at(ep).with_file_update_mutex(std::move(func));
+future<> manager::with_file_update_mutex_for(std::variant<locator::host_id, gms::inet_address> ep, noncopyable_function<future<> ()> func) {
+    const locator::host_id host_id = std::invoke([&] {
+        if (std::holds_alternative<locator::host_id>(ep)) {
+            return std::get<locator::host_id>(ep);
+        }
+        return *_hint_directory_mgr.get_mapping(std::get<gms::inet_address>(ep));
+    });
+    return _ep_managers.at(host_id).with_file_update_mutex(std::move(func));
 }
 
 future<> manager::migrate_ip_directories() {
@@ -610,10 +675,11 @@ future<> manager::migrate_ip_directories() {
                 return lister::rmdir(p);
             };
 
-            auto parse_name = [] (const sstring& name) -> std::optional<locator::host_id_or_endpoint> {
+            auto parse_name = [nameee = de.name] (const sstring& name) -> std::optional<locator::host_id_or_endpoint> {
                 try {
                     return locator::host_id_or_endpoint{name};
                 } catch (...) {
+                    manager_logger.warn("Error 3 {}", nameee);
                     return {};
                 }
             };
@@ -626,7 +692,7 @@ future<> manager::migrate_ip_directories() {
                 return remove_directory(current_path,
                         seastar::format("The directory's name {} is neither IP, nor host ID.", de.name));
             }
-            
+
             if (maybe_parsed_name.value().has_host_id()) {
                 return make_ready_future<>();
             }
@@ -640,7 +706,7 @@ future<> manager::migrate_ip_directories() {
 
             // New path: `<...>/<shard id>/<host ID>`.
             const fs::path hid_path = datadir / maybe_parsed_name.value().id.to_sstring();
-            
+
             // Try to rename the hint directory. If renaming fails, we don't want to attempt it again
             // or leave the directory. Simply remove it.
             return rename_file(current_path.native(), hid_path.native()).then([current_path, hid_path] {
