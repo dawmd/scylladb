@@ -189,50 +189,56 @@ void manager::register_metrics(const sstring& group_name) {
 future<> manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
     _gossiper_anchor = std::move(gossiper_ptr);
 
+    bool set_up_migration = true;
     if (_proxy.features().host_id_based_hinted_handoff) {
+        manager_logger.info("HOST ID IS ENABLED");
+        set_up_migration = false;
         _uses_host_id = true;
         co_await migrate_ip_directories();
     }
 
-    /* RAII for tmptr */ {
-        const auto tmptr = _proxy.get_token_metadata_ptr();
+    co_await initialize_ep_managers();
 
-        co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),
-                [this, tmptr] (fs::path datadir, directory_entry de) {
-            // The call to `migrate_ip_directories` above ensures that all of the names
-            // of the directory's contents represent valid `locator::host_id`s,
-            // so it's safe not to perform any additional checks here.
-            locator::host_id_or_endpoint host_id_or_ep{de.name};
+    // /* RAII for tmptr */ {
+    //     const auto tmptr = _proxy.get_token_metadata_ptr();
 
-            try {
-                host_id_or_ep.resolve(*tmptr);
-            } catch (...) {
-                // TODO: Print a warning
-                manager_logger.error("Error 1 {}", de.name);
-                return make_ready_future();
-            }
+    //     co_await lister::scan_dir(_hints_dir, lister::dir_entry_types::of<directory_entry_type::directory>(),
+    //             [this, tmptr] (fs::path datadir, directory_entry de) {
+    //         // The call to `migrate_ip_directories` above ensures that all of the names
+    //         // of the directory's contents represent valid `locator::host_id`s,
+    //         // so it's safe not to perform any additional checks here.
+    //         locator::host_id_or_endpoint host_id_or_ep{de.name};
 
-            const auto [host_id, ip] = std::make_pair(host_id_or_ep.id, host_id_or_ep.endpoint);
+    //         try {
+    //             host_id_or_ep.resolve(*tmptr);
+    //         } catch (...) {
+    //             // TODO: Print a warning
+    //             manager_logger.error("Error 1 {}", de.name);
+    //             return make_ready_future();
+    //         }
 
-            // If converting an IP to a host ID (or vice versa) is NOT possible here,
-            // do NOT create an endpoint manager.
-            if (!check_dc_for(host_id)) {
-                return make_ready_future<>();
-            }
+    //         const auto [host_id, ip] = std::make_pair(host_id_or_ep.id, host_id_or_ep.endpoint);
 
-            // It's impossible that two host IDs share the same IP. We rely on that here.
+    //         // If converting an IP to a host ID (or vice versa) is NOT possible here,
+    //         // do NOT create an endpoint manager.
+    //         if (!check_dc_for(host_id)) {
+    //             return make_ready_future<>();
+    //         }
 
-            manager_logger.info("POPULATING START {} / {}", host_id, ip);
-            return get_ep_manager(host_id, ip).populate_segments_to_replay();
-        });
-    }
+    //         // It's impossible that two host IDs share the same IP. We rely on that here.
+
+    //         manager_logger.info("POPULATING START {} / {}", host_id, ip);
+    //         return get_ep_manager(host_id, ip).populate_segments_to_replay();
+    //     });
+    // }
 
     co_await compute_hints_dir_device_id();
     set_started();
 
 
-    if (!_proxy.features().host_id_based_hinted_handoff) {
-        _proxy.features().host_id_based_hinted_handoff.when_enabled([this] {
+    if (set_up_migration) {
+        manager_logger.info("SETTING UP THE MIGRATION CALLBACK");
+        _migration_listener = _proxy.features().host_id_based_hinted_handoff.when_enabled([this] {
             (void) perform_migration();
         });
     }
@@ -740,9 +746,11 @@ future<> manager::perform_migration() {
     //   Step 3. Stop resource manager scanning the hint directories. This step is necessary because
     //           we're going to modify their contents. Race conditions are unacceptable.
     //   Step 4. Rename hint directories from IPs to host IDs.
-    //   Step 5. Create new endpoint managers.
-    //   Step 6. Start accepting incoming hints again.
+    //   Step 5. Resume resource manager scanning the hint directories.
+    //   Step 6. Create new endpoint managers.
+    //   Step 7. Start accepting incoming hints again.
 
+    manager_logger.info("MIGRATION IS STARTING");
     _state.set(state::migrating);
 
     for (auto& [_, ep_mgr] : _ep_managers) {
@@ -753,8 +761,11 @@ future<> manager::perform_migration() {
     co_await _resource_manager.suspend_scanning();
 
     co_await migrate_ip_directories();
-    _state.remove(state::migrating);
+
+    _resource_manager.resume_scanning();
     co_await initialize_ep_managers();
+    _state.remove(state::migrating);
+    manager_logger.info("MIGRATION HAS FINISHED");
 }
 
 // The function assumes that if `_uses_host_id == true`, then there are no directories that represent IP addresses,

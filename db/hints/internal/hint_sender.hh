@@ -65,12 +65,16 @@ class hint_sender {
 
     enum class state {
         stopping,               // stop() was called
+        migrating,              // Hinted Handoff is currently being migrated from using IPs to host IDs.
+                                // Sending hints HAS TO be suspended during this process because directories
+                                // will potentially be modified.
         ep_state_left_the_ring, // destination Node is not a part of the ring anymore - usually means that it has been decommissioned
         draining,               // try to send everything out and ignore errors
     };
 
     using state_set = enum_set<super_enum<state,
         state::stopping,
+        state::migrating,
         state::ep_state_left_the_ring,
         state::draining>>;
 

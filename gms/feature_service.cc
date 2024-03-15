@@ -275,12 +275,16 @@ future<> feature_service::enable_features_on_startup(db::system_keyspace& sys_ks
     for (auto&& f : persisted_features) {
         logger.debug("Enabling persisted feature '{}'", f);
         if (_registered_features.contains(sstring(f))) {
+            logger.info("ENABLING FEATURE0 {}", f);
             features_to_enable.insert(std::move(f));
         }
     }
 
     co_await container().invoke_on_all([&features_to_enable] (auto& srv) -> future<> {
         std::set<std::string_view> feat = boost::copy_range<std::set<std::string_view>>(features_to_enable);
+        for (const auto& v : feat) {
+            logger.info("ENABLING FEATURE0.5 {}", v);
+        }
         co_await srv.enable(std::move(feat));
     });
 }
@@ -346,6 +350,7 @@ future<> persistent_feature_enabler::enable_features() {
     std::set<sstring> feats_set = co_await _sys_ks.load_local_enabled_features();
     for (feature& f : _feat.registered_features() | boost::adaptors::map_values) {
         if (!f && features.contains(f.name())) {
+            logger.info("ENABLING FEATURE1 {}", f.name());
             feats_set.emplace(f.name());
         }
     }
@@ -353,6 +358,9 @@ future<> persistent_feature_enabler::enable_features() {
 
     co_await _feat.container().invoke_on_all([&features] (feature_service& fs) -> future<> {
         std::set<std::string_view> features_v = boost::copy_range<std::set<std::string_view>>(features);
+        for (const auto& v : features_v) {
+            logger.info("ENABLING FEATURE2 {}", v);
+        }
         co_await fs.enable(std::move(features_v));
     });
 }
@@ -362,6 +370,7 @@ future<> feature_service::enable(std::set<std::string_view> list) {
     return seastar::async([this, list = std::move(list)] {
         for (gms::feature& f : _registered_features | boost::adaptors::map_values) {
             if (list.contains(f.name())) {
+                logger.info("ENABLING FEATURE3 {}", f.name());
                 f.enable();
             }
         }

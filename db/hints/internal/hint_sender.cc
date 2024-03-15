@@ -111,7 +111,7 @@ bool hint_sender::can_send() noexcept {
     // so it's impossible that _ep_key points to the local node.
     // That's why we don't need to check `tmptr->get_topology().is_me(_ep_key)`.
     const auto maybe_ep = tmptr->get_endpoint_for_host_id_if_known(_ep_key);
-    
+
     try {
         // `hint_sender` can never target this node, so if the returned optional is empty,
         // that must mean the current locator::token_metadata doesn't store the information
@@ -260,8 +260,10 @@ void hint_sender::start() {
         manager_logger.trace("ep_manager({})::sender: started", end_point_key());
         while (!stopping()) {
             try {
-                flush_maybe().get();
-                send_hints_maybe();
+                if (!_state.contains(state::migrating)) {
+                    flush_maybe().get();
+                    send_hints_maybe();
+                }
 
                 // If we got here means that either there are no more hints to send or we failed to send hints we have.
                 // In both cases it makes sense to wait a little before continuing.
@@ -573,7 +575,7 @@ void hint_sender::send_hints_maybe() noexcept {
     int replayed_segments_count = 0;
 
     try {
-        while (true) {
+        while (!_state.contains(state::migrating)) {
             const sstring* seg_name = name_of_current_segment();
             if (!seg_name || !replay_allowed() || !can_send()) {
                 break;

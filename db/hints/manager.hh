@@ -131,7 +131,7 @@ private:
     seastar::named_semaphore _drain_lock = {1, named_semaphore_exception_factory{"drain lock"}};
 
     bool _uses_host_id = false;
-    future<> _migrating = make_ready_future();
+    std::optional<std::any> _migration_listener = std::nullopt;
 
 public:
     manager(service::storage_proxy& proxy, sstring hints_directory, host_filter filter,
