@@ -190,10 +190,21 @@ void manager::register_metrics(const sstring& group_name) {
 future<> manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
     _gossiper_anchor = std::move(gossiper_ptr);
 
+    if (_proxy.features().host_id_based_hinted_handoff) {
+        _uses_host_id = true;
+        co_await migrate_ip_directories();
+    }
+
     co_await initialize_endpoint_managers();
 
     co_await compute_hints_dir_device_id();
     set_started();
+
+    if (!_uses_host_id) {
+        _migration_callback = _proxy.features().host_id_based_hinted_handoff.when_enabled([this] {
+            _migrating_done = perform_migration();
+        });
+    }
 }
 
 future<> manager::stop() {
@@ -201,7 +212,9 @@ future<> manager::stop() {
 
     set_stopping();
 
-    return _draining_eps_gate.close().finally([this] {
+    return _migrating_done.then([this] {
+        return _draining_eps_gate.close();
+    }).finally([this] {
         return parallel_for_each(_ep_managers | boost::adaptors::map_values, [] (hint_endpoint_manager& ep_man) {
             return ep_man.stop();
         }).finally([this] {
@@ -749,6 +762,37 @@ future<> manager::migrate_ip_directories() {
     }
 
     co_await io_check(sync_directory, _hints_dir.native());
+}
+
+future<> manager::perform_migration() {
+    if (_state.contains(state::stopping)) {
+        co_return;
+    }
+
+    manager_logger.info("Migration of hinted handoff to host ID is starting");
+    // Step 1. Prevent acceping incoming hints.
+    _state.set(state::migrating);
+
+    // Step 2. Stop endpoint managers. We will modify the hint directory contents, so this is necessary.
+    for (auto& [_, ep_mgr] : _ep_managers) {
+        co_await ep_mgr.stop(drain::no);
+    }
+    _ep_managers.clear();
+
+    // Step 3. Prevent resource manager from scanning the hint directory. Race conditions are unacceptable.
+    co_await _resource_manager.suspend_scanning();
+
+    // Step 4. Rename the hint directories so that those that remain all represent valid host IDs.
+    co_await migrate_ip_directories();
+
+    // Step 5. Make resource manager scan the hint directory again.
+    _resource_manager.resume_scanning();
+    // Step 6. Once resoucre manager is working again, endpoint managers can be safely recreated.
+    //         We won't modify the contents of the hint directory anymore.
+    co_await initialize_endpoint_managers();
+    // Step 7. Start accepting incoming hints again.
+    _state.remove(state::migrating);
+    manager_logger.info("Migration of hinted handoff to host ID has finished successfully");
 }
 
 } // namespace db::hints
