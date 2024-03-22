@@ -29,6 +29,7 @@
 
 // Scylla includes.
 #include "db/hints/internal/hint_logger.hh"
+#include "gms/feature_service.hh"
 #include "gms/gossiper.hh"
 #include "gms/inet_address.hh"
 #include "locator/abstract_replication_strategy.hh"
@@ -190,10 +191,21 @@ void manager::register_metrics(const sstring& group_name) {
 future<> manager::start(shared_ptr<gms::gossiper> gossiper_ptr) {
     _gossiper_anchor = std::move(gossiper_ptr);
 
+    if (_proxy.features().host_id_based_hinted_handoff) {
+        _uses_host_id = true;
+        co_await migrate_ip_directories();
+    }
+
     co_await initialize_endpoint_managers();
 
     co_await compute_hints_dir_device_id();
     set_started();
+
+    if (!_uses_host_id) {
+        _migration_callback = _proxy.features().host_id_based_hinted_handoff.when_enabled([this] {
+            _migrating_done = perform_migration();
+        });
+    }
 }
 
 future<> manager::stop() {
@@ -201,7 +213,9 @@ future<> manager::stop() {
 
     set_stopping();
 
-    return _draining_eps_gate.close().finally([this] {
+    return _migrating_done.get_future().finally([this] {
+        return _draining_eps_gate.close();
+    }).finally([this] {
         return parallel_for_each(_ep_managers | boost::adaptors::map_values, [] (hint_endpoint_manager& ep_man) {
             return ep_man.stop();
         }).finally([this] {
@@ -267,6 +281,16 @@ sync_point::shard_rps manager::calculate_current_sync_point(std::span<const gms:
 }
 
 future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_rps& rps) {
+    // During the migration process, endpoint managers are all stopped. They're resumed
+    // by the end of it, so in case we call this function while hinted handoff is being
+    // migrated to host IDs, we need to wait for it to end to avoid race conditions.
+    //
+    // This scenario is quite unlikely because when stopping an endpoint manager,
+    // the sync points should all be invalidated and exceptions should be issued,
+    // but it's better to be safe. The danger mostly lies in the part where we're iterating
+    // over endpoint managers.
+    co_await _migrating_done.get_future();
+
     abort_source local_as;
 
     auto sub = as.subscribe([&local_as] () noexcept {
@@ -405,6 +429,10 @@ bool manager::too_many_in_flight_hints_for(endpoint_id ep) const noexcept {
 }
 
 bool manager::can_hint_for(endpoint_id ep) const noexcept {
+    if (_state.contains(state::migrating)) {
+        return false;
+    }
+
     if (_proxy.local_db().get_token_metadata().get_topology().is_me(ep)) {
         return false;
     }
@@ -546,6 +574,11 @@ bool manager::check_dc_for(endpoint_id ep) const noexcept {
 }
 
 future<> manager::drain_for(endpoint_id endpoint) noexcept {
+    // During the migration process, endpoint managers are all stopped. They're resumed
+    // by the end of it, so in case we call this function while hinted handoff is being
+    // migrated to host IDs, we need to wait for it to end.
+    co_await _migrating_done.get_future();
+
     if (!started() || stopping() || draining_all()) {
         co_return;
     }
@@ -766,6 +799,64 @@ future<> manager::migrate_ip_directories() {
     }
 
     co_await io_check(sync_directory, _hints_dir.native());
+}
+
+future<> manager::perform_migration() {
+    // This function isn't marked as noexcept, but the only parts of the code that
+    // can throw an exception are:
+    //   1. the call to `migrate_ip_directories()`: if we fail there, the failure is critical.
+    //      It doesn't lead to any data corruption, but the node must be stopped;
+    //   2. the re-initialization of the endpoint managers: a failure there is the same failure
+    //      that can happen when starting a node. It may be seen as critical, but it should only
+    //      boil down to not initializing some of the endpoint managers. No data corruption
+    //      is possible.
+    if (_state.contains(state::stopping) || _state.contains(state::draining_all)) {
+        co_return;
+    }
+
+    manager_logger.info("Migration of hinted handoff to host ID is starting");
+    // Step 1. Prevent acceping incoming hints.
+    _state.set(state::migrating);
+
+    // Step 2. Stop endpoint managers. We will modify the hint directory contents, so this is necessary.
+    //
+    // It may happen that we're already stopping some of the endpoint managers, which ultimately
+    // leads to a call to `std::unordered_map::erase()` with those managers being the argument.
+    // That's the only operation that can be performed on this map while this function is being
+    // executed. We RELY on that fact here.
+    //
+    // ONLY iterators to the erased elements are invalidated; implicitly that should also imply
+    // that the end() iterator of the unordered map never changes due to calls to erase().
+    // Hence, this loop is safe and does not lead to undefined behavior or a segmentation fault.
+    for (auto& [host_id, ep_mgr] : _ep_managers) {
+        auto it = _drained_endpoint_managers.find(host_id);
+        if (it != _drained_endpoint_managers.end()) {
+            co_await std::move(it->second);
+        } else {
+            co_await ep_mgr.stop(drain::no);
+        }
+    }
+    _drained_endpoint_managers.clear();
+    _ep_managers.clear();
+
+    // Step 3. Prevent resource manager from scanning the hint directory. Race conditions are unacceptable.
+    auto resource_manager_lock = co_await seastar::get_units(_resource_manager.update_lock(), 1);
+
+    // We don't need this anymore.
+    _hint_directory_manager.clear();
+
+    // Step 4. Rename the hint directories so that those that remain all represent valid host IDs.
+    co_await migrate_ip_directories();
+    _uses_host_id = true;
+
+    // Step 5. Make resource manager scan the hint directory again.
+    resource_manager_lock.return_all();
+    // Step 6. Once resource manager is working again, endpoint managers can be safely recreated.
+    //         We won't modify the contents of the hint directory anymore.
+    co_await initialize_endpoint_managers();
+    // Step 7. Start accepting incoming hints again.
+    _state.remove(state::migrating);
+    manager_logger.info("Migration of hinted handoff to host ID has finished successfully");
 }
 
 } // namespace db::hints
