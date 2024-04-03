@@ -130,6 +130,17 @@ private:
     //   (2) a hint directory representing an IP address `I` is managed by an endpoint manager
     //       if and only if there is a mapping corresponding to `I` in `_hint_directory_manager`.
     hint_directory_manager _hint_directory_manager;
+    // A mapping host ID -> future<> is inserted into this map when the node corresponding to the host ID
+    // starts being drained AND if the local node doesn't use host-ID-based hinted handoff yet.
+    // A mapping corresponding to the local node's host ID is never present in the map.
+    //
+    // The future becomes resolved the moment the draining process finishes. The future never stores
+    // an exception, even when an exception interrupts the draining process.
+    //
+    // The mappings are ONLY removed by `manager::perform_migration()`. No other code awaits the futures.
+    //
+    // No other changes to this map occur.
+    std::unordered_map<endpoint_id, future<>> _drained_endpoint_managers;
 
     hint_stats _stats;
     seastar::metrics::metric_groups _metrics;

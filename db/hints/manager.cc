@@ -559,6 +559,13 @@ future<> manager::drain_for(endpoint_id endpoint) noexcept {
         set_draining_all();
     }
 
+    promise<> draining_promise{};
+    const bool insert_draining_future = !draining_this_node && !_uses_host_id;
+
+    if (insert_draining_future) {
+        _drained_endpoint_managers.emplace(endpoint, draining_promise.get_future());
+    }
+
     const auto sem_unit = co_await seastar::get_units(_drain_lock, 1);
 
     // After an endpoint has been drained, we remove its directory with all of its contents.
@@ -607,6 +614,8 @@ future<> manager::drain_for(endpoint_id endpoint) noexcept {
     }
 
     manager_logger.trace("drain_for: finished draining {}", endpoint);
+    // Mark the draining process as finished.
+    draining_promise.set_value();
 }
 
 void manager::update_backlog(size_t backlog, size_t max_backlog) {
