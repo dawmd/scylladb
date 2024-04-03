@@ -553,6 +553,12 @@ future<> manager::drain_for(endpoint_id endpoint) noexcept {
     manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", endpoint);
 
     const auto holder = seastar::gate::holder{_draining_eps_gate};
+    const bool draining_this_node = _proxy.local_db().get_token_metadata().get_topology().is_me(endpoint);
+    if (draining_this_node) {
+        // We need to set this early on, before this coroutine can yield.
+        set_draining_all();
+    }
+
     const auto sem_unit = co_await seastar::get_units(_drain_lock, 1);
 
     // After an endpoint has been drained, we remove its directory with all of its contents.
@@ -566,9 +572,7 @@ future<> manager::drain_for(endpoint_id endpoint) noexcept {
 
     std::exception_ptr eptr = nullptr;
 
-    if (_proxy.local_db().get_token_metadata().get_topology().is_me(endpoint)) {
-        set_draining_all();
-
+    if (draining_this_node) {
         try {
             co_await coroutine::parallel_for_each(_ep_managers | boost::adaptors::map_values,
                     [&drain_ep_manager] (hint_endpoint_manager& ep_man) {
