@@ -387,7 +387,7 @@ hint_endpoint_manager& manager::get_ep_manager(const endpoint_id& host_id, const
         auto [it, _] = _ep_managers.emplace(host_id, hint_endpoint_manager{host_id, std::move(hint_directory), *this});
         hint_endpoint_manager& ep_man = it->second;
 
-        manager_logger.trace("Created an endpoint manager for {}", host_id);
+        manager_logger.info("Created an endpoint manager for {}", host_id);
         ep_man.start();
 
         return ep_man;
@@ -409,6 +409,7 @@ bool manager::have_ep_manager(const std::variant<locator::host_id, gms::inet_add
 bool manager::store_hint(endpoint_id host_id, gms::inet_address ip, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm,
         tracing::trace_state_ptr tr_state) noexcept
 {
+    manager_logger.info("Store hint {} / {}", host_id, ip);
     if (stopping() || draining_all() || !started() || !can_hint_for(host_id)) {
         manager_logger.trace("Can't store a hint to {}", host_id);
         ++_stats.dropped;
