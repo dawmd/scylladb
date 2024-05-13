@@ -161,7 +161,7 @@ future<hints_store_ptr> hint_endpoint_manager::get_or_load() {
 }
 
 future<db::commitlog> hint_endpoint_manager::add_store() noexcept {
-    manager_logger.trace("Going to add a store to {}", _hints_dir.c_str());
+    manager_logger.info("[{}]: Going to add a store to {}", fmt::ptr(this), _hints_dir.c_str());
 
     return futurize_invoke([this] {
         return io_check([name = _hints_dir.c_str()] { return recursive_touch_directory(name); }).then([this] () {

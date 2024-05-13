@@ -367,6 +367,7 @@ hint_endpoint_manager& manager::get_ep_manager(const endpoint_id& host_id, const
         }
     } else {
         if (const auto maybe_mapping = _hint_directory_manager.get_mapping(host_id, ip)) {
+            manager_logger.info("Get ep manager({}, {}): got {} / {}", host_id, ip, maybe_mapping->first, maybe_mapping->second);
             return _ep_managers.at(maybe_mapping->first);
         }
 
@@ -387,7 +388,7 @@ hint_endpoint_manager& manager::get_ep_manager(const endpoint_id& host_id, const
         auto [it, _] = _ep_managers.emplace(host_id, hint_endpoint_manager{host_id, std::move(hint_directory), *this});
         hint_endpoint_manager& ep_man = it->second;
 
-        manager_logger.info("Created an endpoint manager for {}", host_id);
+        manager_logger.info("Created an endpoint manager for {} / {}", host_id, ip);
         ep_man.start();
 
         return ep_man;
@@ -409,6 +410,8 @@ bool manager::have_ep_manager(const std::variant<locator::host_id, gms::inet_add
 bool manager::store_hint(endpoint_id host_id, gms::inet_address ip, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm,
         tracing::trace_state_ptr tr_state) noexcept
 {
+    manager_logger.info("Store hint: tm: {}", _proxy.get_token_metadata_ptr()->get_endpoint_to_host_id_map_for_reading());
+    _hint_directory_manager.print();
     manager_logger.info("Store hint {} / {}", host_id, ip);
     if (stopping() || draining_all() || !started() || !can_hint_for(host_id)) {
         manager_logger.trace("Can't store a hint to {}", host_id);

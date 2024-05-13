@@ -3134,12 +3134,14 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
         const auto& tm = erm->get_token_metadata();
         const auto maybe_host_id = tm.get_host_id_if_known(ep);
         if (maybe_host_id) {
+            slogger.info("ALL HIDS: {} / {}", ep, *maybe_host_id);
             return *maybe_host_id;
         }
         // We need this additional check because even after removing the mapping IP-host ID corresponding
         // to this node from `locator::token_metadata` while decommissioning, we still perform mutations
         // targeting the local node.
         if (tm.get_topology().is_me(ep)) {
+            slogger.info("ALL HIDS: {} / {}", ep, tm.get_topology().my_host_id());
             return tm.get_topology().my_host_id();
         }
         on_internal_error(slogger, seastar::format("No mapping for {} in the passed effective replication map", ep));
