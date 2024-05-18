@@ -80,6 +80,8 @@ public:
 
     // Removes all of the mappings.
     void clear() noexcept;
+
+    void print() const noexcept;
 };
 
 } // namespace internal

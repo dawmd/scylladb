@@ -360,6 +360,8 @@ future<> manager::wait_for_sync_point(abort_source& as, const sync_point::shard_
 }
 
 hint_endpoint_manager& manager::get_ep_manager(const endpoint_id& host_id, const gms::inet_address& ip) {
+    manager_logger.info("{}: {} / {}. Mappings:", __func__, host_id, ip);
+    _hint_directory_manager.print();
     // If this is enabled, we can't rely on the information obtained from `_hint_directory_manager`.
     if (_uses_host_id) {
         if (auto it = _ep_managers.find(host_id); it != _ep_managers.end()) {
@@ -409,6 +411,7 @@ bool manager::have_ep_manager(const std::variant<locator::host_id, gms::inet_add
 bool manager::store_hint(endpoint_id host_id, gms::inet_address ip, schema_ptr s, lw_shared_ptr<const frozen_mutation> fm,
         tracing::trace_state_ptr tr_state) noexcept
 {
+    manager_logger.info("{}: {} / {}", __func__, host_id, ip);
     if (stopping() || draining_all() || !started() || !can_hint_for(host_id)) {
         manager_logger.trace("Can't store a hint to {}", host_id);
         ++_stats.dropped;

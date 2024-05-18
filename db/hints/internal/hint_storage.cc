@@ -346,5 +346,13 @@ void hint_directory_manager::clear() noexcept {
     _mappings.clear();
 }
 
+void hint_directory_manager::print() const noexcept {
+    sstring result;
+    for (const auto& [h, i] : _mappings) {
+        result += "[" + h.to_sstring() + ", " + i.to_sstring() + "] ";
+    }
+    manager_logger.info("Hint mappings: {}", result);
+}
+
 } // namespace internal
 } // namespace db::hints
