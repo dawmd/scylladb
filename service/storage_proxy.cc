@@ -6586,6 +6586,7 @@ void storage_proxy::on_join_cluster(const gms::inet_address& endpoint) {};
 
 void storage_proxy::on_leave_cluster(const gms::inet_address& endpoint, const locator::host_id& hid) {
     if (utils::get_local_injector().enter("no_hinted_handoff_drain")) {
+        slogger.info("NOT DRAINING {} / {}", hid, endpoint);
         return;
     }
     // Discarding these futures is safe. They're awaited by db::hints::manager::stop().
