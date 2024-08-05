@@ -15,6 +15,7 @@
 #include "cql3/statements/authentication_statement.hh"
 #include "cql3/role_name.hh"
 #include "cql3/role_options.hh"
+#include "exceptions/exceptions.hh"
 
 namespace cql3 {
 
@@ -35,6 +36,9 @@ public:
                 : _role(name.to_string())
                 , _options(std::move(options))
                 , _if_not_exists(if_not_exists) {
+        if (_options.password.has_value() && _options.salted_hash.has_value()) {
+            throw exceptions::syntax_exception("Only one of the options PASSWORD, SALTED HASH can be provided");
+        }
     }
 
     std::unique_ptr<prepared_statement> prepare(data_dictionary::database db, cql_stats& stats) override;

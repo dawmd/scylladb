@@ -270,8 +270,12 @@ future<> password_authenticator::create(std::string_view role_name, const authen
                 {passwords::hash(*options.password, rng_for_salt), sstring(role_name)},
                 cql3::query_processor::cache_internal::no).discard_result();
     } else {
+        auto password = options.create_with_salted_hash
+                ? *options.password
+                : passwords::hash(*options.password, rng_for_salt);
+
         co_await collect_mutations(_qp, mc, query,
-                {passwords::hash(*options.password, rng_for_salt), sstring(role_name)});
+                {std::move(password), sstring(role_name)});
     }
 }
 

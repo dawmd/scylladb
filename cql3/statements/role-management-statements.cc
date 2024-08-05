@@ -10,6 +10,7 @@
 
 #include <algorithm>
 
+#include "auth/authenticator.hh"
 #include "types/map.hh"
 #include "auth/authentication_options.hh"
 #include "auth/service.hh"
@@ -38,7 +39,11 @@ using result_message_ptr = ::shared_ptr<result_message>;
 
 static auth::authentication_options extract_authentication_options(const cql3::role_options& options) {
     auth::authentication_options authen_options;
-    authen_options.password = options.password;
+
+    authen_options.create_with_salted_hash = options.salted_hash.has_value();
+    authen_options.password = authen_options.create_with_salted_hash
+            ? options.salted_hash
+            : options.password;
 
     if (options.options) {
         authen_options.options = std::unordered_map<sstring, sstring>(options.options->begin(), options.options->end());
@@ -75,8 +80,18 @@ future<> create_role_statement::check_access(query_processor& qp, const service:
     return async([this, &state] {
         state.ensure_has_permission({auth::permission::CREATE, auth::root_role_resource()}).get();
 
+        std::optional<bool> has_superuser = std::nullopt;
+
+        if (_options.salted_hash) {
+            has_superuser = auth::has_superuser(*state.get_auth_service(), *state.user()).get();
+            if (!has_superuser.value()) {
+                throw exceptions::unauthorized_exception("Only superusers can create a role with salted hash.");
+            }
+        }
+
         if (*_options.is_superuser) {
-            if (!auth::has_superuser(*state.get_auth_service(), *state.user()).get()) {
+            has_superuser = has_superuser ? has_superuser : auth::has_superuser(*state.get_auth_service(), *state.user()).get();
+            if (!has_superuser) {
                 throw exceptions::unauthorized_exception("Only superusers can create a role with superuser status.");
             }
         }

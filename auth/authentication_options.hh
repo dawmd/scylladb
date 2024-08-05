@@ -32,6 +32,7 @@ using custom_options = std::unordered_map<sstring, sstring>;
 struct authentication_options final {
     std::optional<sstring> password;
     std::optional<custom_options> options;
+    bool create_with_salted_hash = false;
 };
 
 inline bool any_authentication_options(const authentication_options& aos) noexcept {
