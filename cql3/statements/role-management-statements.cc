@@ -10,6 +10,7 @@
 
 #include <algorithm>
 
+#include "auth/authenticator.hh"
 #include "types/map.hh"
 #include "auth/authentication_options.hh"
 #include "auth/service.hh"
@@ -38,7 +39,9 @@ using result_message_ptr = ::shared_ptr<result_message>;
 
 static auth::authentication_options extract_authentication_options(const cql3::role_options& options) {
     auth::authentication_options authen_options;
-    authen_options.password = options.password;
+    authen_options.password = options.salted_hash.has_value()
+            ? options.salted_hash
+            : options.password;
 
     if (options.options) {
         authen_options.options = std::unordered_map<sstring, sstring>(options.options->begin(), options.options->end());
@@ -97,7 +100,10 @@ create_role_statement::execute(query_processor&,
 
     service::group0_batch mc{std::move(guard)};
     try {
-        co_await auth::create_role(as, _role, config, extract_authentication_options(_options), mc);
+        const auto create_with_sh = _options.salted_hash.has_value()
+                ? auth::create_with_salted_hash::yes
+                : auth::create_with_salted_hash::no;
+        co_await auth::create_role(as, _role, config, extract_authentication_options(_options), create_with_sh, mc);
         co_await grant_permissions_to_creator(cs, mc);
     } catch (const auth::role_already_exists& e) {
         if (!_if_not_exists) {

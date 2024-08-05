@@ -108,7 +108,7 @@ using operations_type = std::vector<std::pair<::shared_ptr<cql3::column_identifi
 //
 // The uninitialized<T> wrapper can be zero-initialized, and is convertible
 // to T (after checking that it was assigned to) implicitly, eliminating the
-// problem.  It is up to the user to ensure it is actually assigned to. 
+// problem.  It is up to the user to ensure it is actually assigned to.
 template <typename T>
 struct uninitialized {
     std::optional<T> _val;
@@ -684,7 +684,7 @@ pruneMaterializedViewStatement returns [std::unique_ptr<raw::select_statement> e
  */
 batchStatement returns [std::unique_ptr<cql3::statements::raw::batch_statement> expr]
     @init {
-        using btype = cql3::statements::raw::batch_statement::type; 
+        using btype = cql3::statements::raw::batch_statement::type;
         btype type = btype::LOGGED;
         std::vector<std::unique_ptr<cql3::statements::raw::modification_statement>> statements;
         auto attrs = std::make_unique<cql3::attributes::raw>();
@@ -1323,6 +1323,7 @@ roleOptions[cql3::role_options& opts]
 
 roleOption[cql3::role_options& opts]
     : K_PASSWORD '=' v=STRING_LITERAL { opts.password = $v.text; }
+    | K_SALTED_HASH '=' v=STRING_LITERAL {opts.salted_hash = $v.text; }
     | K_OPTIONS '=' m=mapLiteral { opts.options = convert_property_map(m); }
     | K_SUPERUSER '=' b=BOOLEAN { opts.is_superuser = convert_boolean_literal($b.text); }
     | K_LOGIN '=' b=BOOLEAN { opts.can_login = convert_boolean_literal($b.text); }
@@ -1471,7 +1472,7 @@ describeStatement returns [std::unique_ptr<cql3::statements::raw::describe_state
     | K_AGGREGATE ag=functionName                   { $stmt = cql3::statements::raw::describe_statement::aggregate(ag);            }
     | ( ( ksT=IDENT                                 { keyspace = sstring{$ksT.text}; }
         | ksT=QUOTED_NAME                           { keyspace = sstring{$ksT.text}; }
-        | ksK=unreserved_keyword                    { keyspace = ksK; } ) 
+        | ksK=unreserved_keyword                    { keyspace = ksK; } )
         '.' )?
         ( tT=IDENT                                  { generic_name = sstring{$tT.text}; }
         | tT=QUOTED_NAME                            { generic_name = sstring{$tT.text}; }
@@ -1526,7 +1527,7 @@ userOrRoleName returns [uninitialized<cql3::role_name> name]
     | k=unreserved_keyword { $name = cql3::role_name(k, cql3::preserve_role_case::no); }
     | QMARK {add_recognition_error("Bind variables cannot be used for role names");}
     ;
-    
+
 serviceLevelOrRoleName returns [sstring name]
 : t=IDENT              { $name = sstring($t.text);
 						 std::transform($name.begin(), $name.end(), $name.begin(), ::tolower); }
@@ -2054,6 +2055,7 @@ basic_unreserved_keyword returns [sstring str]
         | K_NOLOGIN
         | K_OPTIONS
         | K_PASSWORD
+        | K_SALTED_HASH
         | K_EXISTS
         | K_CUSTOM
         | K_TRIGGER
@@ -2214,6 +2216,7 @@ K_ROLES:       R O L E S;
 K_SUPERUSER:   S U P E R U S E R;
 K_NOSUPERUSER: N O S U P E R U S E R;
 K_PASSWORD:    P A S S W O R D;
+K_SALTED_HASH: S A L T E D '_' H A S H;
 K_LOGIN:       L O G I N;
 K_NOLOGIN:     N O L O G I N;
 K_OPTIONS:     O P T I O N S;
@@ -2296,7 +2299,7 @@ K_LEVELS: L E V E L S;
 K_EFFECTIVE: E F F E C T I V E;
 
 K_SCYLLA_TIMEUUID_LIST_INDEX: S C Y L L A '_' T I M E U U I D '_' L I S T '_' I N D E X;
-K_SCYLLA_COUNTER_SHARD_LIST: S C Y L L A '_' C O U N T E R '_' S H A R D '_' L I S T; 
+K_SCYLLA_COUNTER_SHARD_LIST: S C Y L L A '_' C O U N T E R '_' S H A R D '_' L I S T;
 K_SCYLLA_CLUSTERING_BOUND: S C Y L L A '_' C L U S T E R I N G '_' B O U N D;
 
 
@@ -2343,7 +2346,7 @@ STRING_LITERAL
     @init{
         std::string txt; // temporary to build pg-style-string
     }
-    @after{ 
+    @after{
         // This is an ugly hack that allows returning empty string literals.
         // If setText() was called with an empty string antlr3 would decide
         // that setText() was never called and just return the unmodified

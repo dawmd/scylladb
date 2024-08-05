@@ -35,6 +35,9 @@ public:
                 : _role(name.to_string())
                 , _options(std::move(options))
                 , _if_not_exists(if_not_exists) {
+        if (_options.password.has_value() && _options.salted_hash.has_value()) [[unlikely]] {
+            throw exceptions::invalid_request_exception("Only of the options PASSWORD, SALTED_HASH can be provided");
+        }
     }
 
     std::unique_ptr<prepared_statement> prepare(data_dictionary::database db, cql_stats& stats) override;

@@ -320,3 +320,9 @@ BOOST_AUTO_TEST_CASE(grant_role) {
 BOOST_AUTO_TEST_CASE(revoke_role) {
     test_valid("REVOKE soldier FROM boromir;");
 }
+
+// TODO: Uncomment this once there's grammar support for this.
+//
+// BOOST_AUTO_TEST_CASE(create_role_with_salted_hash) {
+//     test_valid("CREATE ROLE adam WITH SALTED HASH = 'something';");
+// }

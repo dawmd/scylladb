@@ -8,6 +8,7 @@
 
 #include <exception>
 #include <seastar/core/coroutine.hh>
+#include "auth/authenticator.hh"
 #include "auth/resource.hh"
 #include "auth/service.hh"
 
@@ -334,6 +335,7 @@ static void validate_authentication_options_are_supported(
 future<> service::create_role(std::string_view name,
         const role_config& config,
         const authentication_options& options,
+        create_with_salted_hash sh,
         ::service::group0_batch& mc) const {
     co_await underlying_role_manager().create(name, config, mc);
     if (!auth::any_authentication_options(options)) {
@@ -343,7 +345,7 @@ future<> service::create_role(std::string_view name,
     try {
         validate_authentication_options_are_supported(options,
                 underlying_authenticator().supported_options());
-        co_await underlying_authenticator().create(name, options, mc);
+        co_await underlying_authenticator().create(name, options, sh, mc);
     } catch (...) {
         ep = std::current_exception();
     }
@@ -459,8 +461,9 @@ future<> create_role(
         std::string_view name,
         const role_config& config,
         const authentication_options& options,
+        create_with_salted_hash sh,
         ::service::group0_batch& mc) {
-    return ser.create_role(name, config, options, mc);
+    return ser.create_role(name, config, options, sh, mc);
 }
 
 future<> alter_role(

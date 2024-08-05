@@ -12,6 +12,7 @@
 #include <regex>
 #include <fmt/ranges.h>
 
+#include "auth/authenticator.hh"
 #include "utils/class_registrator.hh"
 #include "utils/to_string.hh"
 #include "data_dictionary/data_dictionary.hh"
@@ -157,7 +158,7 @@ future<auth::authenticated_user> auth::certificate_authenticator::authenticate(c
     throw exceptions::authentication_exception("Cannot authenticate using attribute map");
 }
 
-future<> auth::certificate_authenticator::create(std::string_view role_name, const authentication_options& options, ::service::group0_batch& mc) {
+future<> auth::certificate_authenticator::create(std::string_view role_name, const authentication_options& options, create_with_salted_hash, ::service::group0_batch& mc) {
     // TODO: should we keep track of roles/enforce existence? Role manager should deal with this...
     co_return;
 }

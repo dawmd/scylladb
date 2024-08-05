@@ -87,8 +87,8 @@ public:
         });
     }
 
-    virtual future<> create(std::string_view role_name, const authentication_options& options, ::service::group0_batch& mc) override {
-        return _authenticator->create(role_name, options, mc);
+    virtual future<> create(std::string_view role_name, const authentication_options& options, create_with_salted_hash sh, ::service::group0_batch& mc) override {
+        return _authenticator->create(role_name, options, sh, mc);
     }
 
     virtual future<> alter(std::string_view role_name, const authentication_options& options, ::service::group0_batch& mc) override {

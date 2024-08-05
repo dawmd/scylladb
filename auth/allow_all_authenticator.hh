@@ -59,7 +59,7 @@ public:
         return make_ready_future<authenticated_user>(anonymous_user());
     }
 
-    virtual future<> create(std::string_view, const authentication_options& options, ::service::group0_batch&) override {
+    virtual future<> create(std::string_view, const authentication_options& options, create_with_salted_hash, ::service::group0_batch&) override {
         return make_ready_future();
     }
 
