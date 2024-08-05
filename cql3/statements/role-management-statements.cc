@@ -10,6 +10,7 @@
 
 #include <algorithm>
 
+#include "auth/authenticator.hh"
 #include "types/map.hh"
 #include "auth/authentication_options.hh"
 #include "auth/service.hh"
@@ -97,7 +98,7 @@ create_role_statement::execute(query_processor&,
 
     service::group0_batch mc{std::move(guard)};
     try {
-        co_await auth::create_role(as, _role, config, extract_authentication_options(_options), mc);
+        co_await auth::create_role(as, _role, config, extract_authentication_options(_options), auth::create_with_salted_hash::no, mc);
         co_await grant_permissions_to_creator(cs, mc);
     } catch (const auth::role_already_exists& e) {
         if (!_if_not_exists) {

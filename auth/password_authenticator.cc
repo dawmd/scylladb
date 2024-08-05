@@ -19,6 +19,7 @@
 #include <seastar/core/sleep.hh>
 
 #include "auth/authenticated_user.hh"
+#include "auth/authenticator.hh"
 #include "auth/common.hh"
 #include "auth/passwords.hh"
 #include "auth/roles-metadata.hh"
@@ -66,7 +67,7 @@ password_authenticator::password_authenticator(cql3::query_processor& qp, ::serv
     : _qp(qp)
     , _group0_client(g0)
     , _migration_manager(mm)
-    , _stopped(make_ready_future<>()) 
+    , _stopped(make_ready_future<>())
     , _superuser(default_superuser(qp.db().get_config()))
 {}
 
@@ -257,7 +258,7 @@ future<authenticated_user> password_authenticator::authenticate(
     }
 }
 
-future<> password_authenticator::create(std::string_view role_name, const authentication_options& options, ::service::group0_batch& mc) {
+future<> password_authenticator::create(std::string_view role_name, const authentication_options& options, create_with_salted_hash sh, ::service::group0_batch& mc) {
     if (!options.password) {
         co_return;
     }
@@ -270,8 +271,16 @@ future<> password_authenticator::create(std::string_view role_name, const authen
                 {passwords::hash(*options.password, rng_for_salt), sstring(role_name)},
                 cql3::query_processor::cache_internal::no).discard_result();
     } else {
+        auto password = std::invoke([&] {
+            if (sh == create_with_salted_hash::yes) {
+                return *options.password;
+            } else {
+                return passwords::hash(*options.password, rng_for_salt);
+            }
+        });
+
         co_await collect_mutations(_qp, mc, query,
-                {passwords::hash(*options.password, rng_for_salt), sstring(role_name)});
+                {std::move(password), sstring(role_name)});
     }
 }
 

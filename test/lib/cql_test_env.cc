@@ -11,6 +11,7 @@
 #include <random>
 #include <seastar/core/thread.hh>
 #include <seastar/util/defer.hh>
+#include "auth/authenticator.hh"
 #include "replica/database_fwd.hh"
 #include "test/lib/cql_test_env.hh"
 #include "cdc/generation_service.hh"
@@ -997,6 +998,7 @@ private:
                         testing_superuser,
                         config,
                         auth::authentication_options(),
+                        auth::create_with_salted_hash::no,
                         mc).get();
                 std::move(mc).commit(group0_client, as, ::service::raft_timeout{}).get();
             } catch (const auth::role_already_exists&) {

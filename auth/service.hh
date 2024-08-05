@@ -164,6 +164,7 @@ public:
     future<> create_role(std::string_view name,
             const role_config& config,
             const authentication_options& options,
+            create_with_salted_hash,
             ::service::group0_batch& mc) const;
 
     ///
@@ -233,6 +234,7 @@ future<> create_role(
         std::string_view name,
         const role_config&,
         const authentication_options&,
+        create_with_salted_hash,
         ::service::group0_batch&);
 
 ///

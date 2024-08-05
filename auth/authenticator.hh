@@ -42,6 +42,7 @@ struct certificate_info {
 };
 
 using session_dn_func = std::function<future<std::optional<certificate_info>>()>;
+using create_with_salted_hash = seastar::bool_class<struct create_with_salted_hash_aux>;
 
 ///
 /// Abstract client for authenticating role identity.
@@ -106,7 +107,7 @@ public:
     ///
     /// The options provided must be a subset of `supported_options()`.
     ///
-    virtual future<> create(std::string_view role_name, const authentication_options& options, ::service::group0_batch& mc) = 0;
+    virtual future<> create(std::string_view role_name, const authentication_options& options, create_with_salted_hash, ::service::group0_batch& mc) = 0;
 
     ///
     /// Alter the authentication record of an existing user.
