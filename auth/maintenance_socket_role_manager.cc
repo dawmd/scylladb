@@ -105,4 +105,12 @@ future<> maintenance_socket_role_manager::remove_attribute(std::string_view role
     return operation_not_supported_exception("REMOVE ATTRIBUTE");
 }
 
+future<> maintenance_socket_role_manager::describe_roles(std::ostream&) const {
+    return operation_not_supported_exception("DESC AUTH");
 }
+
+future<> maintenance_socket_role_manager::describe_attibutes(std::ostream&) const {
+    return operation_not_supported_exception("DESC AUTH");
+}
+
+} // namespace auth

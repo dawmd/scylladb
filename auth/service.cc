@@ -17,16 +17,21 @@
 #include <chrono>
 
 #include <seastar/core/future-util.hh>
+#include <seastar/core/on_internal_error.hh>
+#include <seastar/core/print.hh>
 #include <seastar/core/sharded.hh>
 #include <seastar/core/shared_ptr.hh>
 
 #include "auth/allow_all_authenticator.hh"
 #include "auth/allow_all_authorizer.hh"
 #include "auth/common.hh"
+#include "auth/permission.hh"
 #include "auth/role_or_anonymous.hh"
+#include "auth/roles-metadata.hh"
 #include "cql3/functions/functions.hh"
 #include "cql3/query_processor.hh"
 #include "cql3/untyped_result_set.hh"
+#include "cql3/util.hh"
 #include "db/config.hh"
 #include "db/consistency_level_type.hh"
 #include "db/functions/function_name.hh"
@@ -418,6 +423,25 @@ future<bool> service::exists(const resource& r) const {
     }
 
     return make_ready_future<bool>(false);
+}
+
+future<> service::describe_auth(std::ostream& out) const {
+    // Step 1. Collect information from the table `system.roles`.
+    co_await _role_manager->describe_roles(out);
+
+    try {
+        // Step 2. Grant resources to roles.
+        for (const auto& permission_info : co_await _authorizer->list_all()) {
+            for (const auto& permission : permission_info.permissions) {
+                // TODO: Make sure the resource is printed correctly. There are many variaties of it; see the documentation.
+                fmt::print(out, "GRANT {} ON {} TO {};\n", permissions::to_string(permission), permission_info.resource,
+                        cql3::util::maybe_quote(permission_info.role_name));
+            }
+        }
+    } catch (const unsupported_authorization_operation&) {/* ignore */}
+
+    // Step 3. Attach attributes to roles.
+    co_await _role_manager->describe_attibutes(out);
 }
 
 //

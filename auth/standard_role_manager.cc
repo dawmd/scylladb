@@ -24,6 +24,7 @@
 #include "auth/roles-metadata.hh"
 #include "cql3/query_processor.hh"
 #include "cql3/untyped_result_set.hh"
+#include "cql3/util.hh"
 #include "db/consistency_level_type.hh"
 #include "exceptions/exceptions.hh"
 #include "log.hh"
@@ -684,4 +685,79 @@ future<> standard_role_manager::remove_attribute(std::string_view role_name, std
                 {sstring(role_name), sstring(attribute_name)});
     }
 }
+
+future<> standard_role_manager::describe_roles(std::ostream& out) const {
+    const sstring role_query = seastar::format("SELECT * from {}.{}", get_auth_ks_name(_qp), meta::roles_table::name);
+    const auto roles = co_await _qp.execute_internal(
+            role_query,
+            db::consistency_level::LOCAL_ONE, // TODO: Verify later if this is okay.
+            internal_distributed_query_state(),
+            cql3::query_processor::cache_internal::yes);
+
+    if (roles->empty()) [[unlikely]] {
+        on_internal_error(log, "No role has been found in the system");
+    }
+
+    for (const auto& role_record : *roles) {
+        const auto role_name = cql3::util::maybe_quote(role_record.get_as<sstring>("role"));
+        // Note: fmt prints boolean values as `true` / `false` if the presentation type is not specified.
+        const bool can_login = role_record.get_or<bool>("can_login", false);
+        const bool is_superuser = role_record.get_or<bool>("is_superuser", false);
+
+        if (role_record.has("salted_hash")) {
+            // Note: Although `crypt` functions don't produce whitespace characters, etc., they don't guarantee
+            //       that the salted hash won't contain a quotation mark:
+            //
+            //       "Hashed passphrases are always entirely printable ASCII, and do not contain any whitespace
+            //        or the characters `:`, `;`, `*`, `!`, or `\`."
+            //
+            //       --- crypt(5); I changed the formatting of the manual page a bit.
+            //
+            //       Because of that, we call `cql3::util::maybe_quote` for safety.
+            const auto salted_hash = cql3::util::maybe_quote(role_record.get_as<sstring>("salted_hash"));
+            fmt::print(out, "CREATE ROLE IF NOT EXISTS {} WITH SALTED_HASH = {} AND LOGIN = {} AND SUPERUSER = {};\n",
+                    role_name, salted_hash, can_login, is_superuser);
+        } else {
+            fmt::print(out, "CREATE ROLE IF NOT EXISTS {} WITH LOGIN = {} AND SUPERUSER = {};\n",
+                    role_name, can_login, is_superuser);
+        }
+    }
+
+    // TODO: Handle custom options here if needed and if this is the right place
+    //       to do so of course.
+
+    // Step 2. Start granting roles to one another.
+    for (const auto& role_record : *roles) {
+        const sstring grantee_role_name = role_record.get_as<sstring>("role");
+        const auto granted_role_set = role_record.has("member_of")
+                ? role_record.get_set<sstring>("member_of")
+                : role_set{};
+
+        for (const auto& granted_role : granted_role_set) {
+            fmt::print(out, "GRANT {} to {};\n", granted_role, grantee_role_name);
+        }
+    }
 }
+
+future<> standard_role_manager::describe_attibutes(std::ostream& out) const {
+    // Note: As of now, it seems the only attributes we can use are service levels (that's what I've found so far at least).
+    //       However, we should be careful here. Who knows what the future may possibly bring...
+    //
+    // Note: It's EXTREMELY important to keep in mind this:
+    //
+    //       "A role can only be assigned one service level. However, the same service level can be attached to many roles.
+    //        If a role inherits a service level from another role, the highest level of service from all the roles wins."
+    const sstring attribute_query = format("SELECT * FROM {}.{}", get_auth_ks_name(_qp), meta::role_attributes_table::name);
+
+    const auto attribute_results = co_await _qp.execute_internal(
+            attribute_query,
+            db::consistency_level::LOCAL_ONE, // TODO: Verify later if this is okay.
+            internal_distributed_query_state(),
+            cql3::query_processor::cache_internal::yes);
+
+    for (const auto& attribute_info : *attribute_results) {
+        fmt::print(out, "ATTACH SERVICE LEVEL {} TO {};\n", attribute_info.get_as<sstring>("name"), attribute_info.get_as<sstring>("role"));
+    }
+}
+
+} // namespace auth

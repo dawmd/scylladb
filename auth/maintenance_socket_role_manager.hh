@@ -66,6 +66,10 @@ public:
     virtual future<> set_attribute(std::string_view role_name, std::string_view attribute_name, std::string_view attribute_value, ::service::group0_batch& mc) override;
 
     virtual future<> remove_attribute(std::string_view role_name, std::string_view attribute_name, ::service::group0_batch& mc) override;
+
+    virtual future<> describe_roles(std::ostream&) const override;
+
+    virtual future<> describe_attibutes(std::ostream&) const override;
 };
 
 }

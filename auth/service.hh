@@ -11,6 +11,7 @@
 #include <string_view>
 #include <memory>
 #include <optional>
+#include <ostream>
 
 #include <seastar/core/future.hh>
 #include <seastar/core/sstring.hh>
@@ -194,6 +195,11 @@ public:
     future<> commit_mutations(::service::group0_batch&& mc) {
         return std::move(mc).commit(_group0_client, _as, ::service::raft_timeout{});
     }
+
+    /// TODO: Describe this function.
+    ///
+    /// Assumes service levels have already been described before.
+    future<> describe_auth(std::ostream&) const;
 
 private:
     future<> create_legacy_keyspace_if_missing(::service::migration_manager& mm) const;

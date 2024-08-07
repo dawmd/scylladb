@@ -178,5 +178,11 @@ public:
     /// \note: This is a no-op if the role does not have the named attribute set.
     ///
     virtual future<> remove_attribute(std::string_view role_name, std::string_view attribute_name, ::service::group0_batch& mc) = 0;
+
+    // TODO: Describe this function.
+    virtual future<> describe_roles(std::ostream&) const = 0;
+
+    // TODO: Describe this function.
+    virtual future<> describe_attibutes(std::ostream&) const = 0;
 };
 }
