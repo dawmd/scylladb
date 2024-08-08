@@ -79,6 +79,11 @@ using role_set = std::unordered_set<sstring>;
 
 enum class recursive_role_query { yes, no };
 
+struct role_creation_description {
+    std::vector<sstring> create_role_stmts;
+    std::vector<sstring> grant_role_stmts;
+};
+
 ///
 /// Abstract client for managing roles.
 ///
@@ -180,9 +185,9 @@ public:
     virtual future<> remove_attribute(std::string_view role_name, std::string_view attribute_name, ::service::group0_batch& mc) = 0;
 
     // TODO: Describe this function.
-    virtual future<> describe_roles(std::ostream&) const = 0;
+    virtual future<role_creation_description> describe_roles() const = 0;
 
     // TODO: Describe this function.
-    virtual future<> describe_attibutes(std::ostream&) const = 0;
+    virtual future<std::vector<sstring>> describe_attibutes() const = 0;
 };
 }

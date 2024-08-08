@@ -67,9 +67,9 @@ public:
 
     virtual future<> remove_attribute(std::string_view role_name, std::string_view attribute_name, ::service::group0_batch& mc) override;
 
-    virtual future<> describe_roles(std::ostream&) const override;
+    virtual future<role_creation_description> describe_roles() const override;
 
-    virtual future<> describe_attibutes(std::ostream&) const override;
+    virtual future<std::vector<sstring>> describe_attibutes() const override;
 };
 
 }

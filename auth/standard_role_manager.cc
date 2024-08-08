@@ -21,6 +21,7 @@
 #include <seastar/core/thread.hh>
 
 #include "auth/common.hh"
+#include "auth/role_manager.hh"
 #include "auth/roles-metadata.hh"
 #include "cql3/query_processor.hh"
 #include "cql3/untyped_result_set.hh"
@@ -686,7 +687,7 @@ future<> standard_role_manager::remove_attribute(std::string_view role_name, std
     }
 }
 
-future<> standard_role_manager::describe_roles(std::ostream& out) const {
+future<role_creation_description> standard_role_manager::describe_roles() const {
     const sstring role_query = seastar::format("SELECT * from {}.{}", get_auth_ks_name(_qp), meta::roles_table::name);
     const auto roles = co_await _qp.execute_internal(
             role_query,
@@ -697,6 +698,10 @@ future<> standard_role_manager::describe_roles(std::ostream& out) const {
     if (roles->empty()) [[unlikely]] {
         on_internal_error(log, "No role has been found in the system");
     }
+
+    role_creation_description result{};
+    auto& create_role_stmts = result.create_role_stmts;
+    create_role_stmts.reserve(roles->size());
 
     for (const auto& role_record : *roles) {
         const auto role_name = cql3::util::maybe_quote(role_record.get_as<sstring>("role"));
@@ -715,16 +720,17 @@ future<> standard_role_manager::describe_roles(std::ostream& out) const {
             //
             //       Because of that, we call `cql3::util::maybe_quote` for safety.
             const auto salted_hash = cql3::util::maybe_quote(role_record.get_as<sstring>("salted_hash"));
-            fmt::print(out, "CREATE ROLE IF NOT EXISTS {} WITH SALTED_HASH = {} AND LOGIN = {} AND SUPERUSER = {};\n",
-                    role_name, salted_hash, can_login, is_superuser);
+            create_role_stmts.push_back(seastar::format("CREATE ROLE IF NOT EXISTS {} WITH SALTED_HASH = {} AND LOGIN = {} AND SUPERUSER = {};\n",
+                    role_name, salted_hash, can_login, is_superuser));
         } else {
-            fmt::print(out, "CREATE ROLE IF NOT EXISTS {} WITH LOGIN = {} AND SUPERUSER = {};\n",
-                    role_name, can_login, is_superuser);
+            create_role_stmts.push_back(seastar::format("CREATE ROLE IF NOT EXISTS {} WITH LOGIN = {} AND SUPERUSER = {};\n",
+                    role_name, can_login, is_superuser));
         }
     }
 
     // TODO: Handle custom options here if needed and if this is the right place
     //       to do so of course.
+    auto& grant_role_stmts = result.grant_role_stmts;
 
     // Step 2. Start granting roles to one another.
     for (const auto& role_record : *roles) {
@@ -734,12 +740,14 @@ future<> standard_role_manager::describe_roles(std::ostream& out) const {
                 : role_set{};
 
         for (const auto& granted_role : granted_role_set) {
-            fmt::print(out, "GRANT {} to {};\n", granted_role, grantee_role_name);
+            grant_role_stmts.push_back(seastar::format("GRANT {} to {};\n", granted_role, grantee_role_name));
         }
     }
+
+    co_return result;
 }
 
-future<> standard_role_manager::describe_attibutes(std::ostream& out) const {
+future<std::vector<sstring>> standard_role_manager::describe_attibutes() const {
     // Note: As of now, it seems the only attributes we can use are service levels (that's what I've found so far at least).
     //       However, we should be careful here. Who knows what the future may possibly bring...
     //
@@ -755,9 +763,15 @@ future<> standard_role_manager::describe_attibutes(std::ostream& out) const {
             internal_distributed_query_state(),
             cql3::query_processor::cache_internal::yes);
 
+    std::vector<sstring> result{};
+    result.reserve(attribute_results->size());
+
     for (const auto& attribute_info : *attribute_results) {
-        fmt::print(out, "ATTACH SERVICE LEVEL {} TO {};\n", attribute_info.get_as<sstring>("name"), attribute_info.get_as<sstring>("role"));
+        result.push_back(seastar::format("ATTACH SERVICE LEVEL {} TO {};\n",
+                attribute_info.get_as<sstring>("name"), attribute_info.get_as<sstring>("role")));
     }
+
+    co_return result;
 }
 
 } // namespace auth

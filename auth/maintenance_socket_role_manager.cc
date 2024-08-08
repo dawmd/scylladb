@@ -11,6 +11,8 @@
 #include <seastar/core/future.hh>
 #include <stdexcept>
 #include <string_view>
+#include "auth/role_manager.hh"
+#include "seastar/coroutine/exception.hh"
 #include "utils/class_registrator.hh"
 
 namespace auth {
@@ -105,12 +107,12 @@ future<> maintenance_socket_role_manager::remove_attribute(std::string_view role
     return operation_not_supported_exception("REMOVE ATTRIBUTE");
 }
 
-future<> maintenance_socket_role_manager::describe_roles(std::ostream&) const {
-    return operation_not_supported_exception("DESC AUTH");
+future<role_creation_description> maintenance_socket_role_manager::describe_roles() const {
+    co_return coroutine::return_exception(operation_not_supported_exception("DESC AUTH"));
 }
 
-future<> maintenance_socket_role_manager::describe_attibutes(std::ostream&) const {
-    return operation_not_supported_exception("DESC AUTH");
+future<std::vector<sstring>> maintenance_socket_role_manager::describe_attibutes() const {
+    co_return coroutine::return_exception(operation_not_supported_exception("DESC AUTH"));
 }
 
 } // namespace auth

@@ -425,23 +425,32 @@ future<bool> service::exists(const resource& r) const {
     return make_ready_future<bool>(false);
 }
 
-future<> service::describe_auth(std::ostream& out) const {
+future<auth_description> service::describe_auth() const {
     // Step 1. Collect information from the table `system.roles`.
-    co_await _role_manager->describe_roles(out);
+    auto role_stmts = co_await _role_manager->describe_roles();
+
+    std::vector<sstring> permission_stmts{};
 
     try {
         // Step 2. Grant resources to roles.
         for (const auto& permission_info : co_await _authorizer->list_all()) {
             for (const auto& permission : permission_info.permissions) {
                 // TODO: Make sure the resource is printed correctly. There are many variaties of it; see the documentation.
-                fmt::print(out, "GRANT {} ON {} TO {};\n", permissions::to_string(permission), permission_info.resource,
-                        cql3::util::maybe_quote(permission_info.role_name));
+                permission_stmts.push_back(seastar::format("GRANT {} ON {} TO {};\n",
+                        permissions::to_string(permission), permission_info.resource, cql3::util::maybe_quote(permission_info.role_name)));
             }
         }
     } catch (const unsupported_authorization_operation&) {/* ignore */}
 
     // Step 3. Attach attributes to roles.
-    co_await _role_manager->describe_attibutes(out);
+    auto service_levels_stmts = co_await _role_manager->describe_attibutes();
+
+    co_return auth_description {
+        .create_role_stmts = std::move(role_stmts.create_role_stmts),
+        .grant_role_stmts = std::move(role_stmts.grant_role_stmts),
+        .grant_permission_stmts = std::move(permission_stmts),
+        .attach_service_level_stmts = std::move(service_levels_stmts)
+    };
 }
 
 //

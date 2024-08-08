@@ -11,7 +11,6 @@
 #include <string_view>
 #include <memory>
 #include <optional>
-#include <ostream>
 
 #include <seastar/core/future.hh>
 #include <seastar/core/sstring.hh>
@@ -60,6 +59,13 @@ struct service_config final {
 class incompatible_module_combination : public std::invalid_argument {
 public:
     using std::invalid_argument::invalid_argument;
+};
+
+struct auth_description {
+    std::vector<sstring> create_role_stmts;
+    std::vector<sstring> grant_role_stmts;
+    std::vector<sstring> grant_permission_stmts;
+    std::vector<sstring> attach_service_level_stmts;
 };
 
 ///
@@ -199,7 +205,7 @@ public:
     /// TODO: Describe this function.
     ///
     /// Assumes service levels have already been described before.
-    future<> describe_auth(std::ostream&) const;
+    future<auth_description> describe_auth() const;
 
 private:
     future<> create_legacy_keyspace_if_missing(::service::migration_manager& mm) const;
