@@ -39,6 +39,7 @@
 #include "schema/schema_fwd.hh"
 #include <seastar/core/future.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
+#include "seastar/coroutine/maybe_yield.hh"
 #include "service/migration_manager.hh"
 #include "service/raft/raft_group0_client.hh"
 #include "timestamp.hh"
@@ -439,6 +440,8 @@ future<auth_description> service::describe_auth() const {
                 permission_stmts.push_back(seastar::format("GRANT {} ON {} TO {};\n",
                         permissions::to_string(permission), permission_info.resource, cql3::util::maybe_quote(permission_info.role_name)));
             }
+
+            co_await coroutine::maybe_yield();
         }
     } catch (const unsupported_authorization_operation&) {/* ignore */}
 

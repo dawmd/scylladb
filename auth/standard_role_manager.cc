@@ -726,6 +726,8 @@ future<role_creation_description> standard_role_manager::describe_roles() const 
             create_role_stmts.push_back(seastar::format("CREATE ROLE IF NOT EXISTS {} WITH LOGIN = {} AND SUPERUSER = {};\n",
                     role_name, can_login, is_superuser));
         }
+
+        co_await coroutine::maybe_yield();
     }
 
     // TODO: Handle custom options here if needed and if this is the right place
@@ -742,6 +744,8 @@ future<role_creation_description> standard_role_manager::describe_roles() const 
         for (const auto& granted_role : granted_role_set) {
             grant_role_stmts.push_back(seastar::format("GRANT {} to {};\n", granted_role, grantee_role_name));
         }
+
+        co_await coroutine::maybe_yield();
     }
 
     co_return result;
@@ -769,6 +773,7 @@ future<std::vector<sstring>> standard_role_manager::describe_attibutes() const {
     for (const auto& attribute_info : *attribute_results) {
         result.push_back(seastar::format("ATTACH SERVICE LEVEL {} TO {};\n",
                 attribute_info.get_as<sstring>("name"), attribute_info.get_as<sstring>("role")));
+        co_await coroutine::maybe_yield();
     }
 
     co_return result;

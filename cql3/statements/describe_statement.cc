@@ -111,10 +111,10 @@ struct description {
 };
 
 future<std::vector<description>> generate_descriptions(
-    replica::database& db, 
+    replica::database& db,
     std::vector<shared_ptr<const keyspace_element>> elements,
     std::optional<bool> with_internals = std::nullopt,
-    bool sort_by_name = true) 
+    bool sort_by_name = true)
 {
     std::vector<description> descs;
     descs.reserve(elements.size());
@@ -125,8 +125,8 @@ future<std::vector<description>> generate_descriptions(
     }
 
     for (auto& e: elements) {
-        auto desc = (with_internals.has_value()) 
-            ? description(db, *e, *with_internals) 
+        auto desc = (with_internals.has_value())
+            ? description(db, *e, *with_internals)
             : description(db, *e);
         descs.push_back(desc);
 
@@ -141,17 +141,17 @@ bool is_index(const data_dictionary::database& db, const schema_ptr& schema) {
 
 /**
  *  DESCRIBE FUNCTIONS
- *  
- *  - "plular" functions (types/functions/aggregates/tables) 
+ *
+ *  - "plular" functions (types/functions/aggregates/tables)
  *  Return list of all elements in a given keyspace. Returned descriptions
  *  don't contain create statements.
- *  
+ *
  *  - "singular" functions (keyspace/type/function/aggregate/view/index/table)
  *  Return description of element. The description contain create_statement.
  *  Those functions throw `invalid_request_exception` if element cannot be found.
  *  Note:
  *    - `table()` returns description of the table and its indexes and views
- *    - `function()` and `aggregate()` might return multiple descriptions 
+ *    - `function()` and `aggregate()` might return multiple descriptions
  *      since keyspace and name don't identify function uniquely
  */
 
@@ -197,7 +197,7 @@ future<std::vector<description>> types(replica::database& db, const lw_shared_pt
     auto udts = co_await get_sorted_types(ks);
     co_return co_await generate_descriptions(db, udts, (with_stmt) ? std::optional(true) : std::nullopt, false);
 }
-    
+
 future<std::vector<description>> function(replica::database& db, const sstring& ks, const sstring& name) {
     auto fs = functions::instance().find(functions::function_name(ks, name));
     if (fs.empty()) {
@@ -449,11 +449,31 @@ future<std::vector<description>> describe_all_keyspace_elements(const data_dicti
     inserter(co_await functions(replica_db, ks, true));
     inserter(co_await aggregates(replica_db, ks, true));
     inserter(co_await tables(db, ks_meta, with_internals));
+    if (with_internals) {
+        // inserter(co_await service_levels());
+        // inserter(co_await auth());
+    }
 
-    co_return result; 
+    co_return result;
 }
 
+future<std::vector<description>> describe_auth(const service::query_state& state) {
+    auto auth_info = co_await state.get_client_state().get_auth_service()->describe_auth();
+    const auto total_count =
+            auth_info.create_role_stmts.size() +
+            auth_info.grant_role_stmts.size() +
+            auth_info.grant_permission_stmts.size() +
+            auth_info.attach_service_level_stmts.size();
+
+    std::vector<description> result{};
+    result.reserve(total_count);
+
+    for (auto& create_role_stmt : auth_info.create_role_stmts) {
+        result.emplace_back({"", "role", "PLACEHOLDER", std::move(create_role_stmt)});
+    }
 }
+
+} // anonymous namespace
 
 // Generic column specification for element describe statement
 std::vector<lw_shared_ptr<column_specification>> get_listing_column_specifications() {
@@ -511,8 +531,8 @@ describe_statement::execute(cql3::query_processor& qp, service::query_state& sta
 std::pair<data_type, data_type> range_ownership_type() {
     auto list_type = list_type_impl::get_instance(utf8_type, false);
     auto map_type = map_type_impl::get_instance(
-        utf8_type, 
-        list_type, 
+        utf8_type,
+        list_type,
         false
     );
 
@@ -537,7 +557,7 @@ std::vector<lw_shared_ptr<column_specification>> cluster_describe_statement::get
             make_lw_shared<column_specification>("system", "describe", ::make_shared<column_identifier>("range_ownership", true), map_type)
         );
     }
-    
+
     return spec;
 }
 
@@ -577,7 +597,7 @@ future<bytes_opt> cluster_describe_statement::range_ownership(const service::sto
     )).serialize();
 }
 
-future<std::vector<std::vector<bytes_opt>>> cluster_describe_statement::describe(cql3::query_processor& qp, const service::client_state& client_state) const {   
+future<std::vector<std::vector<bytes_opt>>> cluster_describe_statement::describe(cql3::query_processor& qp, const service::client_state& client_state) const {
     auto db = qp.db();
     auto& proxy = qp.proxy();
 
@@ -595,7 +615,7 @@ future<std::vector<std::vector<bytes_opt>>> cluster_describe_statement::describe
         auto ro_map = co_await range_ownership(proxy, client_state.get_raw_keyspace());
         row.push_back(std::move(ro_map));
     }
-    
+
     std::vector<std::vector<bytes_opt>> result {std::move(row)};
     co_return result;
 }
@@ -631,6 +651,12 @@ future<std::vector<std::vector<bytes_opt>>> schema_describe_statement::describe(
                 schema_result.insert(schema_result.end(), ks_result.begin(), ks_result.end());
             }
 
+            if (_with_internals) {
+                // auto service_levels = co_await describe_service_levels();
+                auto auth_info = co_await describe_auth();
+                schema_result.insert(schema_result.end(), auth_info.begin(), auth_info.end());
+            }
+
             co_return schema_result;
         },
         [&] (const keyspace_desc& config) -> future<std::vector<description>> {
@@ -654,7 +680,7 @@ future<std::vector<std::vector<bytes_opt>>> schema_describe_statement::describe(
 }
 
 // LISTING DESCRIBE STATEMENT
-listing_describe_statement::listing_describe_statement(element_type element, bool with_internals) 
+listing_describe_statement::listing_describe_statement(element_type element, bool with_internals)
     : describe_statement()
     , _element(element)
     , _with_internals(with_internals) {}
@@ -687,7 +713,7 @@ future<std::vector<std::vector<bytes_opt>>> listing_describe_statement::describe
 }
 
 // ELEMENT DESCRIBE STATEMENT
-element_describe_statement::element_describe_statement(element_type element, std::optional<sstring> keyspace, sstring name, bool with_internals) 
+element_describe_statement::element_describe_statement(element_type element, std::optional<sstring> keyspace, sstring name, bool with_internals)
     : describe_statement()
     , _element(element)
     , _keyspace(std::move(keyspace))
@@ -706,7 +732,7 @@ future<std::vector<std::vector<bytes_opt>>> element_describe_statement::describe
     if (ks.empty()) {
         throw exceptions::invalid_request_exception("No keyspace specified and no current keyspace");
     }
-    
+
     co_return serialize_descriptions(co_await describe_element(qp.db(), ks, _element, _name, _with_internals));
 }
 
@@ -736,7 +762,7 @@ future<std::vector<std::vector<bytes_opt>>> generic_describe_statement::describe
             throw exceptions::invalid_request_exception(format("'{}' not found in keyspaces", _name));
         }
     }
-    
+
     auto ks = db.try_find_keyspace(ks_name);
     if (!ks) {
         throw exceptions::invalid_request_exception(format("'{}' not found in keyspaces", _name));
