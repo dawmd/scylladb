@@ -11,31 +11,18 @@
 #include <string_view>
 #include <memory>
 #include <optional>
-#include <unordered_set>
 
 #include <seastar/core/future.hh>
 #include <seastar/core/print.hh>
 #include <seastar/core/sstring.hh>
 
 #include "auth/resource.hh"
+#include "auth/role_info.hh"
 #include "seastarx.hh"
 #include "exceptions/exceptions.hh"
 #include "service/raft/raft_group0_client.hh"
 
 namespace auth {
-
-struct role_config final {
-    bool is_superuser{false};
-    bool can_login{false};
-};
-
-///
-/// Differential update for altering existing roles.
-///
-struct role_config_update final {
-    std::optional<bool> is_superuser{};
-    std::optional<bool> can_login{};
-};
 
 ///
 /// A logical argument error for a role-management operation.
@@ -74,9 +61,6 @@ public:
                       format("{} was not granted role {}, so it cannot be revoked.", revokee_name, role_name)) {
     }
 };
-
-using role_set = std::unordered_set<sstring>;
-using role_to_directly_granted_map = std::multimap<sstring, sstring>;
 
 enum class recursive_role_query { yes, no };
 
@@ -158,7 +142,7 @@ public:
     ///   (role1, role3),
     ///   (role2, role3)
     /// }
-    ///  
+    ///
     virtual future<role_to_directly_granted_map> query_all_directly_granted() = 0;
 
     virtual future<role_set> query_all() = 0;
