@@ -26,16 +26,16 @@ struct permission_details {
     sstring role_name;
     ::auth::resource resource;
     permission_set permissions;
+
+    bool operator==(const permission_details& other) const {
+        return std::forward_as_tuple(role_name, resource, permissions.mask())
+                == std::forward_as_tuple(other.role_name, other.resource, other.permissions.mask());
+    }
+
+    auto operator<=>(const permission_details& other) const {
+        return std::forward_as_tuple(role_name, resource, permissions)
+                <=> std::forward_as_tuple(other.role_name, other.resource, other.permissions);
+    }
 };
-
-inline bool operator==(const permission_details& pd1, const permission_details& pd2) {
-    return std::forward_as_tuple(pd1.role_name, pd1.resource, pd1.permissions.mask())
-            == std::forward_as_tuple(pd2.role_name, pd2.resource, pd2.permissions.mask());
-}
-
-inline bool operator<(const permission_details& pd1, const permission_details& pd2) {
-    return std::forward_as_tuple(pd1.role_name, pd1.resource, pd1.permissions)
-            < std::forward_as_tuple(pd2.role_name, pd2.resource, pd2.permissions);
-}
 
 } // namespace auth
