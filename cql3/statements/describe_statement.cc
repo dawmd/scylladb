@@ -17,6 +17,7 @@
 #include "cql3/functions/function_name.hh"
 #include "cql3/statements/prepared_statement.hh"
 #include "exceptions/exceptions.hh"
+#include <ranges>
 #include <seastar/core/on_internal_error.hh>
 #include <seastar/coroutine/maybe_yield.hh>
 #include "service/client_state.hh"
@@ -95,6 +96,12 @@ struct description {
         , _name(util::maybe_quote(element.element_name()))
         , _create_statement(std::move(create_statement)) {}
 
+    description(sstring keyspace, sstring type, sstring name, std::optional<sstring> create_statement)
+        : _keyspace(util::maybe_quote(std::move(keyspace)))
+        , _type(std::move(type))
+        , _name(util::maybe_quote(std::move(name)))
+        , _create_statement(std::move(create_statement)) {}
+
     std::vector<bytes_opt> serialize() const {
         auto desc = std::vector<bytes_opt>{
             {to_bytes(_keyspace)},
@@ -132,6 +139,30 @@ future<std::vector<description>> generate_descriptions(
 
         co_await coroutine::maybe_yield();
     }
+    co_return descs;
+}
+
+template <data_dictionary::keyspace_element_generator KEG>
+future<std::vector<description>> generate_descriptions_with_generator(const KEG& keg, replica::database& db,
+        const bool with_internals, bool sort_by_name = true)
+{
+    std::vector<description> descs{};
+    descs.reserve(std::ranges::size(keg));
+
+    const auto keyspace_name = keg.keyspace_name();
+    const auto element_type = keg.element_type();
+
+    for (auto [element_name, create_statement] : keg.describe_elements(db, with_internals)) {
+        descs.push_back(description{keyspace_name, element_type, std::move(element_name), std::move(create_statement)});
+        co_await coroutine::maybe_yield();
+    }
+
+    if (sort_by_name) {
+        std::ranges::sort(descs, [] (const auto& lhs, const auto& rhs) {
+            return lhs->_element_name < rhs->_element_name;
+        });
+    }
+
     co_return descs;
 }
 
