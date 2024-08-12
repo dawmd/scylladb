@@ -61,7 +61,7 @@ public:
     virtual bool requires_thread() const override;
     virtual bytes_opt execute(std::span<const bytes_opt> parameters) override;
 
-    virtual sstring keypace_name() const override { return name().keyspace; }
+    virtual sstring keyspace_name() const override { return name().keyspace; }
     virtual sstring element_name() const override { return name().name; }
     virtual sstring element_type() const override { return "function"; }
     virtual std::ostream& describe(std::ostream& os) const override;

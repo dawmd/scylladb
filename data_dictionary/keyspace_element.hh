@@ -31,7 +31,7 @@ namespace data_dictionary {
 */
 class keyspace_element {
 public:
-    virtual seastar::sstring keypace_name() const = 0;
+    virtual seastar::sstring keyspace_name() const = 0;
     virtual seastar::sstring element_name() const = 0;
 
     // Override one of these element_type() overloads.

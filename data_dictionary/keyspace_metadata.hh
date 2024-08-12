@@ -95,7 +95,7 @@ public:
     std::vector<schema_ptr> tables() const;
     std::vector<view_ptr> views() const;
 
-    virtual sstring keypace_name() const override { return name(); }
+    virtual sstring keyspace_name() const override { return name(); }
     virtual sstring element_name() const override { return name(); }
     virtual sstring element_type() const override { return "keyspace"; }
     virtual std::ostream& describe(replica::database& db, std::ostream& os, bool with_internals) const override;

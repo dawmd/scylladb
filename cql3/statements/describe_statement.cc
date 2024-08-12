@@ -74,14 +74,14 @@ struct description {
 
     // Description without create_statement
     description(replica::database& db, const keyspace_element& element)
-        : _keyspace(util::maybe_quote(element.keypace_name()))
+        : _keyspace(util::maybe_quote(element.keyspace_name()))
         , _type(element.element_type(db))
         , _name(util::maybe_quote(element.element_name()))
         , _create_statement(std::nullopt) {}
 
     // Description with create_statement
     description(replica::database& db, const keyspace_element& element, bool with_internals)
-        : _keyspace(util::maybe_quote(element.keypace_name()))
+        : _keyspace(util::maybe_quote(element.keyspace_name()))
         , _type(element.element_type(db))
         , _name(util::maybe_quote(element.element_name()))
     {
@@ -91,7 +91,7 @@ struct description {
     }
 
     description(replica::database& db, const keyspace_element& element, sstring create_statement)
-        : _keyspace(util::maybe_quote(element.keypace_name()))
+        : _keyspace(util::maybe_quote(element.keyspace_name()))
         , _type(element.element_type(db))
         , _name(util::maybe_quote(element.element_name()))
         , _create_statement(std::move(create_statement)) {}

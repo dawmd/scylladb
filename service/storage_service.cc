@@ -1309,7 +1309,7 @@ future<> storage_service::raft_initialize_discovery_leader(const join_node_reque
 
         auto sl_status_mutation = co_await _sys_ks.local().make_service_levels_version_mutation(2, guard);
         insert_join_request_mutations.emplace_back(std::move(sl_status_mutation));
-        
+
         insert_join_request_mutations.emplace_back(
                 co_await _sys_ks.local().make_auth_version_mutation(guard.write_timestamp(), db::system_keyspace::auth_version_t::v2));
 
@@ -3066,12 +3066,12 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
             auto& db = ss._db.local();
             auto tmptr = pending_token_metadata_ptr[this_shard_id()];
             db.get_tables_metadata().for_each_table([&] (table_id id, lw_shared_ptr<replica::table> table) {
-                auto rs = db.find_keyspace(table->schema()->keypace_name()).get_replication_strategy_ptr();
+                auto rs = db.find_keyspace(table->schema()->keyspace_name()).get_replication_strategy_ptr();
                 locator::effective_replication_map_ptr erm;
                 if (auto pt_rs = rs->maybe_as_per_table()) {
                     erm = pt_rs->make_replication_map(id, tmptr);
                 } else {
-                    erm = pending_effective_replication_maps[this_shard_id()][table->schema()->keypace_name()];
+                    erm = pending_effective_replication_maps[this_shard_id()][table->schema()->keyspace_name()];
                 }
                 pending_table_erms[this_shard_id()].emplace(id, std::move(erm));
             });

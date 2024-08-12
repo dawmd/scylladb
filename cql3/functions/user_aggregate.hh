@@ -21,7 +21,7 @@ public:
     user_aggregate(function_name fname, bytes_opt initcond, ::shared_ptr<scalar_function> sfunc, ::shared_ptr<scalar_function> reducefunc, ::shared_ptr<scalar_function> finalfunc);
     bool has_finalfunc() const;
 
-    virtual sstring keypace_name() const override { return name().keyspace; }
+    virtual sstring keyspace_name() const override { return name().keyspace; }
     virtual sstring element_name() const override { return name().name; }
     virtual sstring element_type() const override { return "aggregate"; }
     virtual std::ostream& describe(std::ostream& os) const override;
