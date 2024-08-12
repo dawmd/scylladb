@@ -12,11 +12,11 @@
 
 #include <string_view>
 #include <stdexcept>
-#include <tuple>
 #include <vector>
 
 #include <seastar/core/future.hh>
 
+#include "auth/permission_details.hh"
 #include "auth/permission.hh"
 #include "auth/resource.hh"
 #include "service/raft/raft_group0_client.hh"
@@ -25,22 +25,6 @@
 namespace auth {
 
 class role_or_anonymous;
-
-struct permission_details {
-    sstring role_name;
-    ::auth::resource resource;
-    permission_set permissions;
-};
-
-inline bool operator==(const permission_details& pd1, const permission_details& pd2) {
-    return std::forward_as_tuple(pd1.role_name, pd1.resource, pd1.permissions.mask())
-            == std::forward_as_tuple(pd2.role_name, pd2.resource, pd2.permissions.mask());
-}
-
-inline bool operator<(const permission_details& pd1, const permission_details& pd2) {
-    return std::forward_as_tuple(pd1.role_name, pd1.resource, pd1.permissions)
-            < std::forward_as_tuple(pd2.role_name, pd2.resource, pd2.permissions);
-}
 
 class unsupported_authorization_operation : public std::invalid_argument {
 public:
