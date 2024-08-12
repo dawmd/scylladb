@@ -17,6 +17,7 @@
 #include "cql3/functions/function_name.hh"
 #include "cql3/statements/prepared_statement.hh"
 #include "exceptions/exceptions.hh"
+#include <ranges>
 #include <seastar/core/on_internal_error.hh>
 #include <seastar/coroutine/maybe_yield.hh>
 #include "service/client_state.hh"
@@ -93,6 +94,12 @@ struct description {
         : _keyspace(util::maybe_quote(element.keyspace_name()))
         , _type(element.element_type(db))
         , _name(util::maybe_quote(element.element_name()))
+        , _create_statement(std::move(create_statement)) {}
+
+    description(sstring keyspace, sstring type, sstring name, std::optional<sstring> create_statement)
+        : _keyspace(util::maybe_quote(std::move(keyspace)))
+        , _type(std::move(type))
+        , _name(util::maybe_quote(std::move(name)))
         , _create_statement(std::move(create_statement)) {}
 
     std::vector<bytes_opt> serialize() const {
