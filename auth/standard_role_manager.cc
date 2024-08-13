@@ -41,11 +41,15 @@ namespace meta {
 
 namespace role_members_table {
 
-constexpr std::string_view name{"role_members" , 12};
+constexpr std::string_view name = "role_members";
 
-}
+[[maybe_unused]] constexpr std::string_view role_col_name = "role";
+[[maybe_unused]] constexpr std::string_view member_col_name = "member";
+
+} // namespace role_members_table
 
 namespace role_attributes_table {
+
 constexpr std::string_view name{"role_attributes", 15};
 
 static std::string_view creation_query() noexcept {
@@ -61,8 +65,10 @@ static std::string_view creation_query() noexcept {
 
     return instance;
 }
-}
-}
+
+} // namespace role_attributes_table
+
+} // namespace meta
 
 static logging::logger log("standard_role_manager");
 
