@@ -19,29 +19,29 @@
 
 namespace auth {
 
-namespace meta {
-
-namespace roles_table {
+namespace meta::roles_table {
 
 std::string_view creation_query() {
     static const sstring instance = fmt::format(
             "CREATE TABLE {}.{} ("
             "  {} text PRIMARY KEY,"
-            "  can_login boolean,"
-            "  is_superuser boolean,"
-            "  member_of set<text>,"
-            "  salted_hash text"
+            "  {} boolean,"
+            "  {} boolean,"
+            "  {} set<text>,"
+            "  {} text"
             ")",
             meta::legacy::AUTH_KS,
             name,
-            role_col_name);
+            role_col_name,
+            can_login_col_name,
+            is_superuser_col_name,
+            member_of_col_name,
+            salted_hash_col_name);
 
     return instance;
 }
 
-} // namespace roles_table
-
-} // namespace meta
+} // namespace roles_table::meta
 
 future<bool> default_role_row_satisfies(
         cql3::query_processor& qp,

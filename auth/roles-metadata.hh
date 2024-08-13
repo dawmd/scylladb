@@ -23,19 +23,19 @@ class untyped_result_set_row;
 
 namespace auth {
 
-namespace meta {
-
-namespace roles_table {
+namespace meta::roles_table {
 
 std::string_view creation_query();
 
-constexpr std::string_view name{"roles", 5};
+constexpr std::string_view name = "roles";
 
-constexpr std::string_view role_col_name{"role", 4};
+constexpr std::string_view role_col_name = "role";
+constexpr std::string_view can_login_col_name = "can_login";
+constexpr std::string_view is_superuser_col_name = "is_superuser";
+constexpr std::string_view member_of_col_name = "member_of";
+constexpr std::string_view salted_hash_col_name = "salted_hash";
 
-}
-
-}
+} // namespace meta::roles_table
 
 ///
 /// Check that the default role satisfies a predicate, or `false` if the default role does not exist.

@@ -106,11 +106,11 @@ static future<std::optional<record>> find_record(cql3::query_processor& qp, std:
 
     const cql3::untyped_result_set_row& row = results->one();
     co_return std::make_optional(record{
-            row.get_as<sstring>(sstring(meta::roles_table::role_col_name)),
-            row.get_or<bool>("is_superuser", false),
-            row.get_or<bool>("can_login", false),
-            (row.has("member_of")
-                        ? row.get_set<sstring>("member_of")
+            row.get_as<sstring>(meta::roles_table::role_col_name),
+            row.get_or<bool>(meta::roles_table::is_superuser_col_name, false),
+            row.get_or<bool>(meta::roles_table::can_login_col_name, false),
+            (row.has(meta::roles_table::member_of_col_name)
+                        ? row.get_set<sstring>(meta::roles_table::member_of_col_name)
                         : role_set())});
 }
 
@@ -701,4 +701,5 @@ future<> standard_role_manager::remove_attribute(std::string_view role_name, std
                 {sstring(role_name), sstring(attribute_name)});
     }
 }
-}
+
+} // namespace auth
