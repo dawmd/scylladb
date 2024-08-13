@@ -21,6 +21,7 @@
 #include <seastar/core/thread.hh>
 
 #include "auth/common.hh"
+#include "auth/role_info.hh"
 #include "auth/role_manager.hh"
 #include "auth/roles-metadata.hh"
 #include "cql3/query_processor.hh"
@@ -53,8 +54,8 @@ namespace role_attributes_table {
 constexpr std::string_view name = "role_attributes";
 
 [[maybe_unused]] constexpr std::string_view role_col_name = "role";
-[[maybe_unused]] constexpr std::string_view resource_col_name = "resource";
-[[maybe_unused]] constexpr std::string_view permissions_col_name = "permissions";
+[[maybe_unused]] constexpr std::string_view name_col_name = "name";
+[[maybe_unused]] constexpr std::string_view value_col_name = "value";
 
 static std::string_view creation_query() noexcept {
     static const sstring instance = format(
@@ -710,6 +711,127 @@ future<> standard_role_manager::remove_attribute(std::string_view role_name, std
         co_await collect_mutations(_qp, mc, query,
                 {sstring(role_name), sstring(attribute_name)});
     }
+}
+
+future<std::vector<role_info>> standard_role_manager::get_role_info(const bool with_salted_hashes) const {
+    // This is super verbose, but it's difficult to avoid it.
+    // Unfortunately, fmt isn't able to produce `constexpr std::string_view`s.
+    const auto role_query = std::invoke([&] {
+        if (with_salted_hashes) {
+            return seastar::format("SELECT {}, {}, {} FROM {}.{}",
+                meta::roles_table::role_col_name,
+                meta::roles_table::can_login_col_name,
+                meta::roles_table::is_superuser_col_name,
+                meta::roles_table::salted_hash_col_name,
+                get_auth_ks_name(_qp),
+                meta::roles_table::name);
+        }
+
+        return seastar::format("SELECT {}, {} FROM {}.{}",
+                meta::roles_table::role_col_name,
+                meta::roles_table::can_login_col_name,
+                meta::roles_table::is_superuser_col_name,
+                get_auth_ks_name(_qp),
+                meta::roles_table::name);
+    });
+
+    const auto roles = co_await _qp.execute_internal(
+            role_query,
+            db::consistency_level::LOCAL_ONE, // TODO: Verify later if this is okay.
+            internal_distributed_query_state(),
+            cql3::query_processor::cache_internal::yes);
+
+    if (roles->empty()) [[unlikely]] {
+        on_internal_error(log, "No role has been found in the system");
+    }
+
+    std::vector<role_info> result{};
+    result.reserve(roles->size());
+
+    for (const auto& role_record : *roles) {
+        role_info ri{};
+
+        ri.role_name = role_record.get_as<sstring>(meta::roles_table::role_col_name);
+        ri.config.can_login = role_record.get_or<bool>(meta::roles_table::can_login_col_name, false);
+        ri.config.is_superuser = role_record.get_or<bool>(meta::roles_table::is_superuser_col_name, false);
+
+        if (with_salted_hashes && role_record.has(meta::roles_table::salted_hash_col_name)) {
+            ri.maybe_salted_hash = role_record.get_as<sstring>(meta::roles_table::salted_hash_col_name);
+        }
+
+        result.push_back(std::move(ri));
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return result;
+}
+
+future<std::vector<role_grants>> standard_role_manager::get_role_grants() const {
+    // We don't use the `role_members` table here because it keeps track of this data
+    // in a "dense" way, i.e. pairs (granted role, grantee), so we might end up browsing
+    // O(n^2) records where n is the number of roles. Using the `roles` table, we are
+    // guaranteed to go through exactly as many rows as the number of `role_grants`
+    // we want to return.
+    const auto grants_query = seastar::format("SELECT {}, {} FROM {}.{} WHERE {} IS NOT NULL",
+            meta::roles_table::role_col_name,
+            meta::roles_table::member_of_col_name,
+            get_auth_ks_name(_qp),
+            meta::roles_table::name,
+            meta::roles_table::member_of_col_name);
+
+    const auto grants = co_await _qp.execute_internal(
+            grants_query,
+            db::consistency_level::LOCAL_ONE, // TODO: Verify later if this is okay.
+            internal_distributed_query_state(),
+            cql3::query_processor::cache_internal::yes);
+
+    std::vector<role_grants> result{};
+    result.reserve(grants->size());
+
+    for (const auto& role_record : *grants) {
+        role_grants rg{};
+
+        rg.grantee_role = role_record.get_as<sstring>(meta::roles_table::role_col_name);
+        rg.granted_roles = role_record.get_list<sstring>(meta::roles_table::member_of_col_name);
+
+        result.push_back(std::move(rg));
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return result;
+}
+
+future<std::vector<attached_service_levels>> standard_role_manager::get_attached_service_levels() const {
+    // Note: As of now, it seems the only attributes we can use are service levels
+    //       (that's what I've found so far at least). However, we should be careful here.
+    //       Who knows what the future may possibly bring...
+    //
+    // Note: We keep in mind this fragment of the documentation:
+    //       "A role can only be assigned one service level. However, the same service level
+    //       can be attached to many roles. If a role inherits a service level from another role,
+    //       the highest level of service from all the roles wins."
+    const auto attribute_query = seastar::format("SELECT * FROM {}.{}",
+            get_auth_ks_name(_qp), meta::role_attributes_table::name);
+
+    const auto attributes = co_await _qp.execute_internal(
+            attribute_query,
+            db::consistency_level::LOCAL_ONE, // TODO: Verify later if this is okay.
+            internal_distributed_query_state(),
+            cql3::query_processor::cache_internal::yes);
+
+    std::vector<attached_service_levels> result{};
+    result.reserve(attributes->size());
+
+    for (const auto& attribute : *attributes) {
+        attached_service_levels sl{};
+        sl.role_name = attribute.get_as<sstring>(meta::role_attributes_table::role_col_name);
+        sl.service_level_name = attribute.get_as<sstring>(meta::role_attributes_table::name_col_name);
+
+        result.push_back(std::move(sl));
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return result;
 }
 
 } // namespace auth

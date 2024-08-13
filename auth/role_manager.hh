@@ -179,5 +179,15 @@ public:
     /// \note: This is a no-op if the role does not have the named attribute set.
     ///
     virtual future<> remove_attribute(std::string_view role_name, std::string_view attribute_name, ::service::group0_batch& mc) = 0;
+
+    /// \returns a vector storing `role_info` objects corresponding to the managed roles.
+    virtual future<std::vector<role_info>> get_role_info(bool with_salted_hashes) const = 0;
+
+    /// \returns a vector storing `role_grants` objects corresponding to the roles granted to the managed roles.
+    virtual future<std::vector<role_grants>> get_role_grants() const = 0;
+
+    /// \returns a vector storing `attached_service_levels` objects corresponding to service levels attached to the managed roles.
+    virtual future<std::vector<attached_service_levels>> get_attached_service_levels() const = 0;
 };
-}
+
+} // namespace auth

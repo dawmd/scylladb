@@ -68,6 +68,12 @@ public:
     virtual future<> set_attribute(std::string_view role_name, std::string_view attribute_name, std::string_view attribute_value, ::service::group0_batch& mc) override;
 
     virtual future<> remove_attribute(std::string_view role_name, std::string_view attribute_name, ::service::group0_batch& mc) override;
+
+    virtual future<std::vector<role_info>> get_role_info(bool with_salted_hashes) const override;
+
+    virtual future<std::vector<role_grants>> get_role_grants() const override;
+
+    virtual future<std::vector<attached_service_levels>> get_attached_service_levels() const override;
 };
 
 }
