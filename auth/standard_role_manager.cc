@@ -50,7 +50,11 @@ constexpr std::string_view name = "role_members";
 
 namespace role_attributes_table {
 
-constexpr std::string_view name{"role_attributes", 15};
+constexpr std::string_view name = "role_attributes";
+
+[[maybe_unused]] constexpr std::string_view role_col_name = "role";
+[[maybe_unused]] constexpr std::string_view resource_col_name = "resource";
+[[maybe_unused]] constexpr std::string_view permissions_col_name = "permissions";
 
 static std::string_view creation_query() noexcept {
     static const sstring instance = format(
