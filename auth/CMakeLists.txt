@@ -13,6 +13,7 @@ target_sources(scylla_auth
     password_authenticator.cc
     passwords.cc
     permission.cc
+    permission_details.cc
     permissions_cache.cc
     resource.cc
     role_info.cc
