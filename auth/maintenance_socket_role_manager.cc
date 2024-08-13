@@ -109,4 +109,12 @@ future<> maintenance_socket_role_manager::remove_attribute(std::string_view role
     return operation_not_supported_exception("REMOVE ATTRIBUTE");
 }
 
+future<std::vector<role_info>> maintenance_socket_role_manager::get_role_info(bool with_salted_hashes) const {
+    return operation_not_supported_exception<std::vector<role_info>>("DESC SCHEMA WITH INTERNALS");
 }
+
+future<std::vector<attached_service_level>> maintenance_socket_role_manager::get_attached_service_levels() const {
+    return operation_not_supported_exception<std::vector<attached_service_level>>("DESC SCHEMA WITH INTERNALS");
+}
+
+} // namespace auth

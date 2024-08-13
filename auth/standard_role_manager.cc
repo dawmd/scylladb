@@ -21,6 +21,7 @@
 #include <seastar/core/thread.hh>
 
 #include "auth/common.hh"
+#include "auth/role_info.hh"
 #include "auth/role_manager.hh"
 #include "auth/roles-metadata.hh"
 #include "cql3/query_processor.hh"
@@ -713,4 +714,57 @@ future<> standard_role_manager::remove_attribute(std::string_view role_name, std
                 {sstring(role_name), sstring(attribute_name)});
     }
 }
+
+future<std::vector<role_info>> standard_role_manager::get_role_info(const bool with_salted_hashes) const {
+    const std::string_view role_query = with_salted_hashes
+            ? "SELECT role, can_login, is_superuser, salted_hash FROM {}.{}"
+            : "SELECT role, can_login, is_superuser FROM {}.{}";
+
+    const auto roles = co_await _qp.execute_internal(
+            // Note: As of now, `seastar::format` only accepts `const char*` as its format string. That's why we use it here.
+            seastar::format(role_query.data(), get_auth_ks_name(_qp), meta::roles_table::name),
+            db::consistency_level::LOCAL_ONE,
+            internal_distributed_query_state(),
+            cql3::query_processor::cache_internal::yes);
+
+    std::vector<role_info> result{};
+    result.reserve(roles->size());
+
+    for (const auto& role_record : *roles) {
+        role_info ri{};
+
+        ri.role_name = role_record.get_as<sstring>("role");
+        ri.config.can_login = role_record.get_or<bool>("can_login", false);
+        ri.config.is_superuser = role_record.get_or<bool>("is_superuser", false);
+
+        if (with_salted_hashes && role_record.has("salted_hash")) {
+            ri.maybe_salted_hash = role_record.get_as<sstring>("salted_hash");
+        }
+
+        result.push_back(std::move(ri));
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return result;
 }
+
+future<std::vector<attached_service_level>> standard_role_manager::get_attached_service_levels() const {
+    // Note: As of now, the only attributes we can use are service levels.
+    //
+    // Note: We keep in mind this fragment of the documentation:
+    //       "A role can only be assigned one service level. However, the same service level
+    //       can be attached to many roles. If a role inherits a service level from another role,
+    //       the highest level of service from all the roles wins."
+    std::vector<attached_service_level> result{};
+
+    auto role_to_sl_map = co_await query_attribute_for_all("service_level");
+    result.reserve(role_to_sl_map.size());
+
+    for (auto& [role, sl] : role_to_sl_map) {
+        result.emplace_back(std::move(role), std::move(sl));
+    }
+
+    co_return result;
+}
+
+} // namespace auth
