@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "data_dictionary/keyspace_element.hh"
 #include "db/consistency_level_type.hh"
 #include "seastarx.hh"
 #include <seastar/core/sstring.hh>
@@ -74,7 +75,14 @@ struct service_level_options {
 
 std::ostream& operator<<(std::ostream& os, const service_level_options::workload_type&);
 
-using service_levels_info = std::map<sstring, service_level_options>;
+struct service_levels_info : public std::map<sstring, service_level_options> {
+    sstring keyspace_name() const;
+    sstring element_type(const replica::database&) const;
+    std::vector<std::pair<sstring, sstring>> describe_elements(const replica::database&, bool with_internals) const;
+};
+
+static_assert(data_dictionary::keyspace_element_generator<service_levels_info>,
+        "service_levels_info must satisfy the concept to be able to generate descriptions");
 
 ///
 /// A logical argument error for a service_level statement operation.

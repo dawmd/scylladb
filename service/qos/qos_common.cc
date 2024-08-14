@@ -11,7 +11,9 @@
 #include "cql3/query_processor.hh"
 #include "cql3/result_set.hh"
 #include "cql3/untyped_result_set.hh"
+#include "utils/small_vector.hh"
 #include <string_view>
+#include <variant>
 
 namespace qos {
 
@@ -146,7 +148,7 @@ static service_level_options::timeout_type get_duration(const cql3::untyped_resu
 future<qos::service_levels_info> get_service_levels(cql3::query_processor& qp, std::string_view ks_name, std::string_view cf_name, db::consistency_level cl) {
     sstring prepared_query = format("SELECT * FROM {}.{};", ks_name, cf_name);
     auto result_set = co_await qp.execute_internal(prepared_query, cl, qos_query_state(), cql3::query_processor::cache_internal::yes);
- 
+
     qos::service_levels_info service_levels;
     for (auto &&row : *result_set) {
         try {
@@ -183,8 +185,68 @@ future<service_levels_info> get_service_level(cql3::query_processor& qp, std::st
             logger.warn("Failed to fetch data for service level {}: {}", service_level_name, std::current_exception());
         }
     }
-    
+
     co_return service_levels;
 }
 
+sstring service_levels_info::keyspace_name() const {
+    return "<null>";
 }
+
+sstring service_levels_info::element_type(const replica::database&) const {
+    return "service_level";
+}
+
+static std::optional<sstring> describe_service_level(std::string_view sl_name, const service_level_options& sl_opts) {
+    using slo = service_level_options;
+
+    utils::small_vector<sstring, 2> opts{};
+
+    if (std::holds_alternative<slo::delete_marker>(sl_opts.timeout)) {
+        return std::nullopt;
+    }
+    if (auto maybe_timeout = std::get_if<lowres_clock::duration>(&sl_opts.timeout)) {
+        opts.push_back(seastar::format("timeout = {}", *maybe_timeout));
+    }
+
+    switch (sl_opts.workload) {
+        case slo::workload_type::delete_marker:
+            // TODO: Is it possible that this is set to `delete_marker`, but `sl_opts.timeout` is not?
+            return std::nullopt;
+        case slo::workload_type::batch:
+            opts.push_back("workload_type = 'batch'");
+            break;
+        case slo::workload_type::interactive:
+            opts.push_back("workload_type = 'interactive'");
+            break;
+        case slo::workload_type::unspecified:
+            break;
+    }
+
+    switch (opts.size()) {
+        case 0:
+            return seastar::format("CREATE SERVICE_LEVEL {};", sl_name);
+        case 1:
+            return fmt::format("CREATE SERVICE_LEVEL {} WITH {};", sl_name, opts[0]);
+        case 2:
+            return fmt::format("CREATE SERVICE LEVEL {} WITH {} AND {};", sl_name, opts[0], opts[1]);
+        default:
+            on_internal_error(logger, seastar::format("Unexpected number of elements: {}", opts.size()));
+    }
+}
+
+std::vector<std::pair<sstring, sstring>> service_levels_info::describe_elements(const replica::database&, bool with_internals) const {
+    std::vector<std::pair<sstring, sstring>> result{};
+    result.reserve(this->size());
+
+    for (const auto& [sl_name, sl_options] : *this) {
+        if (auto maybe_desc = describe_service_level(sl_name, sl_options)) {
+            result.emplace_back(sl_name, *maybe_desc);
+        }
+    }
+
+    return result;
+}
+
+
+} // namespace qos
