@@ -528,7 +528,35 @@ future<std::vector<description>> describe_all_keyspace_elements(const data_dicti
     co_return result;
 }
 
+future<std::vector<description>> describe_auth_and_service_levels(const auth::service& auth_service,
+        const qos::service_level_controller& sl_controller)
+{
+    const auto& role_manager = auth_service.underlying_role_manager();
+    const auto& authorizer = auth_service.underlying_authorizer();
+
+    auto role_descs = co_await generate_descriptions(co_await role_manager.get_role_info(true), true);
+    auto grant_descs = co_await generate_descriptions_with_generator(co_await role_manager.query_all_directly_granted(), true);
+    auto permission_descs = co_await generate_descriptions_with_multiple_generators(co_await authorizer.list_all(), true);
+    auto attached_sl_descs = co_await generate_descriptions(co_await role_manager.get_attached_service_levels(), true);
+
+    // We cannot allow for modifying the cache while we're accessing it, so we're copying it here.
+    // TODO: This can be dropped once we protect any changes while `DESC SCHEMA` is being performed.
+    const auto sl_cache = sl_controller.get_service_levels(false, false);
+    auto service_level_descs = co_await generate_descriptions_with_generator(sl_cache, true);
+
+    const auto total_size = role_descs.size() + grant_descs.size() + attached_sl_descs.size() + service_level_descs.size();
+    role_descs.reserve(total_size);
+
+    // The order is important here! We cannot grant a role if it's not created yet, etc.
+    role_descs.insert(role_descs.end(), std::make_move_iterator(grant_descs.begin()), std::make_move_iterator(grant_descs.end()));
+    role_descs.insert(role_descs.end(), std::make_move_iterator(permission_descs.begin()), std::make_move_iterator(permission_descs.end()));
+    role_descs.insert(role_descs.end(), std::make_move_iterator(service_level_descs.begin()), std::make_move_iterator(service_level_descs.end()));
+    role_descs.insert(role_descs.end(), std::make_move_iterator(attached_sl_descs.begin()), std::make_move_iterator(attached_sl_descs.end()));
+
+    co_return role_descs;
 }
+
+} // anonymous namespace
 
 // Generic column specification for element describe statement
 std::vector<lw_shared_ptr<column_specification>> get_listing_column_specifications() {
@@ -704,6 +732,18 @@ future<std::vector<std::vector<bytes_opt>>> schema_describe_statement::describe(
                 }
                 auto ks_result = co_await describe_all_keyspace_elements(db, ks, _with_internals);
                 schema_result.insert(schema_result.end(), ks_result.begin(), ks_result.end());
+            }
+
+            if (_with_internals) {
+                const auto auth_service_ptr = client_state.get_auth_service();
+                // TODO: Fail in a more delicate way here, i.e. return a proper exception.
+                SCYLLA_ASSERT(auth_service_ptr);
+
+                const auto& auth_service = *auth_service_ptr;
+                const auto& sl_controller = client_state.get_service_level_controller();
+                auto auth_and_sl_descs = co_await describe_auth_and_service_levels(auth_service, sl_controller);
+                schema_result.insert(schema_result.end(),
+                        std::make_move_iterator(auth_and_sl_descs.begin()), std::make_move_iterator(auth_and_sl_descs.end()));
             }
 
             co_return schema_result;
