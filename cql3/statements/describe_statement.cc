@@ -5,6 +5,7 @@
 /*
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <boost/range/adaptor/transformed.hpp>
@@ -27,11 +28,13 @@
 #include "cql3/statements/raw/describe_statement.hh"
 #include "cql3/statements/describe_statement.hh"
 #include <seastar/core/shared_ptr.hh>
+#include <type_traits>
 #include "transport/messages/result_message.hh"
 #include "transport/messages/result_message_base.hh"
 #include "service/query_state.hh"
 #include "data_dictionary/keyspace_metadata.hh"
 #include "data_dictionary/data_dictionary.hh"
+#include "data_dictionary/describable_entity.hh"
 #include "service/storage_proxy.hh"
 #include "cql3/ut_name.hh"
 #include "cql3/util.hh"
@@ -140,6 +143,71 @@ future<std::vector<description>> generate_descriptions(
         co_await coroutine::maybe_yield();
     }
     co_return descs;
+}
+
+template <std::ranges::range Range>
+    requires std::is_base_of_v<data_dictionary::describable_entity, std::ranges::range_value_t<Range>>
+future<std::vector<description>> generate_descriptions(const Range entities, bool with_internals,
+        bool sort_by_name = true)
+{
+    std::vector<description> result{};
+    result.reserve(std::ranges::size(entities));
+
+    for (const data_dictionary::describable_entity& entity : entities) {
+        // Note: Entities are assumed to not belong to any keyspace by default.
+        //       That's why we pass an empty string here.
+        result.emplace_back("", entity.entity_name(), entity.entity_type(), entity.describe(with_internals));
+        co_await coroutine::maybe_yield();
+    }
+
+    if (sort_by_name) {
+        std::ranges::sort(result, std::less<>{}, std::mem_fn(&description::_name));
+    }
+
+    co_return result;
+}
+
+future<std::vector<description>> generate_descriptions_with_generator(const data_dictionary::description_generator& generator,
+        const bool with_internals, const bool sort_by_name = true)
+{
+    std::vector<description> result{};
+
+    const sstring element_type = generator.entity_type();
+
+    auto described_elements = co_await generator.describe_entities(with_internals);
+    result.reserve(described_elements.size());
+
+    for (auto& [element_name, create_statement] : described_elements) {
+        // Note: Entities are assumed to not belong to any keyspace by default.
+        //       That's why we pass an empty string here.
+        result.emplace_back("", element_type, std::move(element_name), std::move(create_statement));
+        co_await coroutine::maybe_yield();
+    }
+
+    if (sort_by_name) {
+        std::ranges::sort(result, std::less<>{}, std::mem_fn(&description::_name));
+    }
+
+    co_return result;
+}
+
+template <std::ranges::range Range>
+    requires std::is_base_of_v<data_dictionary::description_generator, std::ranges::range_value_t<Range>>
+future<std::vector<description>> generate_descriptions_with_multiple_generators(const Range& generators,
+        const bool with_internals, const bool sort_by_name = true)
+{
+    std::vector<description> result{};
+
+    for (const auto& generator : generators) {
+        auto tmp_result = co_await generate_descriptions_with_generator(generator, with_internals, false);
+        result.insert(result.end(), std::make_move_iterator(tmp_result.begin()), std::make_move_iterator(tmp_result.end()));
+    }
+
+    if (sort_by_name) {
+        std::ranges::sort(result, std::less<>{}, std::mem_fn(&description::_name));
+    }
+
+    co_return result;
 }
 
 bool is_index(const data_dictionary::database& db, const schema_ptr& schema) {
