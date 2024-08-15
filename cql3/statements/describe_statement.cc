@@ -12,6 +12,10 @@
 #include <boost/range/algorithm/sort.hpp>
 #include <boost/range/iterator_range_core.hpp>
 
+#include "auth/common.hh"
+#include "auth/resource.hh"
+#include "auth/roles-metadata.hh"
+#include "auth/service.hh"
 #include "cdc/cdc_options.hh"
 #include "cdc/log.hh"
 #include "cql3/column_specification.hh"
@@ -21,6 +25,7 @@
 #include <ranges>
 #include <seastar/core/on_internal_error.hh>
 #include <seastar/coroutine/maybe_yield.hh>
+#include <seastar/coroutine/exception.hh>
 #include "service/client_state.hh"
 #include "types/types.hh"
 #include "cql3/query_processor.hh"
@@ -29,6 +34,7 @@
 #include "cql3/statements/describe_statement.hh"
 #include <seastar/core/shared_ptr.hh>
 #include <type_traits>
+#include <variant>
 #include "transport/messages/result_message.hh"
 #include "transport/messages/result_message_base.hh"
 #include "service/query_state.hh"
@@ -529,12 +535,12 @@ future<std::vector<description>> describe_all_keyspace_elements(const data_dicti
 }
 
 future<std::vector<description>> describe_auth_and_service_levels(const auth::service& auth_service,
-        const qos::service_level_controller& sl_controller)
+        const qos::service_level_controller& sl_controller, bool with_salted_hashes)
 {
     const auto& role_manager = auth_service.underlying_role_manager();
     const auto& authorizer = auth_service.underlying_authorizer();
 
-    auto role_descs = co_await generate_descriptions(co_await role_manager.get_role_info(true), true);
+    auto role_descs = co_await generate_descriptions(co_await role_manager.get_role_info(with_salted_hashes), true);
     auto grant_descs = co_await generate_descriptions_with_generator(co_await role_manager.query_all_directly_granted(), true);
     auto permission_descs = co_await generate_descriptions_with_multiple_generators(co_await authorizer.list_all(), true);
     auto attached_sl_descs = co_await generate_descriptions(co_await role_manager.get_attached_service_levels(), true);
@@ -704,9 +710,9 @@ future<std::vector<std::vector<bytes_opt>>> cluster_describe_statement::describe
 }
 
 // SCHEMA DESCRIBE STATEMENT
-schema_describe_statement::schema_describe_statement(bool full_schema, bool with_internals)
+schema_describe_statement::schema_describe_statement(bool full_schema, bool with_salted_hashes, bool with_internals)
     : describe_statement()
-    , _config(schema_desc{full_schema})
+    , _config(schema_desc{full_schema, with_salted_hashes})
     , _with_internals(with_internals) {}
 
 schema_describe_statement::schema_describe_statement(std::optional<sstring> keyspace, bool only, bool with_internals)
@@ -723,6 +729,19 @@ future<std::vector<std::vector<bytes_opt>>> schema_describe_statement::describe(
 
     auto result = co_await std::visit(overloaded_functor{
         [&] (const schema_desc& config) -> future<std::vector<description>> {
+            const auto auth_service_ptr = client_state.get_auth_service();
+            SCYLLA_ASSERT(auth_service_ptr);
+            const auto& auth_service = *auth_service_ptr;
+
+            if (config.with_salted_hashes) {
+                const auto maybe_user = client_state.user();
+
+                if (!maybe_user || !co_await auth::has_superuser(auth_service, *maybe_user)) {
+                    co_await coroutine::return_exception(
+                            exceptions::unauthorized_exception("DESCRIBE SCHEMA WITH INTERNALS AND PASSWORDS can only be issued by a superuser"));
+                }
+            }
+
             auto keyspaces = config.full_schema ? db.get_all_keyspaces() : db.get_user_keyspaces();
             std::vector<description> schema_result;
 
@@ -735,13 +754,8 @@ future<std::vector<std::vector<bytes_opt>>> schema_describe_statement::describe(
             }
 
             if (_with_internals) {
-                const auto auth_service_ptr = client_state.get_auth_service();
-                // TODO: Fail in a more delicate way here, i.e. return a proper exception.
-                SCYLLA_ASSERT(auth_service_ptr);
-
-                const auto& auth_service = *auth_service_ptr;
                 const auto& sl_controller = client_state.get_service_level_controller();
-                auto auth_and_sl_descs = co_await describe_auth_and_service_levels(auth_service, sl_controller);
+                auto auth_and_sl_descs = co_await describe_auth_and_service_levels(auth_service, sl_controller, config.with_salted_hashes);
                 schema_result.insert(schema_result.end(),
                         std::make_move_iterator(auth_and_sl_descs.begin()), std::make_move_iterator(auth_and_sl_descs.end()));
             }
@@ -907,8 +921,16 @@ using ds = describe_statement;
 
 describe_statement::describe_statement(ds::describe_config config) : _config(std::move(config)), _with_internals(false) {}
 
-void describe_statement::with_internals_details() {
+void describe_statement::with_internals_details(bool with_salted_hashes) {
     _with_internals = internals(true);
+
+    if (with_salted_hashes && !std::holds_alternative<describe_schema>(_config)) {
+        throw exceptions::invalid_request_exception{"Option WITH SALTED_HASHES is only allowed with DESC SCHEMA"};
+    }
+
+    if (std::holds_alternative<describe_schema>(_config)) {
+        std::get<describe_schema>(_config).with_salted_hashes = with_salted_hashes;
+    }
 }
 
 std::unique_ptr<prepared_statement> describe_statement::prepare(data_dictionary::database db, cql_stats &stats) {
@@ -918,7 +940,7 @@ std::unique_ptr<prepared_statement> describe_statement::prepare(data_dictionary:
             return ::make_shared<cluster_describe_statement>();
         },
         [&] (const describe_schema& cfg) -> ::shared_ptr<statements::describe_statement> {
-            return ::make_shared<schema_describe_statement>(cfg.full_schema, internals);
+            return ::make_shared<schema_describe_statement>(cfg.full_schema, cfg.with_salted_hashes, internals);
         },
         [&] (const describe_keyspace& cfg) -> ::shared_ptr<statements::describe_statement> {
             return ::make_shared<schema_describe_statement>(std::move(cfg.keyspace), cfg.only_keyspace, internals);
