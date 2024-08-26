@@ -43,26 +43,38 @@ namespace role_members_table {
 
 constexpr std::string_view name{"role_members" , 12};
 
-}
+} // namespace role_members_table
 
 namespace role_attributes_table {
-constexpr std::string_view name{"role_attributes", 15};
+
+constexpr std::string_view name = "role_attributes";
+
+constexpr std::string_view role_col_name = "role";
+constexpr std::string_view name_col_name = "name";
+constexpr std::string_view value_col_name = "value";
 
 static std::string_view creation_query() noexcept {
     static const sstring instance = format(
             "CREATE TABLE {}.{} ("
-            "  role text,"
-            "  name text,"
-            "  value text,"
-            "  PRIMARY KEY(role, name)"
+            "  {} text,"
+            "  {} text,"
+            "  {} text,"
+            "  PRIMARY KEY({}, {})"
             ")",
             meta::legacy::AUTH_KS,
-            name);
+            name,
+            role_col_name,
+            name_col_name,
+            value_col_name,
+            role_col_name,
+            name_col_name);
 
     return instance;
 }
-}
-}
+
+} // namespace role_attributes_table
+
+} // namespace meta
 
 static logging::logger log("standard_role_manager");
 
