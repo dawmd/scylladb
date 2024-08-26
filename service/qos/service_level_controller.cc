@@ -14,6 +14,7 @@
 #include <seastar/core/thread.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
 #include "cql3/untyped_result_set.hh"
+#include "cql3/util.hh"
 #include "db/config.hh"
 #include "db/consistency_level_type.hh"
 #include "db/system_keyspace.hh"
@@ -548,6 +549,25 @@ future<> service_level_controller::do_add_service_level(sstring name, service_le
     return make_ready_future();
 }
 
+service_level_map service_level_controller::get_service_levels(const bool with_static, const bool with_marked_for_deletion) const {
+    // We rely on the assumption that `_service_levels_db` (so the cache of the `service_level_controller`)
+    // is always up-to-date.
+
+    service_level_map result{};
+
+    for (const auto& [sl_name, sl] : _service_levels_db) {
+        if (!with_static && sl.is_static) {
+            continue;
+        }
+        if (!with_marked_for_deletion && sl.marked_for_deletion) {
+            continue;
+        }
+        result.service_levels.emplace(sl_name, sl.slo);
+    }
+
+    return result;
+}
+
 bool service_level_controller::is_v2() const {
     return _sl_data_accessor && _sl_data_accessor->is_v2();
 }
@@ -704,4 +724,56 @@ get_service_level_distributed_data_accessor_for_current_version(
     }
 }
 
+static sstring describe_service_level(std::string_view sl_name, const service_level_options& sl_opts) {
+    using slo = service_level_options;
+
+    utils::small_vector<sstring, 2> opts{};
+
+    SCYLLA_ASSERT(!std::holds_alternative<slo::delete_marker>(sl_opts.timeout));
+
+    if (auto maybe_timeout = std::get_if<lowres_clock::duration>(&sl_opts.timeout)) {
+        // Note: According to the documentation, `TIMEOUT` has to be expressed in miliseconds
+        //       or seconds. It is therefore safe to use milliseconds here.
+        const auto timeout = std::chrono::duration_cast<std::chrono::milliseconds>(*maybe_timeout);
+        opts.push_back(seastar::format("TIMEOUT = {}", timeout));
+    }
+
+    switch (sl_opts.workload) {
+        case slo::workload_type::batch:
+            opts.push_back("WORKLOAD_TYPE = 'batch'");
+            break;
+        case slo::workload_type::interactive:
+            opts.push_back("WORKLOAD_TYPE = 'interactive'");
+            break;
+        case slo::workload_type::unspecified:
+            break;
+        case slo::workload_type::delete_marker:
+            on_internal_error(sl_logger, "Precondition has been violated");
+    }
+
+    switch (opts.size()) {
+        case 0:
+            return seastar::format("CREATE SERVICE_LEVEL {};", sl_name);
+        case 1:
+            return fmt::format("CREATE SERVICE_LEVEL {} WITH {};", sl_name, opts[0]);
+        case 2:
+            return fmt::format("CREATE SERVICE_LEVEL {} WITH {} AND {};", sl_name, opts[0], opts[1]);
+        default:
+            on_internal_error(sl_logger, seastar::format("Unexpected number of elements: {}", opts.size()));
+    }
 }
+
+future<std::vector<std::pair<sstring, sstring>>> service_level_map::describe_entities(bool with_internals) const {
+    std::vector<std::pair<sstring, sstring>> result{};
+    result.reserve(service_levels.size());
+
+    for (const auto& [sl_name, sl_opts] : service_levels) {
+        auto sl_name_formatted = cql3::util::maybe_quote(sl_name);
+        result.emplace_back(sl_name, describe_service_level(sl_name_formatted, sl_opts));
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return result;
+}
+
+} // namespace qos

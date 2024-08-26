@@ -9,6 +9,7 @@
 #pragma once
 
 #include <seastar/core/timer.hh>
+#include "data_dictionary/describable_entity.hh"
 #include "seastar/util/bool_class.hh"
 #include <seastar/core/future.hh>
 #include <seastar/core/sstring.hh>
@@ -47,6 +48,18 @@ struct service_level {
 };
 
 using update_both_cache_levels = bool_class<class update_both_cache_levels_tag>;
+
+struct service_level_map : public data_dictionary::description_generator {
+    std::map<sstring, service_level_options> service_levels;
+
+    virtual ~service_level_map() = default;
+
+    virtual sstring entity_type() const override {
+        return "service_level";
+    }
+
+    future<std::vector<std::pair<sstring, sstring>>> describe_entities(bool with_internals) const override;
+};
 
 /**
  *  The service_level_controller class is an implementation of the service level
@@ -229,6 +242,8 @@ public:
     future<> drop_distributed_service_level(sstring name, bool if_exists, service::group0_batch& mc);
     future<service_levels_info> get_distributed_service_levels();
     future<service_levels_info> get_distributed_service_level(sstring service_level_name);
+
+    service_level_map get_service_levels(bool with_static, bool with_marked_for_deletion) const;
 
     /**
      * Returns the service level options **in effect** for a user having the given
