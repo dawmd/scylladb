@@ -69,7 +69,7 @@ private:
         describe_element,
         describe_generic
     >;
-   
+
 private:
     describe_config _config;
     internals _with_internals = internals(false);

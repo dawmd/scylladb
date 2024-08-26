@@ -17,7 +17,7 @@
  *
  *  Classes below are responsible for executing describe statement.
  *  - cluster_describe_statement - DESC CLUSTER
- *  - schema_describe_statement - DESC [FULL] SCHEMA / DESC [ONLY] KEYSPACE 
+ *  - schema_describe_statement - DESC [FULL] SCHEMA / DESC [ONLY] KEYSPACE
  *  - listing_describe_statement - DESC KEYSPACES/TYPES/FUNCTIONS/AGGREGATES/TABLES
  *  - element_describe_statement - DESC TYPE/FUNCTION/AGGREGATE/MATERIALIZED VIEW/INDEX/TABLE
  *  - generic_describe_statements - DESC

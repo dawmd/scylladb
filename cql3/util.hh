@@ -82,7 +82,7 @@ sstring maybe_quote(const sstring& s);
 /// quote the identifier name in CQL, so that is what this function does does.
 sstring quote(const sstring& s);
 
-/// single_quote() takes a string and transforms it to a string 
+/// single_quote() takes a string and transforms it to a string
 /// which can be safely used in CQL commands.
 /// Single quoting involves wrapping the name in single-quotes ('). A sigle-quote
 /// character itself is quoted by doubling it.
