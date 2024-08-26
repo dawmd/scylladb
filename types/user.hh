@@ -59,7 +59,7 @@ public:
      */
     std::set<user_type> get_all_referenced_user_types() const;
 
-    virtual sstring keypace_name() const override { return _keyspace; }
+    virtual sstring keyspace_name() const override { return _keyspace; }
     virtual sstring element_name() const override { return get_name_as_string(); }
     virtual sstring element_type() const override { return "type"; }
     virtual std::ostream& describe(std::ostream& os) const override;

@@ -898,7 +898,7 @@ public:
     // Search for an existing index with same kind and options.
     std::optional<index_metadata> find_index_noname(const index_metadata& target) const;
     friend fmt::formatter<schema>;
-    virtual sstring keypace_name() const override { return ks_name(); }
+    virtual sstring keyspace_name() const override { return ks_name(); }
     virtual sstring element_name() const override { return cf_name(); }
     virtual sstring element_type(replica::database& db) const override;
     /*!
