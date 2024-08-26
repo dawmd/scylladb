@@ -453,6 +453,11 @@ public:
     bool is_native() const;
     cql3::cql3_type as_cql3_type() const;
     const sstring& cql3_type_name() const;
+    // Returns the actual name of the type, i.e. the one that the user provided
+    // when creating the type, not being wrapped in `frozen<>`.
+    // The type is wrapped within double quotation marks if it can't be used
+    // as a type identifier used in CQL otherwise.
+    sstring cql3_type_name_without_frozen() const;
     virtual shared_ptr<const abstract_type> freeze() const { return shared_from_this(); }
 
     const abstract_type& without_reversed() const {
