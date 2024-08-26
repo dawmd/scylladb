@@ -66,7 +66,7 @@ password_authenticator::password_authenticator(cql3::query_processor& qp, ::serv
     : _qp(qp)
     , _group0_client(g0)
     , _migration_manager(mm)
-    , _stopped(make_ready_future<>()) 
+    , _stopped(make_ready_future<>())
     , _superuser(default_superuser(qp.db().get_config()))
 {}
 

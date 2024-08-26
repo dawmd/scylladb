@@ -158,7 +158,7 @@ public:
     ///   (role1, role3),
     ///   (role2, role3)
     /// }
-    ///  
+    ///
     virtual future<role_to_directly_granted_map> query_all_directly_granted() = 0;
 
     virtual future<role_set> query_all() = 0;
