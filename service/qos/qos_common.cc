@@ -146,7 +146,7 @@ static service_level_options::timeout_type get_duration(const cql3::untyped_resu
 future<qos::service_levels_info> get_service_levels(cql3::query_processor& qp, std::string_view ks_name, std::string_view cf_name, db::consistency_level cl) {
     sstring prepared_query = format("SELECT * FROM {}.{};", ks_name, cf_name);
     auto result_set = co_await qp.execute_internal(prepared_query, cl, qos_query_state(), cql3::query_processor::cache_internal::yes);
- 
+
     qos::service_levels_info service_levels;
     for (auto &&row : *result_set) {
         try {
@@ -183,7 +183,7 @@ future<service_levels_info> get_service_level(cql3::query_processor& qp, std::st
             logger.warn("Failed to fetch data for service level {}: {}", service_level_name, std::current_exception());
         }
     }
-    
+
     co_return service_levels;
 }
 

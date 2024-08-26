@@ -127,7 +127,7 @@ future<> service_level_controller::stop() {
 
     // If abort source didn't fire, do it now
     _early_abort_subscription->on_abort(std::nullopt);
-    
+
     _global_controller_db->notifications_serializer.broken();
     try {
         co_await std::exchange(_global_controller_db->distributed_data_update, make_ready_future<>());
@@ -230,7 +230,7 @@ future<> service_level_controller::update_service_levels_cache() {
 
 future<> service_level_controller::update_effective_service_levels_cache() {
     SCYLLA_ASSERT(this_shard_id() == global_controller);
-    
+
     if (!_auth_service.local_is_initialized()) {
         // Because cache update is triggered in `topology_state_load()`, auth service
         // might be not initialized yet.
@@ -247,7 +247,7 @@ future<> service_level_controller::update_effective_service_levels_cache() {
     std::map<sstring, service_level_options> effective_sl_map;
 
     auto sorted = co_await utils::topological_sort(all_roles, hierarchy);
-    // Roles are sorted from the top of the hierarchy to the bottom. 
+    // Roles are sorted from the top of the hierarchy to the bottom.
     /// `GRANT role1 TO role2` means role2 is higher in the hierarchy than role1, so role2 will be before
     // role1 in `sorted` vector.
     // That's why if we iterate over the vector in reversed order, we will visit the roles from the bottom
@@ -307,7 +307,7 @@ void service_level_controller::stop_legacy_update_from_distributed_data() {
 future<std::optional<service_level_options>> service_level_controller::find_effective_service_level(const sstring& role_name) {
     if (_sl_data_accessor->is_v2()) {
         auto effective_sl_it = _effective_service_levels_db.find(role_name);
-        co_return effective_sl_it != _effective_service_levels_db.end() 
+        co_return effective_sl_it != _effective_service_levels_db.end()
             ? std::optional<service_level_options>(effective_sl_it->second)
             : std::nullopt;
     } else {
@@ -419,7 +419,7 @@ void service_level_controller::maybe_start_legacy_update_from_distributed_data(s
                     _global_controller_db->dist_data_update_aborter).then_wrapped([this, &storage_service] (future<>&& f) {
                 try {
                     f.get();
-                    
+
                     if (storage_service.get_topology_upgrade_state() == service::topology::upgrade_state_type::done) {
                         stop_legacy_update_from_distributed_data();
                         sl_logger.info("update_from_distributed_data: Update loop has been shutdown. Now service levels cache will be updated immediately while applying raft group0 log.");
@@ -480,7 +480,7 @@ future<> service_level_controller::drop_distributed_service_level(sstring name, 
             throw nonexistant_service_level_exception(name);
         }
     }
-    
+
     auto& role_manager = _auth_service.local().underlying_role_manager();
     auto attributes = co_await role_manager.query_attribute_for_all("service_level");
 
@@ -575,7 +575,7 @@ future<> service_level_controller::migrate_to_v2(size_t nodes_count, db::system_
     const timeout_config tc{t, t, t, t, t, t, t};
     service::client_state cs(::service::client_state::internal_tag{}, tc);
     service::query_state qs(cs, empty_service_permit());
-    
+
     // `system_distributed` keyspace has RF=3 and we need to scan it with CL=ALL
     // To support migration on cluster with 1 or 2 nodes, set appropriate CL
     auto cl = db::consistency_level::ALL;
@@ -584,7 +584,7 @@ future<> service_level_controller::migrate_to_v2(size_t nodes_count, db::system_
     } else if (nodes_count == 2) {
         cl = db::consistency_level::TWO;
     }
-    
+
     auto rows = co_await qp.execute_internal(
         format("SELECT * FROM {}.{}", db::system_distributed_keyspace::NAME, db::system_distributed_keyspace::SERVICE_LEVELS),
         cl,
@@ -594,7 +594,7 @@ future<> service_level_controller::migrate_to_v2(size_t nodes_count, db::system_
     if (rows->empty()) {
         co_return;
     }
-    
+
 
     auto col_names = boost::copy_range<std::vector<sstring>>(schema->all_columns() | boost::adaptors::transformed([] (const auto& col) {return col.name_as_cql_string(); }));
     auto col_names_str = boost::algorithm::join(col_names, ", ");
@@ -602,7 +602,7 @@ future<> service_level_controller::migrate_to_v2(size_t nodes_count, db::system_
     for (size_t i = 1; i < col_names.size(); ++i) {
         val_binders_str += ", ?";
     }
-    
+
     auto guard = co_await group0_client.start_operation(as);
 
     std::vector<mutation> migration_muts;
@@ -621,7 +621,7 @@ future<> service_level_controller::migrate_to_v2(size_t nodes_count, db::system_
                 db::system_keyspace::NAME,
                 db::system_keyspace::SERVICE_LEVELS_V2,
                 col_names_str,
-                val_binders_str), 
+                val_binders_str),
             qos_query_state(),
             guard.write_timestamp(),
             std::move(values));
@@ -687,7 +687,7 @@ future<> service_level_controller::unregister_subscriber(qos_configuration_chang
     return _subscribers.remove(subscriber);
 }
 
-future<shared_ptr<service_level_controller::service_level_distributed_data_accessor>> 
+future<shared_ptr<service_level_controller::service_level_distributed_data_accessor>>
 get_service_level_distributed_data_accessor_for_current_version(
     db::system_keyspace& sys_ks,
     db::system_distributed_keyspace& sys_dist_ks,

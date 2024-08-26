@@ -60,7 +60,7 @@ using update_both_cache_levels = bool_class<class update_both_cache_levels_tag>;
  *  Definitions:
  *  service level - User creates service level with some parameters (timeout/workload type).
  *                  Then it can be attached to some role, but it's not guaranteed the role
- *                  will effectively get exactly the same parameter values 
+ *                  will effectively get exactly the same parameter values
  *                  as its assigned service level.
  *
  *  effective service level - Represents exact values of role's parameters. It's created by
@@ -122,7 +122,7 @@ private:
 
     // service level name -> service_level object
     std::map<sstring, service_level> _service_levels_db;
-    // role name -> effective service_level_options 
+    // role name -> effective service_level_options
     std::map<sstring, service_level_options> _effective_service_levels_db;
     service_level _default_service_level;
     service_level_distributed_data_accessor_ptr _sl_data_accessor;
@@ -179,11 +179,11 @@ public:
     void abort_group0_operations();
 
     /**
-     * Start legacy update loop if RAFT_SERVICE_LEVELS_CHANGE feature is not enabled yet 
+     * Start legacy update loop if RAFT_SERVICE_LEVELS_CHANGE feature is not enabled yet
      * or the cluster is in recovery mode
      * or the cluster hasn't been migrated to raft topology.
      *
-     * The update loop check the distributed data 
+     * The update loop check the distributed data
      * for changes in a constant interval and updates
      * the service_levels configuration in accordance (adds, removes, or updates
      * service levels as necessary).
@@ -333,7 +333,7 @@ public:
     virtual void on_down(const gms::inet_address& endpoint) override;
 };
 
-future<shared_ptr<service_level_controller::service_level_distributed_data_accessor>> 
+future<shared_ptr<service_level_controller::service_level_distributed_data_accessor>>
 get_service_level_distributed_data_accessor_for_current_version(
     db::system_keyspace& sys_ks,
     db::system_distributed_keyspace& sys_dist_ks,

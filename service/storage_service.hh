@@ -891,7 +891,7 @@ public:
     // Service levels cache consists of two levels: service levels cache and effective service levels cache
     // The second one is dependent on the first one.
     // Must be called on shard 0.
-    //    
+    //
     // update_both_cache_levels::yes - updates both levels of the cache
     // update_both_cache_levels::no  - update only effective service levels cache
     future<> update_service_levels_cache(qos::update_both_cache_levels update_only_effective_cache = qos::update_both_cache_levels::yes);

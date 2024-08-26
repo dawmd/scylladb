@@ -1315,7 +1315,7 @@ future<> storage_service::raft_initialize_discovery_leader(const join_node_reque
 
         auto sl_status_mutation = co_await _sys_ks.local().make_service_levels_version_mutation(2, guard);
         insert_join_request_mutations.emplace_back(std::move(sl_status_mutation));
-        
+
         insert_join_request_mutations.emplace_back(
                 co_await _sys_ks.local().make_auth_version_mutation(guard.write_timestamp(), db::system_keyspace::auth_version_t::v2));
 
