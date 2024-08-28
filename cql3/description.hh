@@ -38,6 +38,7 @@ namespace cql3 {
 /// -------------------
 ///
 /// See scylladb/scylladb#11106 and scylladb/scylladb#18750 for more context.
+/// See also `docs/dev/describe_schema.md`.
 struct description {
     /// The name of the keyspace the entity belongs to.
     /// Empty optional if and only if the entity does not belong to any keyspace.
