@@ -30,6 +30,8 @@ Procedure
 
 ``cqlsh -e "SOURCE 'centos/db_schema.cql'"``
 
+| **Only** a superuser should perform it.
+
 Repeat the following steps for each node in the cluster:
 --------------------------------------------------------
 
@@ -41,7 +43,7 @@ Repeat the following steps for each node in the cluster:
       - Drop the MV and SI using `DROP MATERIALIZED VIEW` or `DROP INDEX`
       - Restore the base table only (see below)
       - Recreate the  MV or SI, using the original description from the CQL backup, using `CREATE MATERIALIZED VIEW` or `CREATE INDEX`
-   
+
 
 #. Run the :doc:`nodetool drain </operating-scylla/nodetool-commands/drain/>` command to ensure the data is flushed to the SSTables
 
@@ -86,7 +88,7 @@ Repeat the following steps for each node in the cluster:
       drwx------ 2 scylla   scylla      6 Mar  5 08:40 upload
 
 
-#. Select the snapshot you want to restore (usually the most recent one) 
+#. Select the snapshot you want to restore (usually the most recent one)
 
    .. code-block:: shell
 

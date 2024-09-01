@@ -400,7 +400,22 @@ The ``DESCRIBE CLUSTER`` command prints the cluster name and partitioner::
     Partitioner: Murmur3Partitioner
 
 The ``DESCRIBE SCHEMA`` command prints the DDL statements needed to recreate the entire schema.  This is especially
-useful for dumping the schema in order to clone a cluster or restore from a backup.
+useful for dumping the schema, authentication/authorization, and service levels in order to clone a cluster or restore from a backup.
+
+``DESCRIBE SCHEMA`` has available three tiers:
+
+* ``DESCRIBE [FULL] SCHEMA``: describe elements of the non-system schema: keyspaces, tables, views, UDTs, etc.
+  When `FULL` is used, it also includes the elements of the system schema, e.g. system tables.
+
+* ``DESCRIBE [FULL] SCHEMA WITH INTERNALS``: in addition to the output of the previous tier, the statement also
+  describes auth and service levels. The statements corresponding to restoring roles do *not* contain any information
+  about their passwords.
+
+* ``DESCRIBE [FULL] SCHEMA WITH INTERNALS AND PASSWORDS``: aside from the information retrieved as part of the previous
+  tier, the statements corresponding to restoring roles *do* contain information about their passwords, i.e. their salted hashes.
+
+Executing ``DESCRIBE [FULL] SCHEMA WITH INTERNALS AND PASSWORDS`` requires that the role performing the query be a superuser.
+It's worth noting that also executing the statements returned by this tier may require the superuser privilege.
 
 .. _cqlsh-copy-to:
 
