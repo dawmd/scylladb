@@ -400,7 +400,9 @@ The ``DESCRIBE CLUSTER`` command prints the cluster name and partitioner::
     Partitioner: Murmur3Partitioner
 
 The ``DESCRIBE SCHEMA`` command prints the DDL statements needed to recreate the entire schema.  This is especially
-useful for dumping the schema in order to clone a cluster or restore from a backup.
+useful for dumping the schema, authentication/authorization, and service levels in order to clone a cluster or restore from a backup.
+
+See :doc:`a dedicated article </cql/describe-schema>` to learn more.
 
 .. _cqlsh-copy-to:
 
