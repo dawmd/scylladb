@@ -69,35 +69,35 @@ future<> maintenance_socket_role_manager::revoke(std::string_view revokee_name, 
     return operation_not_supported_exception("REVOKE");
 }
 
-future<role_set> maintenance_socket_role_manager::query_granted(std::string_view grantee_name, recursive_role_query) {
+future<role_set> maintenance_socket_role_manager::query_granted(std::string_view grantee_name, recursive_role_query) const {
     return operation_not_supported_exception<role_set>("QUERY GRANTED");
 }
 
-future<role_to_directly_granted_map> maintenance_socket_role_manager::query_all_directly_granted() {
+future<role_to_directly_granted_map> maintenance_socket_role_manager::query_all_directly_granted() const {
     return operation_not_supported_exception<role_to_directly_granted_map>("QUERY ALL DIRECTLY GRANTED");
 }
 
-future<role_set> maintenance_socket_role_manager::query_all() {
+future<role_set> maintenance_socket_role_manager::query_all() const {
     return operation_not_supported_exception<role_set>("QUERY ALL");
 }
 
-future<bool> maintenance_socket_role_manager::exists(std::string_view role_name) {
+future<bool> maintenance_socket_role_manager::exists(std::string_view role_name) const {
     return operation_not_supported_exception<bool>("EXISTS");
 }
 
-future<bool> maintenance_socket_role_manager::is_superuser(std::string_view role_name) {
+future<bool> maintenance_socket_role_manager::is_superuser(std::string_view role_name) const {
     return make_ready_future<bool>(true);
 }
 
-future<bool> maintenance_socket_role_manager::can_login(std::string_view role_name) {
+future<bool> maintenance_socket_role_manager::can_login(std::string_view role_name) const {
     return make_ready_future<bool>(true);
 }
 
-future<std::optional<sstring>> maintenance_socket_role_manager::get_attribute(std::string_view role_name, std::string_view attribute_name) {
+future<std::optional<sstring>> maintenance_socket_role_manager::get_attribute(std::string_view role_name, std::string_view attribute_name) const {
     return operation_not_supported_exception<std::optional<sstring>>("GET ATTRIBUTE");
 }
 
-future<role_manager::attribute_vals> maintenance_socket_role_manager::query_attribute_for_all(std::string_view attribute_name) {
+future<role_manager::attribute_vals> maintenance_socket_role_manager::query_attribute_for_all(std::string_view attribute_name) const {
     return operation_not_supported_exception<role_manager::attribute_vals>("QUERY ATTRIBUTE");
 }
 

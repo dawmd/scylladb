@@ -588,7 +588,7 @@ static future<> collect_roles(
     });
 }
 
-future<role_set> standard_role_manager::query_granted(std::string_view grantee_name, recursive_role_query m) {
+future<role_set> standard_role_manager::query_granted(std::string_view grantee_name, recursive_role_query m) const {
     const bool recurse = (m == recursive_role_query::yes);
 
     return do_with(
@@ -598,7 +598,7 @@ future<role_set> standard_role_manager::query_granted(std::string_view grantee_n
     });
 }
 
-future<role_to_directly_granted_map> standard_role_manager::query_all_directly_granted() {
+future<role_to_directly_granted_map> standard_role_manager::query_all_directly_granted() const {
     const sstring query = format("SELECT * FROM {}.{}",
             get_auth_ks_name(_qp),
             meta::role_members_table::name);
@@ -612,7 +612,7 @@ future<role_to_directly_granted_map> standard_role_manager::query_all_directly_g
     co_return roles_map;
 }
 
-future<role_set> standard_role_manager::query_all() {
+future<role_set> standard_role_manager::query_all() const {
     const sstring query = format("SELECT {} FROM {}.{}",
             meta::roles_table::role_col_name,
             get_auth_ks_name(_qp),
@@ -638,25 +638,25 @@ future<role_set> standard_role_manager::query_all() {
     co_return roles;
 }
 
-future<bool> standard_role_manager::exists(std::string_view role_name) {
+future<bool> standard_role_manager::exists(std::string_view role_name) const {
     return find_record(_qp, role_name).then([](std::optional<record> mr) {
         return static_cast<bool>(mr);
     });
 }
 
-future<bool> standard_role_manager::is_superuser(std::string_view role_name) {
+future<bool> standard_role_manager::is_superuser(std::string_view role_name) const {
     return require_record(_qp, role_name).then([](record r) {
         return r.is_superuser;
     });
 }
 
-future<bool> standard_role_manager::can_login(std::string_view role_name) {
+future<bool> standard_role_manager::can_login(std::string_view role_name) const {
     return require_record(_qp, role_name).then([](record r) {
         return r.can_login;
     });
 }
 
-future<std::optional<sstring>> standard_role_manager::get_attribute(std::string_view role_name, std::string_view attribute_name) {
+future<std::optional<sstring>> standard_role_manager::get_attribute(std::string_view role_name, std::string_view attribute_name) const {
     const sstring query = format("SELECT name, value FROM {}.{} WHERE role = ? AND name = ?",
             get_auth_ks_name(_qp),
             meta::role_attributes_table::name);
@@ -668,7 +668,7 @@ future<std::optional<sstring>> standard_role_manager::get_attribute(std::string_
     co_return std::optional<sstring>{};
 }
 
-future<role_manager::attribute_vals> standard_role_manager::query_attribute_for_all (std::string_view attribute_name) {
+future<role_manager::attribute_vals> standard_role_manager::query_attribute_for_all (std::string_view attribute_name) const {
     return query_all().then([this, attribute_name] (role_set roles) {
         return do_with(attribute_vals{}, [this, attribute_name, roles = std::move(roles)] (attribute_vals &role_to_att_val) {
             return parallel_for_each(roles.begin(), roles.end(), [this, &role_to_att_val, attribute_name] (sstring role) {
