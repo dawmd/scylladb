@@ -549,7 +549,7 @@ future<> service_level_controller::do_add_service_level(sstring name, service_le
     return make_ready_future();
 }
 
-service_level_map service_level_controller::get_service_levels(const bool with_static, const bool with_marked_for_deletion) const {
+service_level_map service_level_controller::get_service_levels(const bool with_static) const {
     // We rely on the assumption that `_service_levels_db` (so the cache of the `service_level_controller`)
     // is always up-to-date.
 
@@ -557,9 +557,6 @@ service_level_map service_level_controller::get_service_levels(const bool with_s
 
     for (const auto& [sl_name, sl] : _service_levels_db) {
         if (!with_static && sl.is_static) {
-            continue;
-        }
-        if (!with_marked_for_deletion && sl.marked_for_deletion) {
             continue;
         }
         result.service_levels.emplace(sl_name, sl.slo);

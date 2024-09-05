@@ -8,14 +8,11 @@
 
 #pragma once
 
-// Seastar features.
 #include <seastar/core/future.hh>
 #include <seastar/core/sstring.hh>
 
-// Scylla includes.
 #include "data_dictionary/describable_entity.hh"
 
-// STD.
 #include <optional>
 #include <unordered_set>
 #include <map>
@@ -77,7 +74,7 @@ struct role_info : public data_dictionary::describable_entity {
 
 /// A key represents the role that has been granted another role.
 /// A value represnts the role that has been granted TO another role.
-struct role_to_directly_granted_map : public std::multimap<sstring, sstring>, data_dictionary::description_generator {
+struct role_to_directly_granted_map : public std::multimap<sstring, sstring>, public data_dictionary::description_generator {
     role_to_directly_granted_map() = default;
     role_to_directly_granted_map(const role_to_directly_granted_map&) = default;
     role_to_directly_granted_map& operator=(const role_to_directly_granted_map&) = default;

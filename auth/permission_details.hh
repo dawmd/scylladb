@@ -10,15 +10,12 @@
 
 #pragma once
 
-// Seastar features.
 #include <seastar/core/sstring.hh>
 
-// Scylla includes.
 #include "auth/permission.hh"
 #include "auth/resource.hh"
 #include "data_dictionary/describable_entity.hh"
 
-// STD.
 #include <tuple>
 #include <utility>
 #include <vector>

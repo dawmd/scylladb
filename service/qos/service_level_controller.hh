@@ -243,7 +243,7 @@ public:
     future<service_levels_info> get_distributed_service_levels();
     future<service_levels_info> get_distributed_service_level(sstring service_level_name);
 
-    service_level_map get_service_levels(bool with_static, bool with_marked_for_deletion) const;
+    service_level_map get_service_levels(bool with_static) const;
 
     /**
      * Returns the service level options **in effect** for a user having the given

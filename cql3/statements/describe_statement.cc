@@ -552,7 +552,7 @@ future<std::vector<description>> describe_auth_and_service_levels(const auth::se
 
     // We cannot allow for modifying the cache while we're accessing it, so we're copying it here.
     // TODO: This can be dropped once we protect any changes while `DESC SCHEMA` is being performed.
-    const auto sl_cache = sl_controller.get_service_levels(false, false);
+    const auto sl_cache = sl_controller.get_service_levels(false);
     auto service_level_descs = co_await generate_descriptions_with_generator(sl_cache, true);
 
     const auto total_size = role_descs.size() + grant_descs.size() + attached_sl_descs.size() + service_level_descs.size();
