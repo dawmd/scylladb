@@ -111,7 +111,7 @@ struct attached_service_level : public data_dictionary::describable_entity {
     virtual ~attached_service_level() = default;
 
     virtual sstring entity_name() const override {
-        return role_name;
+        return service_level_name;
     }
 
     virtual sstring entity_type() const override {

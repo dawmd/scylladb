@@ -768,6 +768,7 @@ future<std::vector<std::pair<sstring, sstring>>> service_level_map::describe_ent
     result.reserve(service_levels.size());
 
     for (const auto& [sl_name, sl_opts] : service_levels) {
+        sl_logger.warn("Processing SL: {}", sl_name);
         auto sl_name_formatted = cql3::util::maybe_quote(sl_name);
         result.emplace_back(sl_name, describe_service_level(sl_name_formatted, sl_opts));
         co_await coroutine::maybe_yield();

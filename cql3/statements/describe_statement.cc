@@ -153,7 +153,7 @@ future<std::vector<description>> generate_descriptions(
 
 template <std::ranges::range Range>
     requires std::is_base_of_v<data_dictionary::describable_entity, std::ranges::range_value_t<Range>>
-future<std::vector<description>> generate_descriptions(const Range entities, bool with_internals,
+future<std::vector<description>> generate_descriptions(const Range& entities, bool with_internals,
         bool sort_by_name = true)
 {
     std::vector<description> result{};
@@ -162,7 +162,7 @@ future<std::vector<description>> generate_descriptions(const Range entities, boo
     for (const data_dictionary::describable_entity& entity : entities) {
         // Note: Entities are assumed to not belong to any keyspace by default.
         //       That's why we pass an empty string here.
-        result.emplace_back("", entity.entity_name(), entity.entity_type(), entity.describe(with_internals));
+        result.emplace_back("", entity.entity_type(), entity.entity_name(), entity.describe(with_internals));
         co_await coroutine::maybe_yield();
     }
 
@@ -179,8 +179,11 @@ future<std::vector<description>> generate_descriptions_with_generator(const data
     std::vector<description> result{};
 
     const sstring element_type = generator.entity_type();
+    dlogger.warn("Element type: {}", element_type);
 
+    dlogger.warn("Described elements START");
     auto described_elements = co_await generator.describe_entities(with_internals);
+    dlogger.warn("Described elements FINSIHES: size = {}", described_elements.size());
     result.reserve(described_elements.size());
 
     for (auto& [element_name, create_statement] : described_elements) {
@@ -540,7 +543,9 @@ future<std::vector<description>> describe_auth_and_service_levels(const auth::se
     const auto& role_manager = auth_service.underlying_role_manager();
     const auto& authorizer = auth_service.underlying_authorizer();
 
-    auto role_descs = co_await generate_descriptions(co_await role_manager.get_role_info(with_salted_hashes), true);
+    const auto role_info = co_await role_manager.get_role_info(with_salted_hashes);
+    dlogger.warn("Role info size = {}", role_info.size());
+    auto role_descs = co_await generate_descriptions(role_info, true);
     auto grant_descs = co_await generate_descriptions_with_generator(co_await role_manager.query_all_directly_granted(), true);
     auto permission_descs = co_await generate_descriptions_with_multiple_generators(co_await authorizer.list_all(), true);
     auto attached_sl_descs = co_await generate_descriptions(co_await role_manager.get_attached_service_levels(), true);

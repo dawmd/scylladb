@@ -28,7 +28,7 @@ sstring role_info::describe(bool with_internals) const {
     // `K_PASSWORD` in the grammar of CQL used by Scylla requires that passwords be quoted
     // with single quotation marks.
     const sstring salted_hash_part = maybe_salted_hash
-            ? seastar::format(" SALTED HASH {} AND", cql3::util::single_quote(*maybe_salted_hash))
+            ? seastar::format(" SALTED HASH = {} AND", cql3::util::single_quote(*maybe_salted_hash))
             : "";
 
     // fmt prints boolean values as `true` / `false` if the presentation type is not specified.
@@ -40,7 +40,7 @@ future<std::vector<std::pair<sstring, sstring>>> role_to_directly_granted_map::d
     std::vector<std::pair<sstring, sstring>> result{};
     result.reserve(this->size());
 
-    for (const auto& [granted_role, grantee_role] : *this) {
+    for (const auto& [grantee_role, granted_role] : *this) {
         const auto formatted_grantee = cql3::util::maybe_quote(grantee_role);
         const auto formatted_granted = cql3::util::maybe_quote(granted_role);
         result.emplace_back(granted_role, seastar::format("GRANT {} TO {};", formatted_granted, formatted_grantee));

@@ -1348,6 +1348,7 @@ def test_desc_restore_auth_and_service_levels(cql):
 
     with AuthSLContext(cql, ks=ks):
         for stmt in get_auth_and_sl_restore_stmts(restore_stmts):
+            print(f"Stmt = {stmt}")
             cql.execute(stmt)
 
         assert restore_stmts == set(cql.execute("DESC SCHEMA WITH INTERNALS AND PASSWORDS"))

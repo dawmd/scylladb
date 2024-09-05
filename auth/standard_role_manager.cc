@@ -720,15 +720,21 @@ future<std::vector<role_info>> standard_role_manager::get_role_info(const bool w
             ? "SELECT role, can_login, is_superuser, salted_hash FROM {}.{}"
             : "SELECT role, can_login, is_superuser FROM {}.{}";
 
+    const auto query = seastar::format(role_query.data(), get_auth_ks_name(_qp), meta::roles_table::name);
+    log.warn("Role query = {}", query);
+
     const auto roles = co_await _qp.execute_internal(
             // Note: As of now, `seastar::format` only accepts `const char*` as its format string. That's why we use it here.
-            seastar::format(role_query.data(), get_auth_ks_name(_qp), meta::roles_table::name),
+            // seastar::format(role_query.data(), get_auth_ks_name(_qp), meta::roles_table::name),
+            query,
             db::consistency_level::LOCAL_ONE,
             internal_distributed_query_state(),
             cql3::query_processor::cache_internal::yes);
 
     std::vector<role_info> result{};
     result.reserve(roles->size());
+
+    log.warn("Result size = {}", roles->size());
 
     for (const auto& role_record : *roles) {
         role_info ri{};
