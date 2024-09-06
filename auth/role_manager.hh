@@ -143,7 +143,7 @@ public:
     ///
     /// \returns an exceptional future with \ref nonexistant_role if the role does not exist.
     ///
-    virtual future<role_set> query_granted(std::string_view grantee, recursive_role_query) = 0;
+    virtual future<role_set> query_granted(std::string_view grantee, recursive_role_query) const = 0;
 
     /// \returns map of directly granted roles for all roles
     ///
@@ -159,31 +159,31 @@ public:
     ///   (role2, role3)
     /// }
     ///  
-    virtual future<role_to_directly_granted_map> query_all_directly_granted() = 0;
+    virtual future<role_to_directly_granted_map> query_all_directly_granted() const = 0;
 
-    virtual future<role_set> query_all() = 0;
+    virtual future<role_set> query_all() const = 0;
 
-    virtual future<bool> exists(std::string_view role_name) = 0;
-
-    ///
-    /// \returns an exceptional future with \ref nonexistant_role if the role does not exist.
-    ///
-    virtual future<bool> is_superuser(std::string_view role_name) = 0;
+    virtual future<bool> exists(std::string_view role_name) const = 0;
 
     ///
     /// \returns an exceptional future with \ref nonexistant_role if the role does not exist.
     ///
-    virtual future<bool> can_login(std::string_view role_name) = 0;
+    virtual future<bool> is_superuser(std::string_view role_name) const = 0;
+
+    ///
+    /// \returns an exceptional future with \ref nonexistant_role if the role does not exist.
+    ///
+    virtual future<bool> can_login(std::string_view role_name) const = 0;
 
     ///
     /// \returns the value of the named attribute, if one is set.
     ///
-    virtual future<std::optional<sstring>> get_attribute(std::string_view role_name, std::string_view attribute_name) = 0;
+    virtual future<std::optional<sstring>> get_attribute(std::string_view role_name, std::string_view attribute_name) const = 0;
 
     ///
     /// \returns a mapping of each role's value for the named attribute, if one is set for the role.
     ///
-    virtual future<attribute_vals> query_attribute_for_all(std::string_view attribute_name) = 0;
+    virtual future<attribute_vals> query_attribute_for_all(std::string_view attribute_name) const = 0;
 
     /// Sets `attribute_name` with `attribute_value` for `role_name`.
     /// \returns an exceptional future with nonexistant_role if the role does not exist.
