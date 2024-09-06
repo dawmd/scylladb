@@ -26,6 +26,7 @@
 #include "cql3/statements/raw/describe_statement.hh"
 #include "cql3/statements/describe_statement.hh"
 #include <seastar/core/shared_ptr.hh>
+#include <sstream>
 #include "transport/messages/result_message.hh"
 #include "transport/messages/result_message_base.hh"
 #include "service/query_state.hh"
@@ -65,6 +66,40 @@ namespace {
 
 using keyspace_element = data_dictionary::keyspace_element;
 
+description make_description(replica::database& db, const keyspace_element& element) {
+    return description {
+        .keyspace = util::maybe_quote(element.keypace_name()),
+        .type = element.element_type(db),
+        .name = util::maybe_quote(element.element_name()),
+        .create_statement = std::nullopt
+    };
+}
+
+description make_description(replica::database& db, const keyspace_element& element, bool with_internals) {
+    auto result = description {
+        .keyspace = util::maybe_quote(element.keypace_name()),
+        .type = element.element_type(db),
+        .name = util::maybe_quote(element.element_name()),
+        .create_statement = std::nullopt
+    };
+
+    std::ostringstream os;
+    element.describe(db, os, with_internals);
+
+    result.create_statement = os.str();
+
+    return result;
+}
+
+description make_description(replica::database& db, const keyspace_element& element, sstring create_statement) {
+    return description {
+        .keyspace = util::maybe_quote(element.keypace_name()),
+        .type = element.element_type(db),
+        .name = util::maybe_quote(element.element_name()),
+        .create_statement = std::move(create_statement)
+    };
+}
+
 future<std::vector<description>> generate_descriptions(
     replica::database& db, 
     std::vector<shared_ptr<const keyspace_element>> elements,
@@ -81,8 +116,8 @@ future<std::vector<description>> generate_descriptions(
 
     for (auto& e: elements) {
         auto desc = (with_internals.has_value()) 
-            ? description(db, *e, *with_internals) 
-            : description(db, *e);
+            ? make_description(db, *e, *with_internals)
+            : make_description(db, *e);
         descs.push_back(desc);
 
         co_await coroutine::maybe_yield();
@@ -113,7 +148,7 @@ bool is_index(const data_dictionary::database& db, const schema_ptr& schema) {
 
 
 description keyspace(replica::database& db, const lw_shared_ptr<keyspace_metadata>& ks, bool with_stmt = false) {
-    return (with_stmt) ? description(db, *ks, true) : description(db, *ks);
+    return (with_stmt) ? make_description(db, *ks, true) : make_description(db, *ks);
 }
 
 description type(replica::database& db, const lw_shared_ptr<keyspace_metadata>& ks, const sstring& name) {
@@ -123,7 +158,7 @@ description type(replica::database& db, const lw_shared_ptr<keyspace_metadata>& 
     }
 
     auto udt = udt_meta.get_type(to_bytes(name));
-    return description(db, *udt, true);
+    return make_description(db, *udt, true);
 }
 
 // Because UDTs can depend on each other, we need to sort them topologically
@@ -209,7 +244,7 @@ description view(const data_dictionary::database& db, const sstring& ks, const s
         throw exceptions::invalid_request_exception(format("Materialized view '{}' not found in keyspace '{}'", name, ks));
     }
 
-    return description(db.real_database(), *view->schema(), with_internals);
+    return make_description(db.real_database(), *view->schema(), with_internals);
 }
 
 description index(const data_dictionary::database& db, const sstring& ks, const sstring& name, bool with_internals) {
@@ -227,7 +262,7 @@ description index(const data_dictionary::database& db, const sstring& ks, const 
         }
     }
 
-    return description(db.real_database(), **idx, with_internals);
+    return make_description(db.real_database(), **idx, with_internals);
 }
 
 // `base_name` should be a table with enabled cdc
@@ -241,7 +276,7 @@ std::optional<description> describe_cdc_log_table(const data_dictionary::databas
     std::ostringstream os;
     auto schema = table->schema();
     schema->describe_alter_with_properties(db.real_database(), os);
-    return description(db.real_database(), *schema, std::move(os.str()));
+    return make_description(db.real_database(), *schema, std::move(os.str()));
 }
 
 future<std::vector<description>> table(const data_dictionary::database& db, const sstring& ks, const sstring& name, bool with_internals) {
@@ -260,7 +295,7 @@ future<std::vector<description>> table(const data_dictionary::database& db, cons
     std::vector<description> result;
 
     // table
-    result.push_back(description(db.real_database(), *schema, with_internals));
+    result.push_back(make_description(db.real_database(), *schema, with_internals));
 
     // indexes
     boost::sort(idxs, [] (const auto& a, const auto& b) {
@@ -313,7 +348,7 @@ future<std::vector<description>> tables(const data_dictionary::database& db, con
     }
 
     co_return boost::copy_range<std::vector<description>>(tables | boost::adaptors::transformed([&replica_db] (auto&& t) {
-        return description(replica_db, *t);
+        return make_description(replica_db, *t);
     }));
 }
 

@@ -8,46 +8,29 @@
 
 #include "cql3/description.hh"
 
-#include "cql3/util.hh"
-#include "data_dictionary/keyspace_element.hh"
-#include "replica/database.hh"
+#include "bytes.hh"
+#include "types/types.hh"
 
 namespace cql3 {
 
-description::description(replica::database& db, const data_dictionary::keyspace_element& element)
-    : _keyspace(util::maybe_quote(element.keypace_name()))
-    , _type(element.element_type(db))
-    , _name(util::maybe_quote(element.element_name()))
-    , _create_statement(std::nullopt) {}
-
-description::description(replica::database& db, const data_dictionary::keyspace_element& element, bool with_internals)
-    : _keyspace(util::maybe_quote(element.keypace_name()))
-    , _type(element.element_type(db))
-    , _name(util::maybe_quote(element.element_name()))
-{
-    std::ostringstream os;
-    element.describe(db, os, with_internals);
-    _create_statement = os.str();
-}
-
-description::description(replica::database& db, const data_dictionary::keyspace_element& element, sstring create_statement)
-    : _keyspace(util::maybe_quote(element.keypace_name()))
-    , _type(element.element_type(db))
-    , _name(util::maybe_quote(element.element_name()))
-    , _create_statement(std::move(create_statement)) {}
-
 std::vector<bytes_opt> description::serialize() const {
-    auto desc = std::vector<bytes_opt>{
-        {to_bytes(_keyspace)},
-        {to_bytes(_type)},
-        {to_bytes(_name)}
-    };
+    std::vector<bytes_opt> result{};
+    result.reserve(4);
 
-    if (_create_statement) {
-        desc.push_back({to_bytes(*_create_statement)});
+    if (keyspace) {
+        result.push_back(to_bytes(*keyspace));
+    } else {
+        result.push_back(data_value::make_null(utf8_type).serialize());
     }
 
-    return desc;
+    result.push_back(to_bytes(type));
+    result.push_back(to_bytes(name));
+
+    if (create_statement) {
+        result.push_back({to_bytes(*create_statement)});
+    }
+
+    return result;
 }
 
 } // namespace cql3
