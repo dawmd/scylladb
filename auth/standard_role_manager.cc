@@ -24,7 +24,9 @@
 #include "auth/role_manager.hh"
 #include "auth/roles-metadata.hh"
 #include "cql3/query_processor.hh"
+#include "cql3/description.hh"
 #include "cql3/untyped_result_set.hh"
+#include "cql3/util.hh"
 #include "db/consistency_level_type.hh"
 #include "exceptions/exceptions.hh"
 #include "log.hh"
@@ -701,4 +703,59 @@ future<> standard_role_manager::remove_attribute(std::string_view role_name, std
                 {sstring(role_name), sstring(attribute_name)});
     }
 }
+
+future<std::vector<cql3::description>> standard_role_manager::describe_role_grants() const {
+    std::vector<cql3::description> result{};
+
+    const auto grants = co_await query_all_directly_granted();
+    result.reserve(grants.size());
+
+    for (const auto& [grantee_role, granted_role] : grants) {
+        const auto formatted_grantee = cql3::util::maybe_quote(grantee_role);
+        const auto formatted_granted = cql3::util::maybe_quote(granted_role);
+
+        result.push_back(cql3::description {
+            // Role grants do not belong to any keyspace.
+            .keyspace = std::nullopt,
+            .type = "grant_role",
+            .name = formatted_granted,
+            .create_statement = seastar::format("GRANT {} TO {};", formatted_granted, formatted_grantee)
+        });
+
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return result;
 }
+
+future<std::vector<cql3::description>> standard_role_manager::describe_attached_service_levels() const {
+    std::vector<cql3::description> result{};
+
+    // Note: As of now, the only attributes we can use are service levels.
+    //
+    // Note: We keep in mind this fragment of the documentation:
+    //       "A role can only be assigned one service level. However, the same service level
+    //       can be attached to many roles. If a role inherits a service level from another role,
+    //       the highest level of service from all the roles wins."
+    const auto attached_service_levels = co_await query_attribute_for_all("service_level");
+    result.reserve(attached_service_levels.size());
+    
+    for (const auto& [role, service_level] : attached_service_levels) {
+        const auto formatted_role = cql3::util::maybe_quote(role);
+        const auto formatted_sl = cql3::util::maybe_quote(service_level);
+
+        result.push_back(cql3::description {
+            // Attaching a service level doesn't belong to any keyspace.
+            .keyspace = std::nullopt,
+            .type = "service_level_attachment",
+            .name = formatted_sl,
+            .create_statement = seastar::format("ATTACH SERVICE LEVEL {} TO {};", formatted_sl, formatted_role)
+        });
+
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return result;
+}
+
+} // namespace auth
