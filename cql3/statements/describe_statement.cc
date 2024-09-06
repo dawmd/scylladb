@@ -5,6 +5,7 @@
 /*
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <boost/range/adaptor/transformed.hpp>
@@ -19,6 +20,7 @@
 #include "exceptions/exceptions.hh"
 #include <seastar/core/on_internal_error.hh>
 #include <seastar/coroutine/maybe_yield.hh>
+#include "seastar/coroutine/exception.hh"
 #include "service/client_state.hh"
 #include "types/types.hh"
 #include "cql3/query_processor.hh"
@@ -610,9 +612,9 @@ future<std::vector<std::vector<bytes_opt>>> cluster_describe_statement::describe
 }
 
 // SCHEMA DESCRIBE STATEMENT
-schema_describe_statement::schema_describe_statement(bool full_schema, bool with_internals)
+schema_describe_statement::schema_describe_statement(bool full_schema, bool with_salted_hashes, bool with_internals)
     : describe_statement()
-    , _config(schema_desc{full_schema})
+    , _config(schema_desc{.full_schema = full_schema, .with_salted_hashes = with_salted_hashes})
     , _with_internals(with_internals) {}
 
 schema_describe_statement::schema_describe_statement(std::optional<sstring> keyspace, bool only, bool with_internals)
@@ -629,6 +631,16 @@ future<std::vector<std::vector<bytes_opt>>> schema_describe_statement::describe(
 
     auto result = co_await std::visit(overloaded_functor{
         [&] (const schema_desc& config) -> future<std::vector<description>> {
+            const auto& auth_service = *client_state.get_auth_service();
+
+            if (config.with_salted_hashes) {
+                const auto maybe_user = client_state.user();
+                if (!maybe_user || !co_await auth::has_superuser(auth_service, *maybe_user)) {
+                    co_await coroutine::return_exception(exceptions::unauthorized_exception(
+                            "DESCRIBE SCHEMA WITH INTERNALS AND PASSWORDS can only be issued by a superuser"));
+                }
+            }
+
             auto keyspaces = config.full_schema ? db.get_all_keyspaces() : db.get_user_keyspaces();
             std::vector<description> schema_result;
 
@@ -638,6 +650,18 @@ future<std::vector<std::vector<bytes_opt>>> schema_describe_statement::describe(
                 }
                 auto ks_result = co_await describe_all_keyspace_elements(db, ks, _with_internals);
                 schema_result.insert(schema_result.end(), ks_result.begin(), ks_result.end());
+            }
+
+            if (_with_internals) {
+                // The order is important here. We need to first restore service levels
+                // because we may attach them to roles later.
+                auto service_level_descs = co_await client_state.get_service_level_controller().describe_service_levels();
+                auto auth_descs = co_await auth_service.describe_auth(config.with_salted_hashes);
+
+                schema_result.insert(schema_result.end(), std::make_move_iterator(service_level_descs.begin()),
+                        std::make_move_iterator(service_level_descs.end()));
+                schema_result.insert(schema_result.end(), std::make_move_iterator(auth_descs.begin()),
+                        std::make_move_iterator(auth_descs.end()));
             }
 
             co_return schema_result;
@@ -801,8 +825,16 @@ using ds = describe_statement;
 
 describe_statement::describe_statement(ds::describe_config config) : _config(std::move(config)), _with_internals(false) {}
 
-void describe_statement::with_internals_details() {
+void describe_statement::with_internals_details(bool with_salted_hashes) {
     _with_internals = internals(true);
+
+    if (with_salted_hashes && !std::holds_alternative<describe_schema>(_config)) {
+        throw exceptions::invalid_request_exception{"Option WITH SALTED_HASHES is only allowed with DESC SCHEMA"};
+    }
+
+    if (std::holds_alternative<describe_schema>(_config)) {
+        std::get<describe_schema>(_config).with_salted_hashes = with_salted_hashes;
+    }
 }
 
 std::unique_ptr<prepared_statement> describe_statement::prepare(data_dictionary::database db, cql_stats &stats) {
@@ -812,7 +844,7 @@ std::unique_ptr<prepared_statement> describe_statement::prepare(data_dictionary:
             return ::make_shared<cluster_describe_statement>();
         },
         [&] (const describe_schema& cfg) -> ::shared_ptr<statements::describe_statement> {
-            return ::make_shared<schema_describe_statement>(cfg.full_schema, internals);
+            return ::make_shared<schema_describe_statement>(cfg.full_schema, cfg.with_salted_hashes, internals);
         },
         [&] (const describe_keyspace& cfg) -> ::shared_ptr<statements::describe_statement> {
             return ::make_shared<schema_describe_statement>(std::move(cfg.keyspace), cfg.only_keyspace, internals);
