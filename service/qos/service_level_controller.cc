@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#include "cql3/util.hh"
 #include "utils/assert.hh"
 #include <boost/algorithm/string/join.hpp>
 #include <chrono>
@@ -687,6 +688,67 @@ future<> service_level_controller::unregister_subscriber(qos_configuration_chang
     return _subscribers.remove(subscriber);
 }
 
+static sstring describe_service_level(std::string_view sl_name, const service_level_options& sl_opts) {
+    using slo = service_level_options;
+
+    utils::small_vector<sstring, 2> opts{};
+    
+    const sstring sl_name_formatted = cql3::util::maybe_quote(sl_name);
+
+    if (auto maybe_timeout = std::get_if<lowres_clock::duration>(&sl_opts.timeout)) {
+        // According to the documentation, `TIMEOUT` has to be expressed in milliseconds
+        // or seconds. It is therefore safe to use milliseconds here.
+        const auto timeout = std::chrono::duration_cast<std::chrono::milliseconds>(*maybe_timeout);
+        opts.push_back(seastar::format("TIMEOUT = {}", timeout));
+    }
+
+    switch (sl_opts.workload) {
+        case slo::workload_type::batch:
+            opts.push_back("WORKLOAD_TYPE = 'batch'");
+            break;
+        case slo::workload_type::interactive:
+            opts.push_back("WORKLOAD_TYPE = 'interactive'");
+            break;
+        case slo::workload_type::unspecified:
+            break;
+        case slo::workload_type::delete_marker:
+            // `slo::workload_typ::delete_marker` is only set temporarily. When a service level
+            // is actually created, it never has this workload type set anymore.
+            on_internal_error(sl_logger, "Unexpected workload type");
+    }
+
+    if (opts.size() == 0) {
+        return seastar::format("CREATE SERVICE LEVEL {};", sl_name_formatted);
+    }
+
+    return seastar::format("CREATE SERVICE LEVEL {} WITH {};", sl_name_formatted, fmt::join(opts, " AND "));
+}
+
+future<std::vector<cql3::description>> service_level_controller::describe_service_levels() const {
+    // We rely on the assumption that `_service_levels_db` (so the cache of
+    // the `service_level_controller`) is always up-to-date.
+
+    std::vector<cql3::description> result{};
+
+    for (const auto& [sl_name, sl] : _service_levels_db) {
+        if (sl.is_static) {
+            continue;
+        }
+
+        result.push_back(cql3::description {
+            // Service levels do not belong to any keyspace.
+            .keyspace = std::nullopt,
+            .type = "service_level",
+            .name = cql3::util::maybe_quote(sl_name),
+            .create_statement = describe_service_level(sl_name, sl.slo)
+        });
+
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return result;
+}
+
 future<shared_ptr<service_level_controller::service_level_distributed_data_accessor>> 
 get_service_level_distributed_data_accessor_for_current_version(
     db::system_keyspace& sys_ks,
@@ -704,4 +766,4 @@ get_service_level_distributed_data_accessor_for_current_version(
     }
 }
 
-}
+} // namespace qos
