@@ -36,8 +36,20 @@ namespace statements {
 using result_message = cql_transport::messages::result_message;
 using result_message_ptr = ::shared_ptr<result_message>;
 
-static auth::authentication_options extract_authentication_options(const cql3::role_options& options) {
+static auth::generalized_authentication_options extract_generalized_authentication_options(const cql3::role_options& options) {
+    if (options.salted_hash) {
+        auth::authentication_with_salted_hash_options result{};
+
+        result.salted_hash = *options.salted_hash;
+        result.options = options.options
+                ? std::make_optional<std::unordered_map<sstring, sstring>>(options.options->begin(), options.options->end())
+                : std::nullopt;
+
+        return result;
+    }
+
     auth::authentication_options authen_options;
+
     authen_options.password = options.password;
 
     if (options.options) {
@@ -45,6 +57,10 @@ static auth::authentication_options extract_authentication_options(const cql3::r
     }
 
     return authen_options;
+}
+
+static auth::authentication_options extract_authentication_options(const cql3::role_options& options) {
+    return std::get<auth::authentication_options>(extract_generalized_authentication_options(options));
 }
 
 //
@@ -97,7 +113,7 @@ create_role_statement::execute(query_processor&,
 
     service::group0_batch mc{std::move(guard)};
     try {
-        co_await auth::create_role(as, _role, config, extract_authentication_options(_options), mc);
+        co_await auth::create_role(as, _role, config, extract_generalized_authentication_options(_options), mc);
         co_await grant_permissions_to_creator(cs, mc);
     } catch (const auth::role_already_exists& e) {
         if (!_if_not_exists) {

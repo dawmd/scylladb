@@ -163,7 +163,7 @@ public:
     ///
     future<> create_role(std::string_view name,
             const role_config& config,
-            const authentication_options& options,
+            const generalized_authentication_options& options,
             ::service::group0_batch& mc) const;
 
     ///
@@ -232,7 +232,7 @@ future<> create_role(
         const service&,
         std::string_view name,
         const role_config&,
-        const authentication_options&,
+        const generalized_authentication_options&,
         ::service::group0_batch&);
 
 ///

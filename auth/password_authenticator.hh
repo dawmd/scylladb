@@ -12,6 +12,7 @@
 
 #include <seastar/core/abort_source.hh>
 
+#include "auth/authentication_options.hh"
 #include "db/consistency_level_type.hh"
 #include "auth/authenticator.hh"
 #include "service/raft/raft_group0_client.hh"
@@ -64,7 +65,7 @@ public:
 
     virtual future<authenticated_user> authenticate(const credentials_map& credentials) const override;
 
-    virtual future<> create(std::string_view role_name, const authentication_options& options, ::service::group0_batch& mc) override;
+    virtual future<> create(std::string_view role_name, const generalized_authentication_options& options, ::service::group0_batch& mc) override;
 
     virtual future<> alter(std::string_view role_name, const authentication_options& options, ::service::group0_batch&) override;
 

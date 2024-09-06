@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 
 #include <seastar/core/print.hh>
 #include <seastar/core/sstring.hh>
@@ -22,6 +23,7 @@ namespace auth {
 
 enum class authentication_option {
     password,
+    salted_hash,
     options
 };
 
@@ -35,6 +37,8 @@ struct fmt::formatter<auth::authentication_option> : fmt::formatter<string_view>
         switch (a) {
         case password:
             return formatter<string_view>::format("PASSWORD", ctx);
+        case salted_hash:
+            return formatter<string_view>::format("SALTED HASH", ctx);
         case options:
             return formatter<string_view>::format("OPTIONS", ctx);
         }
@@ -53,8 +57,22 @@ struct authentication_options final {
     std::optional<custom_options> options;
 };
 
-inline bool any_authentication_options(const authentication_options& aos) noexcept {
-    return aos.password || aos.options;
+/// Used exclusively for restoring roles.
+struct authentication_with_salted_hash_options final {
+    sstring salted_hash;
+    std::optional<custom_options> options;
+};
+
+using generalized_authentication_options = std::variant<authentication_options, authentication_with_salted_hash_options>;
+
+inline bool any_authentication_options(const generalized_authentication_options& aos) noexcept {
+    if (auto* opts = std::get_if<authentication_options>(&aos)) {
+        return opts->password || opts->options;
+    } else if (std::holds_alternative<authentication_with_salted_hash_options>(aos)) {
+        // The field `salted_hash` is always present.
+        return true;
+    }
+    std::unreachable();
 }
 
 class unsupported_authentication_option : public std::invalid_argument {

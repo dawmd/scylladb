@@ -8,6 +8,7 @@
 
 #include <exception>
 #include <seastar/core/coroutine.hh>
+#include "auth/authentication_options.hh"
 #include "auth/resource.hh"
 #include "auth/service.hh"
 
@@ -33,6 +34,7 @@
 #include "schema/schema_fwd.hh"
 #include <seastar/core/future.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
+#include <variant>
 #include "service/migration_manager.hh"
 #include "service/raft/raft_group0_client.hh"
 #include "timestamp.hh"
@@ -314,7 +316,7 @@ future<bool> service::has_superuser(std::string_view role_name) const {
 }
 
 static void validate_authentication_options_are_supported(
-        const authentication_options& options,
+        const generalized_authentication_options& options,
         const authentication_option_set& supported) {
     const auto check = [&supported](authentication_option k) {
         if (!supported.contains(k)) {
@@ -322,18 +324,27 @@ static void validate_authentication_options_are_supported(
         }
     };
 
-    if (options.password) {
-        check(authentication_option::password);
+    if (auto* opts = std::get_if<authentication_options>(&options)) {
+        if (opts->password) {
+            check(authentication_option::password);
+        }
+        if (opts->options) {
+            check(authentication_option::options);
+        }
     }
 
-    if (options.options) {
-        check(authentication_option::options);
+    if (auto* opts = std::get_if<authentication_with_salted_hash_options>(&options)) {
+        check(authentication_option::salted_hash);
+
+        if (opts->options) {
+            check(authentication_option::options);
+        }
     }
 }
 
 future<> service::create_role(std::string_view name,
         const role_config& config,
-        const authentication_options& options,
+        const generalized_authentication_options& options,
         ::service::group0_batch& mc) const {
     co_await underlying_role_manager().create(name, config, mc);
     if (!auth::any_authentication_options(options)) {
@@ -458,7 +469,7 @@ future<> create_role(
         const service& ser,
         std::string_view name,
         const role_config& config,
-        const authentication_options& options,
+        const generalized_authentication_options& options,
         ::service::group0_batch& mc) {
     return ser.create_role(name, config, options, mc);
 }

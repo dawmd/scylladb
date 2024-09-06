@@ -17,8 +17,10 @@
 #include <boost/algorithm/cxx11/all_of.hpp>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/sleep.hh>
+#include <variant>
 
 #include "auth/authenticated_user.hh"
+#include "auth/authentication_options.hh"
 #include "auth/common.hh"
 #include "auth/passwords.hh"
 #include "auth/roles-metadata.hh"
@@ -199,7 +201,7 @@ bool password_authenticator::require_authentication() const {
 }
 
 authentication_option_set password_authenticator::supported_options() const {
-    return authentication_option_set{authentication_option::password};
+    return authentication_option_set{authentication_option::password, authentication_option::salted_hash};
 }
 
 authentication_option_set password_authenticator::alterable_options() const {
@@ -257,21 +259,35 @@ future<authenticated_user> password_authenticator::authenticate(
     }
 }
 
-future<> password_authenticator::create(std::string_view role_name, const authentication_options& options, ::service::group0_batch& mc) {
-    if (!options.password) {
+future<> password_authenticator::create(std::string_view role_name, const generalized_authentication_options& options, ::service::group0_batch& mc) {
+    // When creating a role with the usual `CREATE ROLE` statement, turns the underlying `PASSWORD`
+    // into the corresponding hash.
+    // When creating a role with `CREATE ROLE WITH SALTED HASH`, simply extracts the `SALTED HASH`.
+    auto maybe_hash = std::invoke([&] -> std::optional<sstring> {
+        if (std::holds_alternative<authentication_options>(options) && std::get<authentication_options>(options).password) {
+            return passwords::hash(*std::get<authentication_options>(options).password, rng_for_salt);
+        }
+        if (std::holds_alternative<authentication_with_salted_hash_options>(options)) {
+            return std::get<authentication_with_salted_hash_options>(options).salted_hash;
+        }
+        return std::nullopt;
+    });
+
+    // Neither `PASSWORD`, nor `SALTED HASH` has been specified.
+    if (!maybe_hash) {
         co_return;
     }
+
     const auto query = update_row_query();
     if (legacy_mode(_qp)) {
         co_await _qp.execute_internal(
                 query,
                 consistency_for_user(role_name),
                 internal_distributed_query_state(),
-                {passwords::hash(*options.password, rng_for_salt), sstring(role_name)},
+                {std::move(*maybe_hash), sstring(role_name)},
                 cql3::query_processor::cache_internal::no).discard_result();
     } else {
-        co_await collect_mutations(_qp, mc, query,
-                {passwords::hash(*options.password, rng_for_salt), sstring(role_name)});
+        co_await collect_mutations(_qp, mc, query, {std::move(*maybe_hash), sstring(role_name)});
     }
 }
 
