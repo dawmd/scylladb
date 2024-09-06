@@ -15,6 +15,7 @@
 #include "cql3/statements/authentication_statement.hh"
 #include "cql3/role_name.hh"
 #include "cql3/role_options.hh"
+#include "exceptions/exceptions.hh"
 
 namespace cql3 {
 
