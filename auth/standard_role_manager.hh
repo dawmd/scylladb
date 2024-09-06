@@ -17,6 +17,7 @@
 #include <seastar/core/future.hh>
 #include <seastar/core/sstring.hh>
 
+#include "cql3/statements/describe_statement.hh"
 #include "seastarx.hh"
 #include "service/raft/raft_group0_client.hh"
 
@@ -79,6 +80,12 @@ public:
 
     virtual future<> remove_attribute(std::string_view role_name, std::string_view attribute_name, ::service::group0_batch& mc) override;
 
+    virtual future<std::vector<cql3::description>> describe_roles(bool with_salted_hashes) const override;
+
+    virtual future<std::vector<cql3::description>> describe_role_grants() const override;
+
+    virtual future<std::vector<cql3::description>> describe_attached_service_levels() const override;
+
 private:
     enum class membership_change { add, remove };
 
@@ -97,4 +104,4 @@ private:
     future<> modify_membership(std::string_view role_name, std::string_view grantee_name, membership_change, ::service::group0_batch& mc);
 };
 
-}
+} // namespace auth

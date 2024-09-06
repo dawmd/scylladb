@@ -24,7 +24,9 @@
 #include "auth/role_manager.hh"
 #include "auth/roles-metadata.hh"
 #include "cql3/query_processor.hh"
+#include "cql3/statements/describe_statement.hh"
 #include "cql3/untyped_result_set.hh"
+#include "cql3/util.hh"
 #include "db/consistency_level_type.hh"
 #include "exceptions/exceptions.hh"
 #include "log.hh"
@@ -701,4 +703,150 @@ future<> standard_role_manager::remove_attribute(std::string_view role_name, std
                 {sstring(role_name), sstring(attribute_name)});
     }
 }
+
+namespace {
+
+struct multiple_role_credentials {
+    /// Invariant: `role_names.size()` == `maybe_salted_hashes.size()`.
+    /// Invariant: the password of `role_names[i]` is `maybe_salted_hashes[i]`.
+    std::vector<sstring> role_names;
+    std::vector<std::optional<sstring>> maybe_salted_hashes;
+};
+
+future<multiple_role_credentials> fetch_role_credentials(cql3::query_processor& qp) {
+    const auto rows = co_await qp.execute_internal(
+            seastar::format("SELECT role, salted_hash FROM {}.{}", get_auth_ks_name(qp), meta::roles_table::name),
+            db::consistency_level::LOCAL_ONE,
+            internal_distributed_query_state(),
+            cql3::query_processor::cache_internal::yes);
+    
+    multiple_role_credentials result{};
+
+    result.role_names.reserve(rows->size());
+    result.maybe_salted_hashes.reserve(rows->size());
+
+    for (const auto& row : *rows) {
+        result.role_names.push_back(row.get_as<sstring>("role"));
+        result.maybe_salted_hashes.push_back(row.has("salted_hash")
+                ? std::make_optional(row.get_as<sstring>("salted_hash"))
+                : std::nullopt);
+        
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return result;
 }
+
+} // anonymous namespace
+
+future<std::vector<cql3::description>> standard_role_manager::describe_roles(bool with_salted_hashes) const {
+    std::vector<sstring> roles{};
+    std::vector<std::optional<sstring>> maybe_salted_hashes{};
+
+    if (with_salted_hashes) {
+        auto role_creds = co_await fetch_role_credentials(_qp);
+        
+        roles = std::move(role_creds.role_names);
+        maybe_salted_hashes = std::move(role_creds.maybe_salted_hashes);
+    } else {
+        auto role_set = co_await query_all();
+        roles.insert(roles.end(), std::make_move_iterator(role_set.begin()), std::make_move_iterator(role_set.end()));
+    }
+
+    std::vector<cql3::description> result{};
+    result.reserve(roles.size());
+
+    auto produce_create_statement = [with_salted_hashes] (const sstring& formatted_role_name,
+            const std::optional<sstring>& maybe_salted_hash, bool role_can_login, bool role_is_superuser) {
+        // Even after applying formatting to a role, `formatted_role_name` can only equal `meta::DEFAULT_SUPER_NAME`
+        // if the original identifier was equal to it.
+        const sstring role_part = formatted_role_name == meta::DEFAULT_SUPERUSER_NAME
+                ? seastar::format("IF NOT EXISTS {}", formatted_role_name)
+                : formatted_role_name;
+        
+        const sstring with_salted_hash_part = with_salted_hashes && maybe_salted_hash
+                // `K_PASSWORD` in Scylla's CQL grammar requires that passwords be quoted
+                // with single quotation marks.
+                ? seastar::format("WITH SALTED HASH = {} AND", cql3::util::single_quote(*maybe_salted_hash))
+                : "WITH";
+        
+        return seastar::format("CREATE ROLE {} {} LOGIN = {} AND SUPERUSER = {};",
+                role_part, with_salted_hash_part, role_can_login, role_is_superuser);
+    };
+
+    for (size_t idx = 0; idx < roles.size(); ++idx) {
+        const bool role_can_login = co_await can_login(roles[idx]);
+        const bool role_is_superuser = co_await is_superuser(roles[idx]);
+        const sstring formatted_role_name = cql3::util::maybe_quote(roles[idx]);
+
+        result.push_back(cql3::description {
+            // Roles do not belong to any keyspace.
+            .keyspace = std::nullopt,
+            .type = "role",
+            .name = formatted_role_name,
+            .create_statement = produce_create_statement(
+                    formatted_role_name,
+                    with_salted_hashes ? maybe_salted_hashes[idx] : std::nullopt,
+                    role_can_login,
+                    role_is_superuser)
+        });
+    }
+
+    co_return result;
+}
+
+future<std::vector<cql3::description>> standard_role_manager::describe_role_grants() const {
+    std::vector<cql3::description> result{};
+
+    const auto grants = co_await query_all_directly_granted();
+    result.reserve(grants.size());
+
+    for (const auto& [grantee_role, granted_role] : grants) {
+        const auto formatted_grantee = cql3::util::maybe_quote(grantee_role);
+        const auto formatted_granted = cql3::util::maybe_quote(granted_role);
+
+        result.push_back(cql3::description {
+            // Role grants do not belong to any keyspace.
+            .keyspace = std::nullopt,
+            .type = "grant_role",
+            .name = formatted_granted,
+            .create_statement = seastar::format("GRANT {} TO {};", formatted_granted, formatted_grantee)
+        });
+
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return result;
+}
+
+future<std::vector<cql3::description>> standard_role_manager::describe_attached_service_levels() const {
+    std::vector<cql3::description> result{};
+
+    // Note: As of now, the only attributes we can use are service levels.
+    //
+    // Note: We keep in mind this fragment of the documentation:
+    //       "A role can only be assigned one service level. However, the same service level
+    //       can be attached to many roles. If a role inherits a service level from another role,
+    //       the highest level of service from all the roles wins."
+    const auto attached_service_levels = co_await query_attribute_for_all("service_level");
+    result.reserve(attached_service_levels.size());
+    
+    for (const auto& [role, service_level] : attached_service_levels) {
+        const auto formatted_role = cql3::util::maybe_quote(role);
+        const auto formatted_sl = cql3::util::maybe_quote(service_level);
+
+        result.push_back(cql3::description {
+            // Attaching a service level doesn't belong to any keyspace.
+            .keyspace = std::nullopt,
+            .type = "service_level_attachment",
+            .name = formatted_sl,
+            .create_statement = seastar::format("ATTACH SERVICE_LEVEL {} TO {};", formatted_sl, formatted_role)
+        });
+
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return result;
+}
+
+} // namespace auth

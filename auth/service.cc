@@ -26,7 +26,9 @@
 #include "auth/role_or_anonymous.hh"
 #include "cql3/functions/functions.hh"
 #include "cql3/query_processor.hh"
+#include "cql3/statements/describe_statement.hh"
 #include "cql3/untyped_result_set.hh"
+#include "cql3/util.hh"
 #include "db/config.hh"
 #include "db/consistency_level_type.hh"
 #include "db/functions/function_name.hh"
@@ -427,6 +429,165 @@ future<bool> service::exists(const resource& r) const {
     }
 
     return make_ready_future<bool>(false);
+}
+
+// The function doesn't assume anything about `role`.
+static sstring describe_data_resource(const permission& perm, const resource& r, std::string_view role) {
+    const auto permission = permissions::to_string(perm);
+    const auto formatted_role = cql3::util::maybe_quote(role);
+
+    const auto view = data_resource_view(r);
+    const auto maybe_ks = view.keyspace();
+    const auto maybe_cf = view.table();
+
+    // The documentation says:
+    //
+    //     Both keyspace and table names consist of only alphanumeric characters, cannot be empty,
+    //     and are limited in size to 48 characters (that limit exists mostly to avoid filenames,
+    //     which may include the keyspace and table name, to go over the limits of certain file systems).
+    //     By default, keyspace and table names are case insensitive (myTable is equivalent to mytable),
+    //     but case sensitivity can be forced by using double-quotes ("myTable" is different from mytable).
+    //
+    // That's why we wrap identifiers with quotation marks below.
+
+    if (!maybe_ks) {
+        return seastar::format("GRANT {} ON ALL KEYSPACES TO {};", permission, formatted_role);
+    }
+    const auto ks = cql3::util::maybe_quote(*maybe_ks);
+
+    if (!maybe_cf) {
+        return seastar::format("GRANT {} ON KEYSPACE {} TO {};", permission, ks, formatted_role);
+    }
+    const auto cf = cql3::util::maybe_quote(*maybe_cf);
+
+    return seastar::format("GRANT {} ON {}.{} TO {};", permission, ks, cf, formatted_role);
+}
+
+// The function doesn't assume anything about `role`.
+static sstring describe_role_resource(const permission& perm, const resource& r, std::string_view role) {
+    const auto permission = permissions::to_string(perm);
+    const auto formatted_role = cql3::util::maybe_quote(role);
+
+    const auto view = role_resource_view(r);
+    const auto maybe_target_role = view.role();
+
+    if (!maybe_target_role) {
+        return seastar::format("GRANT {} ON ALL ROLES TO {};", permission, formatted_role);
+    }
+    return seastar::format("GRANT {} ON ROLE {} TO {};", permission, cql3::util::maybe_quote(*maybe_target_role), formatted_role);
+}
+
+// The function doesn't assume anything about `role`.
+static sstring describe_service_level_resource(const permission& perm, const resource& r, std::string_view role) {
+    on_internal_error(log, "Granting permissions for service levels is not supported");
+}
+
+// The function doesn't assume anything about `role`.
+static sstring describe_udf_resource(const permission& perm, const resource& r, std::string_view role) {
+    const auto permission = permissions::to_string(perm);
+    const auto formatted_role = cql3::util::maybe_quote(role);
+
+    const auto view = functions_resource_view(r);
+    const auto maybe_ks = view.keyspace();
+    const auto maybe_fun_sig = view.function_signature();
+    const auto maybe_fun_name = view.function_name();
+    const auto maybe_fun_args = view.function_args();
+
+    // The documentation says:
+    //
+    //     Both keyspace and table names consist of only alphanumeric characters, cannot be empty,
+    //     and are limited in size to 48 characters (that limit exists mostly to avoid filenames,
+    //     which may include the keyspace and table name, to go over the limits of certain file systems).
+    //     By default, keyspace and table names are case insensitive (myTable is equivalent to mytable),
+    //     but case sensitivity can be forced by using double-quotes ("myTable" is different from mytable).
+    //
+    // That's why we wrap identifiers with quotation marks below.
+
+    if (!maybe_ks) {
+        return seastar::format("GRANT {} ON ALL FUNCTIONS TO {};", permission, formatted_role);
+    }
+    const auto ks = cql3::util::maybe_quote(*maybe_ks);
+
+    if (!maybe_fun_sig && !maybe_fun_name) {
+        return seastar::format("GRANT {} ON ALL FUNCTIONS IN KEYSPACE {} TO {};", permission, ks, formatted_role);
+    }
+
+    if (maybe_fun_name) {
+        SCYLLA_ASSERT(maybe_fun_args);
+
+        const auto fun_name = cql3::util::maybe_quote(*maybe_fun_name);
+        const auto fun_args_range = *maybe_fun_args | std::views::transform([] (const auto& fun_arg) {
+            return cql3::util::maybe_quote(fun_arg);
+        });
+
+        return seastar::format("GRANT {} ON FUNCTION {}.{}({}) TO {};",
+                permission, ks, fun_name, fmt::join(fun_args_range, ", "), formatted_role);
+    }
+
+    SCYLLA_ASSERT(maybe_fun_sig);
+
+    auto [fun_name, fun_args] = decode_signature(*maybe_fun_sig);
+    fun_name = cql3::util::maybe_quote(fun_name);
+
+    // We don't call `cql3::util::maybe_quote` later because `cql3_type_name_without_frozen` already guarantees
+    // that the type will be wrapped within double quotation marks if it's necessary.
+    auto parsed_fun_args = fun_args | std::views::transform([] (const data_type& dt) {
+        return dt->without_reversed().cql3_type_name_without_frozen();
+    });
+
+    return seastar::format("GRANT {} ON FUNCTION {}.{}({}) TO {};",
+            permission, ks, fun_name, fmt::join(parsed_fun_args, ", "), formatted_role);
+}
+
+// The function doesn't assume anything about `role`.
+static sstring describe_resource_kind(const permission& perm, const resource& r, std::string_view role) {
+    switch (r.kind()) {
+        case resource_kind::data:
+            return describe_data_resource(perm, r, role);
+        case resource_kind::role:
+            return describe_role_resource(perm, r, role);
+        case resource_kind::service_level:
+            return describe_service_level_resource(perm, r, role);
+        case resource_kind::functions:
+            return describe_udf_resource(perm, r, role);
+    }
+}
+
+future<std::vector<cql3::description>> service::describe_permissions() const {
+    std::vector<cql3::description> result{};
+
+    for (const auto& permissions : co_await _authorizer->list_all()) {
+        for (const auto& permission : permissions.permissions) {
+            result.push_back(cql3::description {
+                // Permission grants do not belong to any keyspace.
+                .keyspace = std::nullopt,
+                .type = "grant_permission",
+                .name = cql3::util::maybe_quote(permissions.role_name),
+                .create_statement = describe_resource_kind(permission, permissions.resource, permissions.role_name)
+            });
+        }
+
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return result;
+}
+
+future<std::vector<cql3::description>> service::describe_auth(bool with_salted_hashes) const {
+    auto role_descs = co_await _role_manager->describe_roles(with_salted_hashes);
+    auto role_grant_descs = co_await _role_manager->describe_role_grants();
+    auto permission_descs = co_await describe_permissions();
+    auto attached_service_level_descs = co_await _role_manager->describe_attached_service_levels();
+
+    auto join_vectors = [] (std::vector<cql3::description>& v1, std::vector<cql3::description>& v2) {
+        v1.insert(v1.end(), std::make_move_iterator(v2.begin()), std::make_move_iterator(v2.end()));
+    };
+
+    join_vectors(role_descs, role_grant_descs);
+    join_vectors(role_descs, permission_descs);
+    join_vectors(role_descs, attached_service_level_descs);
+
+    co_return role_descs;
 }
 
 //
