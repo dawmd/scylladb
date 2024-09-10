@@ -43,6 +43,11 @@ struct certificate_info {
 
 using session_dn_func = std::function<future<std::optional<certificate_info>>()>;
 
+class unsupported_authentication_operation : public std::invalid_argument {
+public:
+    using std::invalid_argument::invalid_argument;
+};
+
 ///
 /// Abstract client for authenticating role identity.
 ///
@@ -128,6 +133,18 @@ public:
     /// If no options are set the result is an empty container.
     ///
     virtual future<custom_options> query_custom_options(std::string_view role_name) const = 0;
+
+    ///
+    /// Check if the authenticator uses salted hashes.
+    ///
+    virtual bool uses_salted_hashes() const = 0;
+
+    ///
+    /// Query the salted hash corresponding to a given role.
+    ///
+    /// If the authenticator doesn't use salted hashes, throws an `unsupported_authentication_operation` exception.
+    ///
+    virtual future<std::optional<sstring>> query_salted_hash(std::string_view role_name) const = 0;
 
     ///
     /// System resources used internally as part of the implementation. These are made inaccessible to users.

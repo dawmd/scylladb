@@ -103,6 +103,14 @@ public:
         return _authenticator->query_custom_options(role_name);
     }
 
+    virtual bool uses_salted_hashes() const override {
+        return _authenticator->uses_salted_hashes();
+    }
+
+    virtual future<std::optional<sstring>> query_salted_hash(std::string_view role_name) const override {
+        return _authenticator->query_salted_hash(role_name);
+    }
+
     virtual const resource_set& protected_resources() const override {
         return _authenticator->protected_resources();
     }

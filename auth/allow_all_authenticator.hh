@@ -75,6 +75,14 @@ public:
         return make_ready_future<custom_options>();
     }
 
+    virtual bool uses_salted_hashes() const override {
+        return false;
+    }
+
+    virtual future<std::optional<sstring>> query_salted_hash(std::string_view role_name) const override {
+        return make_exception_future<std::optional<sstring>>(unsupported_authentication_operation("query_salted_hash"));
+    }
+
     virtual const resource_set& protected_resources() const override {
         static const resource_set resources;
         return resources;

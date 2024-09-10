@@ -12,6 +12,7 @@
 #include <regex>
 #include <fmt/ranges.h>
 
+#include "auth/authenticator.hh"
 #include "utils/class_registrator.hh"
 #include "utils/to_string.hh"
 #include "data_dictionary/data_dictionary.hh"
@@ -172,6 +173,14 @@ future<> auth::certificate_authenticator::drop(std::string_view role_name, ::ser
 
 future<auth::custom_options> auth::certificate_authenticator::query_custom_options(std::string_view) const {
     co_return auth::custom_options{};
+}
+
+bool auth::certificate_authenticator::uses_salted_hashes() const {
+    return false;
+}
+
+future<std::optional<sstring>> auth::certificate_authenticator::query_salted_hash(std::string_view role_name) const {
+    throw unsupported_authentication_operation("query_salted_hash");
 }
 
 const auth::resource_set& auth::certificate_authenticator::protected_resources() const {

@@ -52,6 +52,9 @@ public:
 
     future<custom_options> query_custom_options(std::string_view role_name) const override;
 
+    bool uses_salted_hashes() const override;
+    future<std::optional<sstring>> query_salted_hash(std::string_view role_name) const override;
+
     const resource_set& protected_resources() const override;
 
     ::shared_ptr<sasl_challenge> new_sasl_challenge() const override;
