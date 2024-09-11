@@ -55,7 +55,11 @@ public:
 
     virtual future<role_set> query_all() const override;
 
-    virtual future<bool> exists(std::string_view role_name) override;
+    future<bool> exists(std::string_view role_name) const;
+
+    virtual future<bool> exists(std::string_view role_name) override {
+        return static_cast<const maintenance_socket_role_manager*>(this)->exists(role_name);
+    }
 
     virtual future<bool> is_superuser(std::string_view role_name) const override;
 

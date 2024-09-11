@@ -626,7 +626,7 @@ future<role_set> standard_role_manager::query_all() const {
     co_return roles;
 }
 
-future<bool> standard_role_manager::exists(std::string_view role_name) {
+future<bool> standard_role_manager::exists(std::string_view role_name) const {
     return find_record(_qp, role_name).then([](std::optional<record> mr) {
         return static_cast<bool>(mr);
     });

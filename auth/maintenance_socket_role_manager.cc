@@ -81,7 +81,7 @@ future<role_set> maintenance_socket_role_manager::query_all() const {
     return operation_not_supported_exception<role_set>("QUERY ALL");
 }
 
-future<bool> maintenance_socket_role_manager::exists(std::string_view role_name) {
+future<bool> maintenance_socket_role_manager::exists(std::string_view role_name) const {
     return operation_not_supported_exception<bool>("EXISTS");
 }
 
