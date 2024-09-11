@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "cql3/description.hh"
 #include "utils/assert.hh"
 #include <functional>
 #include <optional>
@@ -919,6 +920,9 @@ public:
      * (and `ALTER ADD` if the column has been re-added) to the description.
      */
     virtual std::ostream& describe(replica::database& db, std::ostream& os, bool with_internals) const override;
+
+    cql3::description describe(const replica::database& db, bool with_internals) const;
+
     // Generate ALTER TABLE/MATERIALIZED VIEW statement containing all properties with current values.
     // The method cannot be used on index, as indexes don't support alter statement.
     std::ostream& describe_alter_with_properties(replica::database& db, std::ostream& os) const;
@@ -939,6 +943,7 @@ public:
 private:
     // Print all schema properties in CQL syntax
     std::ostream& schema_properties(replica::database& db, std::ostream& os) const;
+    sstring schema_properties(const replica::database& db) const;
 public:
     const v3_columns& v3() const {
         return _v3_columns;
@@ -967,6 +972,11 @@ public:
     //      SCYLLA_ASSERT(schema->get_reversed().get() == reverse_schema.get());
     //
     schema_ptr get_reversed() const;
+
+private:
+    cql3::description describe_index(const replica::database& db) const;
+    cql3::description describe_mv(const replica::database& db, bool with_internals) const;
+    cql3::description describe_table(const replica::database& db, bool with_internals) const;
 };
 
 lw_shared_ptr<const schema> make_shared_schema(std::optional<table_id> id, std::string_view ks_name, std::string_view cf_name,

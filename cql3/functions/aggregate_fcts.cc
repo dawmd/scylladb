@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <ranges>
 #include <type_traits>
 
 using namespace cql3;
@@ -383,6 +384,44 @@ std::ostream& user_aggregate::describe(std::ostream& os) const {
     os << ";";
 
     return os;
+}
+
+cql3::description user_aggregate::describe() const {
+    using std::literals::string_view_literals::operator""sv;
+
+    utils::small_vector<sstring, 6> create_statement_bits{};
+
+    create_statement_bits.push_back(seastar::format("CREATE AGGREGATE {}.{}({})",
+            cql3::util::maybe_quote(name().keyspace), cql3::util::maybe_quote(name().name),
+            arg_types() | std::views::transform([] (const data_type& type) { return type->cql3_type_name(); })
+                        | std::views::join_with(", "sv)));
+
+    create_statement_bits.push_back(seastar::format("SFUNC {}", cql3::util::maybe_quote(_agg.aggregation_function->name().name)));
+    create_statement_bits.push_back(seastar::format("STYPE {}", _agg.aggregation_function->return_type()->cql3_type_name()));
+
+    if (is_reducible()) {
+        create_statement_bits.push_back(seastar::format("REDUCEFUNC {}",
+                cql3::util::maybe_quote(_agg.state_reduction_function->name().name)));
+    }
+
+    if (has_finalfunc()) {
+        create_statement_bits.push_back(seastar::format("FINALFUNC {}",
+                cql3::util::maybe_quote(_agg.state_to_result_function->name().name)));
+    }
+
+    if (_agg.initial_state) {
+        create_statement_bits.push_back(seastar::format("INITCOND {}",
+                _agg.aggregation_function->return_type()->deserialize(bytes_view(*_agg.initial_state)).to_parsable_string()));
+    }
+
+    sstring create_statement = seastar::format("{};", create_statement_bits | std::views::join_with('\n'));
+
+    return cql3::description {
+        .keyspace = name().keyspace,
+        .type = "aggregate",
+        .name = name().name,
+        .create_statement = std::move(create_statement)
+    };
 }
 
 shared_ptr<aggregate_function>

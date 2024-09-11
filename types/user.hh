@@ -8,9 +8,12 @@
 
 #pragma once
 
+#include "cql3/description.hh"
 #include "types/types.hh"
 #include "types/tuple.hh"
 #include "data_dictionary/keyspace_element.hh"
+
+#include <vector>
 
 class user_type_impl : public tuple_type_impl, public data_dictionary::keyspace_element {
     using intern = type_interning_helper<user_type_impl, sstring, bytes, std::vector<bytes>, std::vector<data_type>, bool>;
@@ -63,6 +66,8 @@ public:
     virtual sstring element_name() const override { return get_name_as_string(); }
     virtual sstring element_type() const override { return "type"; }
     virtual std::ostream& describe(std::ostream& os) const override;
+
+    cql3::description describe() const;
 
 private:
     static sstring make_name(sstring keyspace,

@@ -23,6 +23,8 @@
 #include <array>
 #include "replica/database.hh"
 
+#include <ranges>
+
 namespace data_dictionary {
 
 schema_ptr
@@ -376,7 +378,51 @@ std::ostream& keyspace_metadata::describe(replica::database& db, std::ostream& o
     return os;
 }
 
+cql3::description keyspace_metadata::describe(const replica::database& db) const {
+    using std::literals::string_view_literals::operator""sv;
+
+    auto join_options = [] (const auto& map_range) {
+        return map_range | std::views::transform([] (const auto& option) {
+            const auto& [key, value] = option;
+            return seastar::format("{}: {}", cql3::util::single_quote(key), cql3::util::single_quote(value));
+        }) | std::views::join_with(", "sv);
+    };
+
+    const auto quoted_strategy_name = cql3::util::single_quote(_strategy_name);
+    const auto replication_options = _strategy_options.empty()
+            ? seastar::format("'class': {}", quoted_strategy_name)
+            : seastar::format("'class': {}, {}", join_options(_strategy_options));
+
+    const auto quoted_storage_type = cql3::util::single_quote(_storage_options->type_string());
+    const auto storage_options_map = _storage_options->to_map();
+    const auto storage_options = storage_options_map.empty()
+            ? seastar::format("'type': {}", quoted_storage_type)
+            : seastar::format("'type': {}, {}", quoted_storage_type, join_options(storage_options_map));
+
+    const auto tablet_options = std::invoke([&] -> sstring {
+        if (db.features().tablets) {
+            if (!_initial_tablets.has_value()) {
+                return " AND tablets = {'enabled': false}";
+            } else if (_initial_tablets.value() > 0) {
+                return seastar::format(" AND tablets = {{{'initial': {}}}}", _initial_tablets.value());
+            }
+        }
+        return "";
+    });
+
+    sstring create_statement = seastar::format(
+            "CREATE KEYSPACE {} WITH REPLICATION = {{{}}} AND storage = {{{}}} AND durable_writes = {}{};",
+            cql3::util::maybe_quote(_name), replication_options, storage_options, _durable_writes, tablet_options);
+
+    return cql3::description {
+        .keyspace = name(),
+        .type = "keyspace",
+        .name = name(),
+        .create_statement = std::move(create_statement)
+    };
 }
+
+} // namespace data_dictionary
 
 template <>
 struct fmt::formatter<data_dictionary::user_types_metadata> {

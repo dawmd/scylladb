@@ -9,6 +9,7 @@
 #include <boost/lexical_cast.hpp>
 #include <algorithm>
 #include "cql3/cql3_type.hh"
+#include "cql3/description.hh"
 #include "cql3/lists.hh"
 #include "cql3/maps.hh"
 #include "cql3/sets.hh"
@@ -16,6 +17,7 @@
 #include "concrete_types.hh"
 #include <exception>
 #include <iterator>
+#include <ranges>
 #include <seastar/core/print.hh>
 #include <seastar/core/shared_ptr.hh>
 #include "types/types.hh"
@@ -3245,6 +3247,24 @@ std::ostream& user_type_impl::describe(std::ostream& os) const {
     os << ");";
 
     return os;
+}
+
+cql3::description user_type_impl::describe() const {
+    using std::literals::string_view_literals::operator""sv;
+
+    auto argument_list_view = std::views::zip_transform([] (std::string_view field_name, const data_type& type) {
+        return seastar::format("    {} {}", cql3::util::maybe_quote(field_name), type->cql3_type_name());
+    }, _string_field_names, _types) | std::views::join_with(",\n"sv);
+
+    sstring create_statement = seastar::format("CREATE TYPE {}.{} (\n{}\n);",
+            cql3::util::maybe_quote(_keyspace), get_name_as_cql_string(), argument_list_view);
+
+    return cql3::description {
+        .keyspace = _keyspace,
+        .type = "type",
+        .name = get_name_as_string(),
+        .create_statement = std::move(create_statement)
+    };
 }
 
 data_type

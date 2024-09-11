@@ -8,7 +8,11 @@
 
 #include <seastar/core/on_internal_error.hh>
 #include <map>
+#include "cql3/description.hh"
+#include "cql3/statements/index_target.hh"
 #include "db/view/view.hh"
+#include "index/secondary_index_manager.hh"
+#include "keys.hh"
 #include "timestamp.hh"
 #include "utils/assert.hh"
 #include "utils/UUID_gen.hh"
@@ -779,6 +783,17 @@ static std::ostream& map_as_cql_param(std::ostream& os, const std::map<sstring, 
     return os;
 }
 
+static sstring map_as_cql_param(const std::map<sstring, sstring>& map, bool first = true) {
+    using std::literals::string_view_literals::operator""sv;
+
+    const auto map_view = map | std::views::transform([] (const auto& pair) {
+        const auto& [key, value] = pair;
+        return seastar::format("'{}': '{}'", key, value);
+    }) | std::views::join_with(", "sv);
+
+    return seastar::format("{}{}", first ? ""sv : ", "sv, map_view);
+}
+
 std::ostream& operator<<(std::ostream& os, const schema& s) {
     fmt::print(os, "{}", s);
     return os;
@@ -804,11 +819,18 @@ static std::ostream& column_definition_as_cql_key(std::ostream& os, const column
     return os;
 }
 
-static bool is_global_index(replica::database& db, const table_id& id, const schema& s) {
+static sstring column_definition_as_cql_key(const column_definition& cdef) {
+    using std::literals::string_view_literals::operator""sv;
+
+    return seastar::format("{} {}{}", cdef.name_as_cql_string(), cdef.type->cql3_type_name(),
+            cdef.kind == column_kind::static_column ? " STATIC"sv : ""sv);
+}
+
+static bool is_global_index(const replica::database& db, const table_id& id, const schema& s) {
     return  db.find_column_family(id).get_index_manager().is_global_index(s);
 }
 
-static bool is_index(replica::database& db, const table_id& id, const schema& s) {
+static bool is_index(const replica::database& db, const table_id& id, const schema& s) {
     return  db.find_column_family(id).get_index_manager().is_index(s);
 }
 
@@ -994,6 +1016,279 @@ std::ostream& schema::describe(replica::database& db, std::ostream& os, bool wit
     return os;
 }
 
+static sstring describe_primary_key(const auto& pk_range, const auto& ck_range) {
+    using std::literals::string_view_literals::operator""sv;
+
+    const auto pk_column_part = pk_range
+            | std::views::transform(std::mem_fn(&column_definition::name_as_cql_string))
+            | std::views::join_with(", "sv);
+
+    const auto ck_column_part = ck_range
+            | std::views::transform(std::mem_fn(&column_definition::name_as_cql_string))
+            | std::views::join_with(", "sv);
+
+    auto pk_maybe_with_parentheses_part = pk_range.size() > 1
+            ? seastar::format("({})", pk_column_part)
+            : seastar::format("{}", pk_column_part);
+
+    return ck_range.empty()
+            ? pk_maybe_with_parentheses_part
+            : seastar::format("{}, {}", pk_maybe_with_parentheses_part, ck_column_part);
+}
+
+static sstring describe_clustering_order(const schema& s) {
+    using std::literals::string_view_literals::operator""sv;
+
+    if (s.clustering_key_columns().empty()) {
+        return "";
+    }
+
+    const auto ck_columns = s.clustering_key_columns()
+            | std::views::transform([] (const column_definition& cdef) {
+                return seastar::format("{} {}", cdef.name_as_cql_string(),
+                        cdef.type->is_reversed() ? "DESC"sv : "ASC"sv);
+            })
+            | std::views::join_with(", "sv);
+
+    return seastar::format("CLUSTERING ORDER BY ({})", ck_columns);
+}
+
+static std::vector<sstring> describe_dropped_columns(const schema& s) {
+    std::vector<sstring> result;
+
+    const auto formatted_ks_name = cql3::util::maybe_quote(s.ks_name());
+    const auto formatted_cf_name = cql3::util::maybe_quote(s.cf_name());
+
+    for (const auto& [col_name, col_info] : s.dropped_columns()) {
+        result.push_back(seastar::format("ALTER TABLE {}.{} DROP {} USING TIMESTAMP = {};",
+                formatted_ks_name, formatted_cf_name,
+                cql3::util::maybe_quote(col_name), col_info.timestamp));
+        
+        auto cdef_ptr = s.get_column_definition(to_bytes(col_name));
+        if (cdef_ptr) {
+            result.push_back(seastar::format("ALTER TABLE {}.{} ADD {};",
+                    formatted_ks_name, formatted_cf_name, column_definition_as_cql_key(*cdef_ptr)));
+        }
+    }
+
+    return result;
+}
+
+cql3::description schema::describe_index(const replica::database& db) const {
+    using std::literals::string_view_literals::operator""sv;
+
+    SCYLLA_ASSERT(is_view() && is_index(db, view_info()->base_id(), *this));
+
+    const auto view_base_id = view_info()->base_id();
+    const auto base_schema_ptr = db.find_schema(view_base_id);
+    const auto index_name = secondary_index::index_name_from_table_name(cf_name());
+
+    if (!base_schema_ptr->all_indices().contains(index_name)) {
+        on_internal_error(dblog, format("Couldn't find index {} on table {}", index_name, base_schema_ptr->cf_name()));
+    }
+
+    // Global and local indexes may only contain one column.
+    // Local indexes support multi column indexes via custom indexes, but at least
+    // for now, Scylla supports no custom indexes.
+    const auto index_metadata = base_schema_ptr->all_indices().at(index_name);
+    const auto target_str = secondary_index::target_parser::get_target_column_name_from_string(
+            index_metadata.options().at(cql3::statements::index_target::target_option_name));
+    const auto base_column_name = cql3_parser::index_target::column_name_from_target_string(target_str);
+    const auto* base_column_ptr = base_schema_ptr->get_column_definition(to_bytes(base_column_name));
+
+    if (!base_column_ptr) {
+        on_internal_error(dblog, format("Couldn't find base column {} in table {} for index {}",
+                base_column_name, base_schema_ptr->cf_name(), index_name));
+    }
+
+    const bool is_local = !is_global_index(db, view_base_id, *this);
+    const auto formatted_index_name = cql3::util::maybe_quote(index_name);
+    const auto formatted_ks_name = cql3::util::maybe_quote(ks_name());
+    const auto formatted_view_name = cql3::util::maybe_quote(view_info()->base_name());
+
+    const auto& base_column_type = base_column_ptr->type;
+
+    const auto local_index_part = is_local
+            ? seastar::format("({}), ", partition_key_columns()
+                    | std::views::transform(std::mem_fn(&column_definition::name_as_cql_string))
+                    | std::views::join_with(", "sv))
+            : "";
+
+    const auto base_column_part = std::invoke([&] -> sstring {
+        // Indexes on frozen collection require full() function but the function is dropped while saving the target.
+        if (base_column_type->is_collection() && !base_column_type->is_multi_cell()) {
+            return seastar::format("full({})", cql3::util::maybe_quote(base_column_name));
+        }
+        // Indexes on set are saved with target keys() but only valid targets when creating the index are values() or just the column name.
+        // Since indexes on list are always printed with values() target (it's always added even if the index is created only with column name),
+        // always add values() target to index to set.
+        else if (base_column_type->is_set() && target_str.starts_with("keys(")) {
+            return seastar::format("values({})", cql3::util::maybe_quote(base_column_name));
+        }
+        // Target string is already quoted if needed.
+        else {
+            return target_str;
+        }
+    });
+
+    auto create_statement = seastar::format("CREATE INDEX {} ON {}.{}({}{});",
+            cql3::util::maybe_quote(index_name), cql3::util::maybe_quote(ks_name()),
+            cql3::util::maybe_quote(view_info()->base_name()), local_index_part, base_column_part);
+
+    return cql3::description {
+        .keyspace = ks_name(),
+        .type = "index",
+        .name = cf_name(),
+        .create_statement = std::move(create_statement)
+    };
+}
+
+cql3::description schema::describe_mv(const replica::database& db, bool with_internals) const {
+    using std::literals::string_view_literals::operator""sv;
+
+    SCYLLA_ASSERT(is_view() && !is_index(db, view_info()->base_id(), *this));
+
+    const auto formatted_ks_name = cql3::util::maybe_quote(ks_name());
+    const auto formatted_cf_name = cql3::util::maybe_quote(cf_name());
+
+    const auto column_definition_part = all_columns()
+            | std::views::filter(std::not_fn(std::mem_fn(&column_definition::is_hidden_from_cql)))
+            | std::views::transform(std::mem_fn(&column_definition::name_as_cql_string))
+            | std::views::join_with(", "sv);
+
+    const auto& where_clause = view_info()->where_clause();
+    const auto pk_whole_part = describe_primary_key(partition_key_columns(), clustering_key_columns());
+    const auto id_part = with_internals
+            ? seastar::format("ID = {}\nAND ", id())
+            : "";
+
+    const auto clustering_order_part = std::invoke([&] -> sstring {
+        const auto clustering_order_str = describe_clustering_order(*this);
+        if (clustering_order_str.empty()) {
+            return "";
+        }
+        return seastar::format("{}\n    AND ", clustering_order_str);
+    });
+
+    const auto compact_storage_part = is_compact_table()
+            ? "COMPACT STORAGE\n    AND "sv
+            : ""sv;
+
+    const auto schema_props = schema_properties(db);
+
+    const auto dropped_column_descs = describe_dropped_columns(*this);
+    const auto joined_dropped_column_desc = dropped_column_descs | std::views::transform([] (const auto& desc) {
+        return seastar::format("\n{}", desc);
+    }) | std::views::join;
+
+    sstring create_statement = seastar::format(
+            "CREATE MATERIALIZED VIEW {}.{} AS\n"
+            "    SELECT {}\n"
+            "    FROM {}.{}\n"
+            "    WHERE {}\n"
+            "    PRIMARY KEY ({})\n"
+            "    WITH {}{}{}{};\n"
+            "{}",
+            formatted_ks_name, formatted_cf_name,
+            column_definition_part,
+            formatted_ks_name, cql3::util::maybe_quote(view_info()->base_name()),
+            where_clause,
+            pk_whole_part,
+            id_part, clustering_order_part, compact_storage_part, schema_props,
+            joined_dropped_column_desc);
+
+    return cql3::description {
+        .keyspace = ks_name(),
+        .type = "view",
+        .name = cf_name(),
+        .create_statement = std::move(create_statement)
+    };
+}
+
+cql3::description schema::describe_table(const replica::database& db, bool with_internals) const {
+    using std::literals::string_view_literals::operator""sv;
+
+    SCYLLA_ASSERT(!is_view());
+
+    const auto formatted_ks_name = cql3::util::maybe_quote(ks_name());
+    const auto formatted_cf_name = cql3::util::maybe_quote(cf_name());
+
+    const auto column_part_one = all_columns()
+            | std::views::filter([&] (const column_definition& cdef) {
+                // If the column has been re-added after a drop, we don't include it right away. Instead, we'll add the
+                // dropped one first below, then we'll issue the DROP and then the actual ADD for this column, thus
+                // simulating the proper sequence of events.
+                return !(with_internals && dropped_columns().contains(cdef.name_as_text()));
+            })
+            | std::views::transform([] (const column_definition& cdef) {
+                return seastar::format("\n    {},", column_definition_as_cql_key(cdef));
+            })
+            | std::views::join;
+    const auto column_part_two = with_internals
+            ? seastar::format("{}", dropped_columns()
+                    | std::views::transform([] (const auto& pair) {
+                        const auto& [col_name, col_info] = pair;
+                        return fmt::format("\n    {} {},", cql3::util::maybe_quote(col_name), col_info.type->cql3_type_name());
+                    })
+                    | std::views::join)
+            : "";
+    const auto column_part = seastar::format("{}{}", column_part_one, column_part_two);
+
+    const auto pk_whole_part = describe_primary_key(partition_key_columns(), clustering_key_columns());
+
+    const auto id_part = with_internals
+            ? seastar::format("ID = {}\nAND ", id())
+            : "";
+
+    const auto clustering_order_part = std::invoke([&] -> sstring {
+        const auto clustering_order_str = describe_clustering_order(*this);
+        if (clustering_order_str.empty()) {
+            return "";
+        }
+        return seastar::format("{}\n    AND ", clustering_order_str);
+    });
+
+    const auto compact_storage_part = is_compact_table()
+            ? "COMPACT STORAGE\n    AND "sv
+            : ""sv;
+
+    const auto schema_props = schema_properties(db);
+
+    const auto dropped_column_descs = describe_dropped_columns(*this);
+    const auto joined_dropped_column_desc = dropped_column_descs | std::views::transform([] (const auto& desc) {
+        return seastar::format("\n{}", desc);
+    }) | std::views::join;
+
+    sstring create_statement = seastar::format(
+            "CREATE TABLE {}.{} ({}\n"
+            "    PRIMARY KEY ({})\n"
+            ") WITH {}{}{}{};\n"
+            "{}",
+            formatted_ks_name, formatted_cf_name, column_part,
+            pk_whole_part,
+            id_part, clustering_order_part, compact_storage_part, schema_props,
+            joined_dropped_column_desc);
+
+    return cql3::description {
+        .keyspace = ks_name(),
+        .type = "table",
+        .name = cf_name(),
+        .create_statement = std::move(create_statement)
+    };
+}
+
+cql3::description schema::describe(const replica::database& db, bool with_internals) const {
+    if (is_view()) {
+        if (is_index(db, view_info()->base_id(), *this)) {
+            return describe_index(db);
+        } else {
+            return describe_mv(db, with_internals);
+        }
+    }
+
+    return describe_table(db, with_internals);
+}
+
 std::ostream& schema::schema_properties(replica::database& db, std::ostream& os) const {
     os << "bloom_filter_fp_chance = " << bloom_filter_fp_chance();
     os << "\n    AND caching = {";
@@ -1024,6 +1319,53 @@ std::ostream& schema::schema_properties(replica::database& db, std::ostream& os)
         }
     }
     return os;
+}
+
+sstring schema::schema_properties(const replica::database& db) const {
+    const auto main_part = seastar::format(
+            "bloom_filter_fp_chance = {}\n"
+            "    AND caching = {{{}}}\n"
+            "    AND comment = {}\n"
+            "    AND compaction = {{'class': '{}'{}}}\n"
+            "    AND compression = {{{}}}"
+            "    AND crc_check_chance = {}\n"
+            "    AND default_time_to_live = {}\n"
+            "    AND gc_grace_seconds = {}\n"
+            "    AND max_index_interval = {}\n"
+            "    AND memtable_flush_period_in_ms = {}\n"
+            "    AND min_index_interval = {}\n"
+            "    AND speculative_retry = '{}';",
+            bloom_filter_fp_chance(),
+            map_as_cql_param(caching_options().to_map()),
+            cql3::util::single_quote(comment()),
+            sstables::compaction_strategy::name(compaction_strategy()),
+            map_as_cql_param(compaction_strategy_options(), false),
+            map_as_cql_param(get_compressor_params().get_options()),
+            crc_check_chance(),
+            default_time_to_live().count(),
+            gc_grace_seconds().count(),
+            max_index_interval(),
+            memtable_flush_period(),
+            min_index_interval(),
+            speculative_retry().to_sstring());
+
+    auto extension_view = extensions() | std::views::transform([] (const auto& pair) {
+        const auto& [type, ext] = pair;
+        return seastar::format("\n    AND {} = {}", type, ext->options_to_string());
+    }) | std::views::join;
+
+    const sstring mv_part = std::invoke([&] -> sstring {
+        if (is_view() && !is_index(db, view_info()->base_id(), *this)) {
+            auto is_sync_update = db::find_tag(*this, db::SYNCHRONOUS_VIEW_UPDATES_TAG_KEY);
+            if (is_sync_update.has_value()) {
+                return seastar::format("\n    AND synchronous_updates = {}", *is_sync_update);
+            }
+        }
+
+        return "";
+    });
+
+    return seastar::format("{}{}{}", main_part, extension_view, mv_part);
 }
 
 std::ostream& schema::describe_alter_with_properties(replica::database& db, std::ostream& os) const {

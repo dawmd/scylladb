@@ -7,11 +7,14 @@
  */
 
 #include "user_function.hh"
+#include "cql3/description.hh"
 #include "cql3/util.hh"
 #include "log.hh"
 #include "lang/wasm.hh"
 
 #include <seastar/core/thread.hh>
+
+#include <ranges>
 
 namespace cql3 {
 namespace functions {
@@ -94,5 +97,37 @@ std::ostream& user_function::describe(std::ostream& os) const {
     return os;
 }
 
+description user_function::describe() const {
+    using std::literals::string_view_literals::operator""sv;
+
+    auto argument_list_view = std::views::zip_transform([] (std::string_view arg_name, const data_type& type) {
+        return seastar::format("{} {}", arg_name, type->cql3_type_name());
+    }, _arg_names, _arg_types) | std::views::join_with(", "sv);
+
+    constexpr std::string_view udf_template =
+            "CREATE FUNCTION {}.{}({})\n"
+            "{} ON NULL INPUT\n"
+            "RETURNS {}\n"
+            "LANGUAGE {}\n"
+            "AS $$\n"
+            "{}\n"
+            "$$;";
+
+    sstring create_statement = seastar::format(udf_template.data(),
+            cql3::util::maybe_quote(name().keyspace), cql3::util::maybe_quote(name().name), argument_list_view,
+            _called_on_null_input ? "CALLED"sv : "RETURNS NULL"sv,
+            _return_type->cql3_type_name(),
+            _language,
+            _body);
+
+    return description {
+        .keyspace = name().keyspace,
+        .type = "function",
+        .name = name().name,
+        .create_statement = std::move(create_statement)
+    };
 }
-}
+
+} // namespace functions
+
+} // namespace cql3
