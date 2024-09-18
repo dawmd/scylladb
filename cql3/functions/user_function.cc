@@ -13,6 +13,8 @@
 
 #include <seastar/core/thread.hh>
 
+#include <ranges>
+
 namespace cql3 {
 namespace functions {
 
@@ -67,29 +69,31 @@ bytes_opt user_function::execute(std::span<const bytes_opt> parameters) {
 }
 
 std::ostream& user_function::describe(std::ostream& os) const {
-    auto ks = cql3::util::maybe_quote(name().keyspace);
-    auto na = cql3::util::maybe_quote(name().name);
+    using std::literals::string_view_literals::operator""sv;
 
-    os << "CREATE FUNCTION " << ks << "." << na << "(";
-    for (size_t i = 0; i < _arg_names.size(); i++) {
-        if (i > 0) {
-            os << ", ";
-        }
-        os << _arg_names[i] << " " << _arg_types[i]->cql3_type_name();
-    }
-    os << ")\n";
+    auto arg_type_names = _arg_types | std::views::transform(std::mem_fn(&abstract_type::cql3_type_name));
+    auto arg_list = std::views::zip(_arg_names, arg_type_names)
+            | std::views::transform([] (std::tuple<std::string_view, std::string_view> arg) {
+                const auto [arg_name, arg_type] = arg;
+                return seastar::format("{} {}", arg_name, arg_type);
+            })
+            | std::views::join_with(", "sv);
 
-    if (_called_on_null_input) {
-        os << "CALLED";
-    } else {
-        os << "RETURNS NULL";
-    }
-    os << " ON NULL INPUT\n"
-       << "RETURNS " << _return_type->cql3_type_name() << "\n"
-       << "LANGUAGE " << _language << "\n"
-       << "AS $$\n"
-       << _body << "\n"
-       << "$$;";
+    const auto description = seastar::format(
+            "CREATE FUNCTION {}.{}({})\n"
+            "{} ON NULL INPUT\n"
+            "RETURNS {}\n"
+            "LANGUAGE {}\n"
+            "AS $$\n"
+            "{}\n"
+            "$$;",
+            cql3::util::maybe_quote(name().keyspace), cql3::util::maybe_quote(name().name), arg_list,
+            _called_on_null_input ? "CALLED"sv : "RETURNS NULL"sv,
+            _return_type->cql3_type_name(),
+            _language,
+            _body);
+
+    fmt::print(os, "{}", description);
 
     return os;
 }
