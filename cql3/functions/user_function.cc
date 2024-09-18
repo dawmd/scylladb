@@ -84,9 +84,7 @@ std::ostream& user_function::describe(std::ostream& os) const {
             "{} ON NULL INPUT\n"
             "RETURNS {}\n"
             "LANGUAGE {}\n"
-            "AS $$\n"
-            "{}\n"
-            "$$;",
+            "AS $${}$$;",
             cql3::util::maybe_quote(name().keyspace), cql3::util::maybe_quote(name().name), arg_list,
             _called_on_null_input ? "CALLED"sv : "RETURNS NULL"sv,
             _return_type->cql3_type_name(),
