@@ -71,7 +71,7 @@ bytes_opt user_function::execute(std::span<const bytes_opt> parameters) {
 std::ostream& user_function::describe(std::ostream& os) const {
     using std::literals::string_view_literals::operator""sv;
 
-    auto arg_type_names = _arg_types | std::views::transform(std::mem_fn(&abstract_type::cql3_type_name));
+    auto arg_type_names = _arg_types | std::views::transform(std::mem_fn(&abstract_type::cql3_type_name_without_frozen));
     auto arg_list = std::views::zip(_arg_names, arg_type_names)
             | std::views::transform([] (std::tuple<std::string_view, std::string_view> arg) {
                 const auto [arg_name, arg_type] = arg;
@@ -87,7 +87,7 @@ std::ostream& user_function::describe(std::ostream& os) const {
             "AS $${}$$;",
             cql3::util::maybe_quote(name().keyspace), cql3::util::maybe_quote(name().name), arg_list,
             _called_on_null_input ? "CALLED"sv : "RETURNS NULL"sv,
-            _return_type->cql3_type_name(),
+            _return_type->cql3_type_name(), // TODO: Also `cql3_type_name_without_frozen`?
             _language,
             _body);
 
