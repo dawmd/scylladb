@@ -49,7 +49,7 @@ const std::chrono::seconds manager::hints_flush_period = std::chrono::seconds(10
 manager::manager(sstring hints_directory, host_filter filter, int64_t max_hint_window_ms, resource_manager& res_manager, distributed<replica::database>& db)
     : _hints_dir(fs::path(hints_directory) / format("{:d}", this_shard_id()))
     , _host_filter(std::move(filter))
-    , _max_hint_window_us(max_hint_window_ms * 1000)
+    , _max_hint_window_us(1000 * 1000 * 3)//max_hint_window_ms * 1000)
     , _local_db(db.local())
     , _resource_manager(res_manager)
 {}

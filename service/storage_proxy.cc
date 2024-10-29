@@ -8,6 +8,7 @@
  * SPDX-License-Identifier: (AGPL-3.0-or-later and Apache-2.0)
  */
 
+#include <chrono>
 #include <random>
 #include <seastar/core/sleep.hh>
 #include <seastar/util/defer.hh>
@@ -1226,6 +1227,17 @@ public:
         ++_stats.writes;
     }
     virtual ~abstract_write_response_handler() {
+        if (_type == db::write_type::VIEW) {
+            const sstring error_str = std::invoke([&] () -> sstring {
+                switch (_error) {
+                    case error::NONE: return "NONE";
+                    case error::FAILURE: return "FAILURE";
+                    case error::RATE_LIMIT: return "RATE_LIMIT";
+                    case error::TIMEOUT: return "TIMEOUT";
+                }
+            });
+            slogger.info("~ABRH[{}]: cl={}, cl_achieved={}, targets={}, dead_endpoints={}, error={}", _id, _cl, _cl_achieved, _targets, _dead_endpoints, error_str);
+        }
         --_stats.writes;
         if (_cl_achieved) {
             if (_throttled) {
@@ -1270,6 +1282,7 @@ public:
     void signal(size_t nr = 1) {
         _cl_acks += nr;
         if (!_cl_achieved && _cl_acks >= _total_block_for) {
+            slogger.info("SIGNAL[{}]: nr={}, cl={}, cl_achieved={}, cl_acks={}, total_block_for={}, cl_achieved <- true", _id, nr, _cl, _cl_achieved, _cl_acks, _total_block_for);
              _cl_achieved = true;
             delay(get_trace_state(), [] (abstract_write_response_handler* self) {
                 if (self->_proxy->need_throttle_writes()) {
@@ -2980,6 +2993,7 @@ storage_proxy::hint_to_dead_endpoints(response_id_type id, db::consistency_level
     auto& h = *get_write_response_handler(id);
 
     size_t hints = hint_to_dead_endpoints(h._mutation_holder, h.get_dead_endpoints(), h._type, h.get_trace_state());
+    slogger.info("HTDE: RID[{}]: cl={}, hints={}", id, cl, hints);
 
     if (cl == db::consistency_level::ANY) {
         // for cl==ANY hints are counted towards consistency
@@ -3038,7 +3052,7 @@ future<result<>> storage_proxy::mutate_begin(unique_response_handler_vector ids,
         // frozen_mutation copy, or manage handler live time differently.
         hint_to_dead_endpoints(response_id, cl);
 
-        auto timeout = timeout_opt.value_or(clock_type::now() + std::chrono::milliseconds(_db.local().get_config().write_request_timeout_in_ms()));
+        auto timeout = timeout_opt.value_or(clock_type::now() + std::chrono::milliseconds(10 * 1000));//std::chrono::milliseconds(_db.local().get_config().write_request_timeout_in_ms()));
         // call before send_to_live_endpoints() for the same reason as above
         auto f = response_wait(response_id, timeout);
         send_to_live_endpoints(protected_response.release(), timeout); // response is now running and it will either complete or timeout
@@ -3601,7 +3615,7 @@ future<> storage_proxy::send_to_endpoint(
     if (type == db::write_type::VIEW) {
         // View updates have a near-infinite timeout to avoid incurring the extra work of writting hints
         // and to apply backpressure.
-        timeout = clock_type::now() + 5min;
+        timeout = clock_type::now() + 3s;//5min;
     }
     return mutate_prepare(std::array{std::move(m)}, cl, type, /* does view building should hold a real permit */ empty_service_permit(),
             [this, tr_state, target = std::array{target}, pending_endpoints = std::move(pending_endpoints), &stats] (
