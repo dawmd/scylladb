@@ -1606,9 +1606,9 @@ query::max_result_size database::get_query_max_result_size() const {
 
 reader_concurrency_semaphore& database::get_reader_concurrency_semaphore() {
     switch (classify_request(_dbcfg)) {
-        case request_class::user: return _read_concurrency_sem;
-        case request_class::system: return _system_read_concurrency_sem;
-        case request_class::maintenance: return _streaming_concurrency_sem;
+        case request_class::user: dblog.info("READ CONCURRENCY SEM"); return _read_concurrency_sem;
+        case request_class::system: dblog.info("SYSTEM READ CONCURRENCY SEM"); return _system_read_concurrency_sem;
+        case request_class::maintenance: dblog.info("STREAMING READ CONCURRENCY SEM"); return _streaming_concurrency_sem;
     }
     std::abort();
 }
@@ -2252,9 +2252,13 @@ future<> database::stop() {
     co_await _querier_cache.stop();
     dblog.info("Stopping concurrency semaphores");
     co_await _read_concurrency_sem.stop();
+    dblog.info("BERORE SEM 1");
     co_await _streaming_concurrency_sem.stop();
+    dblog.info("BERORE SEM 2");
     co_await _compaction_concurrency_sem.stop();
+    dblog.info("BERORE SEM 3");
     co_await _system_read_concurrency_sem.stop();
+    dblog.info("BERORE VIEW UPDATE READ SEM");
     co_await _view_update_read_concurrency_sem.stop();
     dblog.info("Joining memtable update action");
     co_await _update_memtable_flush_static_shares_action.join();

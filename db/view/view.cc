@@ -2007,7 +2007,10 @@ view_builder::view_builder(replica::database& db, db::system_keyspace& sys_ks, d
         , _qp(qp)
         , _mnotifier(mn)
         , _vug(vug)
-        , _permit(_db.get_reader_concurrency_semaphore().make_tracking_only_permit(nullptr, "view_builder", db::no_timeout, {})) {
+        , _permit([&] {
+            vlogger.info("GETTING PERMIT!!!");
+            return _db.get_reader_concurrency_semaphore().make_tracking_only_permit(nullptr, "view_builder", db::no_timeout, {});
+        } ()) {
     setup_metrics();
 }
 
@@ -2099,6 +2102,7 @@ future<> view_builder::drain() {
     co_await coroutine::parallel_for_each(_base_to_build_step, [] (std::pair<const table_id, build_step>& p) {
         return p.second.reader.close();
     });
+    vlogger.info("View builder has been drained");
 }
 
 future<> view_builder::stop() {
