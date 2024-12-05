@@ -1862,6 +1862,7 @@ future<> view_update_generator::mutate_MV(
         service::allow_hints allow_hints,
         wait_for_all_updates wait_for_all)
 {
+    vlogger.info("MUTATE MV: enter");
     auto base_ermp = base->table().get_effective_replication_map();
     static constexpr size_t max_concurrent_updates = 128;
     co_await utils::get_local_injector().inject("delay_before_get_view_natural_endpoint", 8000ms);
@@ -2103,6 +2104,32 @@ future<> view_builder::drain() {
         return p.second.reader.close();
     });
     vlogger.info("View builder has been drained");
+}
+
+future<> view_builder::foo() {
+    if (_as.abort_requested()) {
+        vlogger.info("FOO HAS SEEN ABORT REQUESTED");
+        co_return;
+    }
+    vlogger.info("FOO STARTS!");
+    _as.request_abort();
+    vlogger.info("FOO STEP -1");
+    co_await std::move(_started);
+    vlogger.info("FOO STEP 0");
+    co_await _mnotifier.unregister_listener(this);
+    vlogger.info("FOO STEP 0.5");
+    co_await _vug.drain();
+    vlogger.info("FOO STEP 1");
+    co_await _sem.wait();
+    vlogger.info("FOO STEP 2");
+    _sem.broken();
+    vlogger.info("FOO STEP 3");
+    co_await _build_step.join();
+    vlogger.info("FOO STEP 4");
+    co_await coroutine::parallel_for_each(_base_to_build_step, [] (std::pair<const table_id, build_step>& p) {
+        return p.second.reader.close();
+    });
+    vlogger.info("FOO ENDS");
 }
 
 future<> view_builder::stop() {

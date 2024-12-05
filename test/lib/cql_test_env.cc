@@ -918,6 +918,9 @@ private:
             _sys_dist_ks.start(std::ref(_qp), std::ref(_mm), std::ref(_proxy)).get();
 
             _view_builder.start(std::ref(_db), std::ref(_sys_ks), std::ref(_sys_dist_ks), std::ref(_mnotifier), std::ref(_view_update_generator), std::ref(group0_client), std::ref(_qp)).get();
+            auto stop_view_builder = defer([this] {
+                _view_builder.stop().get();
+            });
 
             if (cfg_in.need_remote_proxy) {
                 _proxy.invoke_on_all(&service::storage_proxy::start_remote, std::ref(_ms), std::ref(_gossiper), std::ref(_mm), std::ref(_sys_ks)).get();
@@ -1026,9 +1029,10 @@ private:
                 return vb.start(_mm.local());
             }).get();
 
-            auto stop_view_builder = defer([this] {
+            auto stop_view_builder_new = defer([this] {
                 _view_builder.stop().get();
             });
+            stop_view_builder.cancel();
 
             // Create the testing user.
             try {

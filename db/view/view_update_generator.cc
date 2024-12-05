@@ -408,6 +408,7 @@ future<> view_update_generator::generate_and_propagate_view_updates(const replic
         tracing::trace_state_ptr tr_state,
         gc_clock::time_point now,
         db::timeout_clock::time_point timeout) {
+    vug_logger.info("GUPVU: enter");
     auto base_token = m.token();
     auto m_schema = m.schema();
     view_update_builder builder = make_view_update_builder(
@@ -469,6 +470,7 @@ future<> view_update_generator::generate_and_propagate_view_updates(const replic
             co_await mutate_MV(base, base_token, std::move(*updates), table.view_stats(), *table.cf_stats(), tr_state,
                 std::move(units), service::allow_hints::yes, wait_for_all_updates::no);
         } catch (...) {
+            vug_logger.info("MUTATE MV FAILURE IN GAPVU: {}", std::current_exception());
             // Ignore exceptions: any individual failure to propagate a view update will be reported
             // by a separate mechanism in mutate_MV() function. Moreover, we should continue trying
             // to generate updates even if some of them fail, in order to minimize the potential
@@ -476,6 +478,7 @@ future<> view_update_generator::generate_and_propagate_view_updates(const replic
         }
     }
     co_await builder.close();
+    vug_logger.info("UPDATING VIEW UPDATE BACKLOG");
     _proxy.local().update_view_update_backlog();
     if (err) {
         std::rethrow_exception(err);
