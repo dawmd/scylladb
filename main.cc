@@ -1737,6 +1737,9 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
 
             supervisor::notify("starting the view builder");
             view_builder.start(std::ref(db), std::ref(sys_ks), std::ref(sys_dist_ks), std::ref(mm_notifier), std::ref(view_update_generator), std::ref(group0_client), std::ref(qp)).get();
+            auto stop_view_builder = defer_verbose_shutdown("view builder", [cfg] {
+                view_builder.stop().get();
+            });
 
             supervisor::notify("starting commit log");
             auto cl = db.local().commitlog();
@@ -2167,9 +2170,10 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
 
             // Note: It may happen that we run this before view building starts (see the if above).
             //       However, it's not a problem. If it hasn't started yet, this will be a NO-OP.
-            auto stop_view_builder = defer_verbose_shutdown("view builder", [cfg] {
+            auto stop_view_builder_new = defer_verbose_shutdown("view builder", [cfg] {
                 view_builder.stop().get();
             });
+            stop_view_builder->cancel();
 
             api::set_server_view_builder(ctx, view_builder).get();
             auto stop_vb_api = defer_verbose_shutdown("view builder API", [&ctx] {
