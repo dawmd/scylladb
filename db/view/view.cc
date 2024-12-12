@@ -2057,6 +2057,7 @@ future<> view_builder::start_in_background(service::migration_manager& mm, utils
         _current_step = _base_to_build_step.begin();
         // Waited on indirectly in stop().
         (void)_build_step.trigger();
+        _started_flag = true;
     } catch (...) {
         auto ex = std::current_exception();
         auto ll = log_level::error;
