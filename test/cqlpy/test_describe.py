@@ -1613,8 +1613,8 @@ def test_desc_roles_quotation_marks(cql):
         andrew_raw = "andrew \" 'the great'"
         jane_raw = "jane ' \"the wise\""
 
-        andrew_hashed_password_raw = "my \" 'hashed password'"
-        jane_hashed_password_raw = "my ' \"other hashed password\""
+        andrew_hashed_password_raw = "$2b$05$ae4qyC7lYe47n8K2f/fgKuW/TCRCCpEvcYrA4Dl14VYJAjAEz3tli"
+        jane_hashed_password_raw = "$5$AKS.nD1e18H.7gu9$IWy7QB0K.qoYkrWmFn6rZ4BO6Y.FWdCchrFg3beXfx8"
 
         andrew_single_quote = make_identifier(andrew_raw, quotation_mark="'")
         andrew_double_quote = make_identifier(andrew_raw, quotation_mark='"')

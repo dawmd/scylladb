@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <boost/algorithm/string/join.hpp>
 #include <chrono>
+#include <regex>
 
 #include <seastar/core/future-util.hh>
 #include <seastar/core/sharded.hh>
@@ -323,6 +324,27 @@ future<bool> service::has_superuser(std::string_view role_name) const {
     co_return co_await has_superuser(role_name, roles);
 }
 
+static void check_supported_hash_format(std::string_view hash) {
+    static const std::array<std::regex, 4> accepted_formats = {
+        // bcrypt
+        std::regex{"\\$2[abxy]\\$[0-9]{2}\\$[./A-Za-z0-9]{53}"},
+        // sha512
+        std::regex{"\\$6\\$(rounds=[1-9][0-9]+\\$)?[^$:\n]{1,16}\\$[./0-9A-Za-z]{86}"},
+        // sha256
+        std::regex{"\\$5\\$(rounds=[1-9][0-9]+\\$)?[^$:\n]{1,16}\\$[./0-9A-Za-z]{43}"},
+        // md5
+        std::regex{"\\$1\\$[^$:\n]{1,8}\\$[./0-9A-Za-z]{22}"}
+    };
+
+    for (const auto& format : accepted_formats) {
+        if (std::regex_match(hash.begin(), hash.end(), format)) {
+            return;
+        }
+    }
+
+    throw exceptions::invalid_request_exception{"The provided hashed password doesn't use one of the supported encryption formats: bcrypt, sha512, sha256, md5"};
+}
+
 static void validate_authentication_options_are_supported(
         const authentication_options& options,
         const authentication_option_set& supported) {
@@ -335,7 +357,10 @@ static void validate_authentication_options_are_supported(
     if (options.credentials) {
         std::visit(make_visitor(
             [&] (const password_option&) { check(authentication_option::password); },
-            [&] (const hashed_password_option&) { check(authentication_option::hashed_password); }
+            [&] (const hashed_password_option& hash) {
+                check(authentication_option::hashed_password);
+                check_supported_hash_format(hash.hashed_password);
+            }
         ), *options.credentials);
     }
 

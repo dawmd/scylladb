@@ -372,29 +372,141 @@ SEASTAR_TEST_CASE(test_try_to_create_role_with_password_and_hashed_password) {
     }, auth_on(false));
 }
 
+SEASTAR_TEST_CASE(test_try_create_roles_with_invalid_hashed_passwords) {
+    // This test ensures that Scylla correctly verifies that the provided hashed password
+    // follows the format of the supported algorithms. It uses invalid examples for that purpose.
+    return do_with_cql_env_thread([] (cql_test_env& env) {
+        constexpr std::string_view hashed_passwords[] = {
+            // bcrypt with an additional character.
+            "$2a$10$F5pRau9mKg5abP.DsuPQl.8rQpEoNm3OV91mKjb9vdKPUPejIPq/ua",
+            // "Almost" bcrypt -- wrong prefix.
+            "$2u$10$F5pRau9mKg5abP.DsuPQl.8rQpEoNm3OV91mKjb9vdKPUPejIPq/u",
+            "$2$10$F5pRau9mKg5abP.DsuPQl.8rQpEoNm3OV91mKjb9vdKPUPejIPq/u",
+            "$2a10$F5pRau9mKg5abP.DsuPQl.8rQpEoNm3OV91mKjb9vdKPUPejIPq/u",
+            "2a$10$F5pRau9mKg5abP.DsuPQl.8rQpEoNm3OV91mKjb9vdKPUPejIPq/u",
+            // sha512 with an additional character.
+            "$6$shzqPMxwOZxPvh7G$H65LkotwT6zjkJ2eXsGPGtVcoOzttO9VTIVgb4BMECMLTSXo4cSgDq3G2sPG9t2itQGIff0LEHvLFqMBrJO5x/a",
+            // "Almost" sha512 -- wrong prefix.
+            "$7$shzqPMxwOZxPvh7G$H65LkotwT6zjkJ2eXsGPGtVcoOzttO9VTIVgb4BMECMLTSXo4cSgDq3G2sPG9t2itQGIff0LEHvLFqMBrJO5x/",
+            "$6a$shzqPMxwOZxPvh7G$H65LkotwT6zjkJ2eXsGPGtVcoOzttO9VTIVgb4BMECMLTSXo4cSgDq3G2sPG9t2itQGIff0LEHvLFqMBrJO5x/",
+            "$6shzqPMxwOZxPvh7G$H65LkotwT6zjkJ2eXsGPGtVcoOzttO9VTIVgb4BMECMLTSXo4cSgDq3G2sPG9t2itQGIff0LEHvLFqMBrJO5x/",
+            "6$shzqPMxwOZxPvh7G$H65LkotwT6zjkJ2eXsGPGtVcoOzttO9VTIVgb4BMECMLTSXo4cSgDq3G2sPG9t2itQGIff0LEHvLFqMBrJO5x/",
+            // sha512 with a negative number of rounds.
+            "$6$rounds=-50000$RzOKKJIKZ18arhBR$E2JyKkCOZZXva89rAzvQOZxL1rZ.1wt9uC4yEVr0YkZkTbpi1bd7QBexgpbbc5qI4NvntJQAlrYSPg2bSvVr5/",
+            // sha512 with zero rounds.
+            "$6$rounds=0$RzOKKJIKZ18arhBR$E2JyKkCOZZXva89rAzvQOZxL1rZ.1wt9uC4yEVr0YkZkTbpi1bd7QBexgpbbc5qI4NvntJQAlrYSPg2bSvVr5/",
+            // sha512 with a number of rounds starting with a zero.
+            "$6$rounds=050000$RzOKKJIKZ18arhBR$E2JyKkCOZZXva89rAzvQOZxL1rZ.1wt9uC4yEVr0YkZkTbpi1bd7QBexgpbbc5qI4NvntJQAlrYSPg2bSvVr5/",
+            // sha256 with an additional character.
+            "$5$XBEj8oXL9aXtt/Kg$1PPbUfUfJkFjZKO0YfgT/6UGaxiK9SnEALdPY5FQs46a",
+            // "Almost" sha256 -- wrong prefix.
+            "$7$XBEj8oXL9aXtt/Kg$1PPbUfUfJkFjZKO0YfgT/6UGaxiK9SnEALdPY5FQs46",
+            "$5a$XBEj8oXL9aXtt/Kg$1PPbUfUfJkFjZKO0YfgT/6UGaxiK9SnEALdPY5FQs46",
+            "$5XBEj8oXL9aXtt/Kg$1PPbUfUfJkFjZKO0YfgT/6UGaxiK9SnEALdPY5FQs46",
+            "5$XBEj8oXL9aXtt/Kg$1PPbUfUfJkFjZKO0YfgT/6UGaxiK9SnEALdPY5FQs46",
+            // sha256 with a negative number of rounds.
+            "$5$rounds=-10000$usesomesillystri$CaVZTpnmHfz9Fi6zjGJmSAAwwABsSqSJbtzdlfvVC10",
+            // sha256 with zero rounds.
+            "$5$rounds=0$usesomesillystri$CaVZTpnmHfz9Fi6zjGJmSAAwwABsSqSJbtzdlfvVC10",
+            // sha256 with a number of rounds starting with a zero.
+            "$5$rounds=01000$usesomesillystri$CaVZTpnmHfz9Fi6zjGJmSAAwwABsSqSJbtzdlfvVC10",
+            // md5 with an additional character.
+            "$1$Hdl.BeYY$K7qOAGS.CPHAq1X39V7pH1a",
+            // md5 with one missing character.
+            "$1$Hdl.BeYY$K7qOAGS.CPHAq1X39V7pH",
+            // "Almost" md5 -- wrong prefix.
+            "$7$Hdl.BeYY$K7qOAGS.CPHAq1X39V7pH1",
+            "$1Hdl.BeYY$K7qOAGS.CPHAq1X39V7pH1",
+            "1$Hdl.BeYY$K7qOAGS.CPHAq1X39V7pH1"
+        };
+
+        for (auto hashed_password : hashed_passwords) {
+            auto stmt = seastar::format("CREATE ROLE r WITH HASHED PASSWORD = '{}'", hashed_password);
+            BOOST_REQUIRE_EXCEPTION(env.execute_cql(stmt).get(), exceptions::invalid_request_exception,
+                    exception_predicate::message_equals("The provided hashed password doesn't use one "
+                            "of the supported encryption formats: bcrypt, sha512, sha256, md5"));
+        }
+    }, auth_on(true));
+}
+
+SEASTAR_TEST_CASE(test_try_create_roles_with_nonsupported_encryption_algorithms) {
+    // This test ensures that Scylla rejects hashed passwords that use encryption
+    // algorithms that are not supported.
+    return do_with_cql_env_thread([] (cql_test_env& env) {
+        // Hashes corresponding to the remaining encryption algorithms for crypt(3).
+        constexpr std::string_view hashed_passwords[] = {
+            // yescrypt.
+            "$y$j9T$ordrWDeLlAXo0Mka80gLT/$sXffWRhGyBXrMdKrB7hx8p5RwdDM7c0YT8UKBid9P/B",
+            // gost-yescrypt.
+            "$gy$j9T$qqV5I7w1FhPAoDlQIHJlf/$qE.FfNpywNWVp6BKpqCIcpHIRgN1noSIWEFOw1Q.cBD",
+            // scrypt.
+            "$7$CU..../....6TAK3eKVS6/HcAOvQizyT1$2QrgnPNlDCwbIzSAZdyA/nJBWPXSVGd5VGEPjklbfL6",
+            // sha1.
+            "$sha1$205988$oFSTEQ.4mqN5wfGlwNbi$wHeb7GuavUQWh7jCQqI2n0afSO.r",
+            // SunMD5.
+            "$md5,rounds=59300$6871OZUL$$rx2DlMF/q1kJzGANXzkg3/",
+            // bsdicrypt
+            "_J9..xXi2CIfeSZRmgv.",
+            // descrypt.
+            "abcde12345/01",
+            // bigcrypt.
+            "abcde12345/01abcde12345/01abcde12345/01",
+            // NT.
+            "$3$$358c649434cc514bf4c8855ad22c826b"
+        };
+
+
+        for (auto hashed_password : hashed_passwords) {
+            auto stmt = seastar::format("CREATE ROLE r WITH HASHED PASSWORD = '{}'", hashed_password);
+            BOOST_REQUIRE_EXCEPTION(env.execute_cql(stmt).get(), exceptions::invalid_request_exception,
+                    exception_predicate::message_equals("The provided hashed password doesn't use one "
+                            "of the supported encryption formats: bcrypt, sha512, sha256, md5"));
+        }
+    }, auth_on(true));
+}
+
+SEASTAR_TEST_CASE(test_create_roles_with_hashed_password_and_log_in) {
+    // This test ensures that Scylla allows for creating roles with hashed passwords
+    // following the format of one of the supported algorithms, as well as logging in
+    // as that role is performed successfully.
+    return do_with_cql_env_thread([] (cql_test_env& env) {
+        // Pairs of form (password, hashed password).
+        constexpr std::pair<std::string_view, std::string_view> passwords[] = {
+            // bcrypt's.
+            {"myPassword", "$2a$05$ae4qyC7lYe47n8K2f/fgKuW/TCRCCpEvcYrA4Dl14VYJAjAEz3tli"},
+            {"myPassword", "$2b$05$ae4qyC7lYe47n8K2f/fgKuW/TCRCCpEvcYrA4Dl14VYJAjAEz3tli"},
+            {"myPassword", "$2x$05$ae4qyC7lYe47n8K2f/fgKuW/TCRCCpEvcYrA4Dl14VYJAjAEz3tli"},
+            {"myPassword", "$2y$05$ae4qyC7lYe47n8K2f/fgKuW/TCRCCpEvcYrA4Dl14VYJAjAEz3tli"},
+            // sha512.
+            {"myPassword", "$6$pffOF1SkGYpLPe7h$tsYwSqUvbzh2O79dtMNadUsYawCrHMfK06XWFh3vJIMwqaVsaiFsubB2a7uZshDVpJWhTCnGWGKsy3fAteFw9/"},
+            // sha256.
+            {"myPassword", "$5$AKS.nD1e18H.7gu9$IWy7QB0K.qoYkrWmFn6rZ4BO6Y.FWdCchrFg3beXfx8"},
+            // md5.
+            {"myPassword", "$1$rVcnG0Et$qAhrrNev1JVV9Zu5qhnry1"}
+        };
+
+        for (auto [pwd, hash] : passwords) {
+            env.execute_cql(seastar::format("CREATE ROLE r WITH HASHED PASSWORD = '{}' AND LOGIN = true", hash)).get();
+
+            // First, try to log in using an incorrect password.
+            BOOST_REQUIRE_EXCEPTION(authenticate(env, "r", "notThePassword").get(), exceptions::authentication_exception,
+                    exception_predicate::message_equals("Username and/or password are incorrect"));
+            // Now use the correct one.
+            authenticate(env, "r", pwd).get();
+            
+            // We need to log in as a superuser to be able to drop the role.
+            authenticate(env, "cassandra", "cassandra").get();
+            env.execute_cql("DROP ROLE r").get();
+        }
+    }, auth_on(true));
+}
+
 SEASTAR_TEST_CASE(test_try_create_role_with_hashed_password_as_anonymous_user) {
     return do_with_cql_env_thread([] (cql_test_env& env) {
         env.local_client_state().set_login(auth::anonymous_user());
         env.refresh_client_state().get();
         BOOST_REQUIRE(auth::is_anonymous(*env.local_client_state().user()));
         BOOST_REQUIRE_THROW(env.execute_cql("CREATE ROLE my_new_role WITH HASHED PASSWORD = 'myhash'").get(), exceptions::unauthorized_exception);
-    }, auth_on(true));
-}
-
-SEASTAR_TEST_CASE(test_try_login_after_creating_roles_with_hashed_password) {
-    return do_with_cql_env_thread([] (cql_test_env& env) {
-        // Note: crypt(5) specifies:
-        //
-        //    "Hashed passphrases are always entirely printable ASCII, and do not contain any whitespace
-        //     or the characters `:`, `;`, `*`, `!`, or `\`.   (These  characters  are
-        //     used as delimiters and special markers in the passwd(5) and shadow(5) files.)"
-
-        env.execute_cql("CREATE ROLE invalid_role WITH HASHED PASSWORD = ';' AND LOGIN = true").get();
-        env.execute_cql("CREATE ROLE valid_role WITH HASHED PASSWORD = 'hashed_password' AND LOGIN = true").get();
-        BOOST_REQUIRE_EXCEPTION(authenticate(env, "invalid_role", "pwd").get(), exceptions::authentication_exception,
-                exception_predicate::message_equals("Could not verify password"));
-        BOOST_REQUIRE_EXCEPTION(authenticate(env, "valid_role", "pwd").get(), exceptions::authentication_exception,
-                exception_predicate::message_equals("Username and/or password are incorrect"));
     }, auth_on(true));
 }
 
