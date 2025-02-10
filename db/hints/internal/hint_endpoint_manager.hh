@@ -48,7 +48,7 @@ private:
     enum class state {
         can_hint,               // hinting is currently allowed (used by the space_watchdog)
         stopping,               // stopping is in progress (stop() method has been called)
-        stopped                 // stop() has completed
+        stopped,                // stop() has completed
     };
 
     using state_set = enum_set<super_enum<state,
@@ -102,6 +102,8 @@ public:
     /// \return Ready future when all operations are complete
     future<> stop(drain should_drain = drain::no) noexcept;
 
+    void cancel_draining() noexcept;
+
     /// \brief Start the timer.
     void start();
 
@@ -142,6 +144,10 @@ public:
 
     bool stopped() const noexcept {
         return _state.contains(state::stopped);
+    }
+
+    bool canceled_draining() const noexcept {
+        return _sender.canceled_draining();
     }
 
     /// \brief Returns replay position of the most recently written hint.
