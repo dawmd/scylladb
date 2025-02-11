@@ -697,17 +697,17 @@ future<> manager::drain_for(endpoint_id host_id, gms::inet_address ip) noexcept 
             return make_ready_future();
         }
         return ep_man.stop(drain::yes).finally([&] {
-            return ep_man.with_file_update_mutex([&ep_man] {
+            return ep_man.with_file_update_mutex([&ep_man] -> future<> {
                 // If draining was canceled, we can't remove the hint directory yet
                 // because there might still be some hints that we should send.
                 // We'll do that when the node starts again.
                 // Note that canceling draining can ONLY occur when the node is simply stopping.
                 // That cannot happen when decommissioning a node.
                 if (ep_man.canceled_draining()) {
-                    return make_ready_future();
+                    co_return;
                 }
-                manager_logger.debug("Removing hint directory for {}", ep_man.end_point_key());
-                return remove_file(ep_man.hints_dir().native());
+                co_await remove_file(ep_man.hints_dir().native());
+                manager_logger.debug("Removed hint directory for {}", ep_man.end_point_key());
             });
         });
     };
@@ -1021,8 +1021,7 @@ future<> manager::perform_migration() {
 //                 to modify the function this way.
 future<> manager::drain_left_nodes() {
     for (const auto& [host_id, ep_man] : _ep_managers) {
-        const auto* node = _proxy.get_token_metadata_ptr()->get_topology().find_node(host_id);
-        if (node || node->is_leaving() || node->left()) {
+        if (!_proxy.get_token_metadata_ptr()->is_normal_token_owner(host_id)) {
             // It's safe to discard this future. It's awaited in `manager::stop()`.
             (void) drain_for(host_id, {});
         }

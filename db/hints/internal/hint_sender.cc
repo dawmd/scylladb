@@ -509,7 +509,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
         ctx_ptr->segment_replay_failed = false;
         ++this->shard_stats().corrupted_files;
     } catch  (const canceled_draining_exception&) {
-        manager_logger.trace("[{}]: Loop in send_one_file finishes due to canceled draining", _ep_key);
+        manager_logger.trace("[{}] Loop in send_one_file finishes due to canceled draining", _ep_key);
     } catch (...) {
         manager_logger.trace("sending of {} failed: {}", fname, std::current_exception());
         ctx_ptr->segment_replay_failed = true;
