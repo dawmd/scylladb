@@ -208,6 +208,19 @@ future<> manager::start(shared_ptr<const gms::gossiper> gossiper_ptr) {
     co_await compute_hints_dir_device_id();
     set_started();
 
+    for (const auto& [host_id, _] : _ep_managers) {
+        manager_logger.info("HOST {}", host_id);
+        const auto* node = _proxy.get_token_metadata_ptr()->get_topology().find_node(host_id);//get_node(host_id);
+        manager_logger.info("NODE EXSITS IN TMPTR");
+        if (node) {
+            manager_logger.info("NODE: {}", *node);
+        }
+        if (!node || node->is_leaving() || node->left()) {
+            // It's safe to discard the future here. It's awaited in `manager::stop()`.
+            (void) drain_for(host_id, {});
+        }
+    }
+
     if (!_uses_host_id) {
         _migration_callback = _proxy.features().host_id_based_hinted_handoff.when_enabled([this] {
             _migrating_done = perform_migration();
@@ -680,7 +693,7 @@ future<> manager::drain_for(endpoint_id host_id, gms::inet_address ip) noexcept 
         co_return;
     }
 
-    manager_logger.trace("on_leave_cluster: {} is removed/decommissioned", host_id);
+    manager_logger.trace("Draining starts for {}", host_id);
 
     const auto holder = seastar::gate::holder{_draining_eps_gate};
     // As long as we hold on to this lock, no migration of hinted handoff to host IDs
@@ -695,15 +708,16 @@ future<> manager::drain_for(endpoint_id host_id, gms::inet_address ip) noexcept 
             return make_ready_future();
         }
         return ep_man.stop(drain::yes).finally([&] {
-            // If draining was canceled, we can't remove the hint directory yet
-            // because there might still be some hints that we should send.
-            // We'll do that when the node starts again.
-            // Note that canceling draining can ONLY occur when the node is simply stopping.
-            // That cannot happen when decommissioning a node.
-            if (ep_man.canceled_draining()) {
-                return make_ready_future();
-            }
             return ep_man.with_file_update_mutex([&ep_man] {
+                // If draining was canceled, we can't remove the hint directory yet
+                // because there might still be some hints that we should send.
+                // We'll do that when the node starts again.
+                // Note that canceling draining can ONLY occur when the node is simply stopping.
+                // That cannot happen when decommissioning a node.
+                if (ep_man.canceled_draining()) {
+                    return make_ready_future();
+                }
+                manager_logger.debug("Removing hint directory for {}", ep_man.end_point_key());
                 return remove_file(ep_man.hints_dir().native());
             });
         });
@@ -793,12 +807,6 @@ future<> manager::initialize_endpoint_managers() {
         }
 
         co_await get_ep_manager(host_id, ip).populate_segments_to_replay();
-
-        const auto& node = _proxy.get_token_metadata_ptr()->get_topology().get_node(host_id);
-        if (node.is_leaving() || node.left()) {
-            // It's safe to discard the future here. It's awaited in `manager::stop()`.
-            (void) drain_for(host_id, ip);
-        }
     };
 
     // We dispatch here to not hold on to the token metadata if hinted handoff is host-ID-based.
