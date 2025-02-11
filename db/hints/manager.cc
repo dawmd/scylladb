@@ -208,18 +208,7 @@ future<> manager::start(shared_ptr<const gms::gossiper> gossiper_ptr) {
     co_await compute_hints_dir_device_id();
     set_started();
 
-    for (const auto& [host_id, _] : _ep_managers) {
-        manager_logger.info("HOST {}", host_id);
-        const auto* node = _proxy.get_token_metadata_ptr()->get_topology().find_node(host_id);//get_node(host_id);
-        manager_logger.info("NODE EXSITS IN TMPTR");
-        if (node) {
-            manager_logger.info("NODE: {}", *node);
-        }
-        if (!node || node->is_leaving() || node->left()) {
-            // It's safe to discard the future here. It's awaited in `manager::stop()`.
-            (void) drain_for(host_id, {});
-        }
-    }
+    co_await drain_left_nodes();
 
     if (!_uses_host_id) {
         _migration_callback = _proxy.features().host_id_based_hinted_handoff.when_enabled([this] {
@@ -1023,6 +1012,23 @@ future<> manager::perform_migration() {
     //         We won't modify the contents of the hint directory anymore.
     co_await initialize_endpoint_managers();
     manager_logger.info("Migration of hinted handoff to host ID has finished successfully");
+
+    co_await drain_left_nodes();
+}
+
+// Technical note: This function obviously doesn't need to be a coroutine. However, it's better to impose
+//                 this constraint early on with possible future refactors in mind. It should be easier
+//                 to modify the function this way.
+future<> manager::drain_left_nodes() {
+    for (const auto& [host_id, ep_man] : _ep_managers) {
+        const auto* node = _proxy.get_token_metadata_ptr()->get_topology().find_node(host_id);
+        if (node || node->is_leaving() || node->left()) {
+            // It's safe to discard this future. It's awaited in `manager::stop()`.
+            (void) drain_for(host_id, {});
+        }
+    }
+
+    co_return;
 }
 
 } // namespace db::hints
