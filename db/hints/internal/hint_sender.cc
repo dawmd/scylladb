@@ -458,7 +458,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
     gc_clock::duration secs_since_file_mod = std::chrono::seconds(last_mod.tv_sec);
     lw_shared_ptr<send_one_file_ctx> ctx_ptr = make_lw_shared<send_one_file_ctx>(_last_schema_ver_to_column_mapping);
 
-    struct cancelled_draining_exception {};
+    struct canceled_draining_exception {};
 
     try {
         commitlog::read_log_file(fname, manager::FILENAME_PREFIX, [this, secs_since_file_mod, &fname, ctx_ptr] (commitlog::buffer_and_replay_position buf_rp) -> future<> {
@@ -474,8 +474,8 @@ bool hint_sender::send_one_file(const sstring& fname) {
 
                 if (canceled_draining()) {
                     manager_logger.debug("[{}] Exiting reading from commitlog because of canceled draining", _ep_key);
-                    // We need to throw an exception here to 
-                    throw cancelled_draining_exception{};
+                    // We need to throw an exception here to cancel reading the segment.
+                    throw canceled_draining_exception{};
                 }
 
                 // Break early if stop() was called or the destination node went down.
@@ -508,8 +508,8 @@ bool hint_sender::send_one_file(const sstring& fname) {
         manager_logger.error("{}: {}. Dropping...", fname, ex.what());
         ctx_ptr->segment_replay_failed = false;
         ++this->shard_stats().corrupted_files;
-    } catch  (const cancelled_draining_exception&) {
-        manager_logger.trace("GOT OUT OF THE LOOP");
+    } catch  (const canceled_draining_exception&) {
+        manager_logger.trace("[{}]: Loop in send_one_file finishes due to canceled draining", _ep_key);
     } catch (...) {
         manager_logger.trace("sending of {} failed: {}", fname, std::current_exception());
         ctx_ptr->segment_replay_failed = true;
