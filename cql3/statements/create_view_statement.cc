@@ -9,6 +9,9 @@
  */
 
 #include "exceptions/exceptions.hh"
+#include "locator/abstract_replication_strategy.hh"
+#include "locator/network_topology_strategy.hh"
+#include "locator/token_metadata.hh"
 #include "utils/assert.hh"
 #include <unordered_set>
 #include <vector>
@@ -32,6 +35,9 @@
 #include "db/view/view.hh"
 #include "service/migration_manager.hh"
 #include "replica/database.hh"
+
+#include <print>
+#include <string_view>
 
 namespace cql3 {
 
@@ -104,6 +110,53 @@ static bool validate_primary_key(
     return new_non_pk_column;
 }
 
+static void verify_rack_rf_for_view(std::string_view keyspace, const locator::token_metadata& tm, const locator::abstract_replication_strategy& ars) {
+    const locator::topology& topology = tm.get_topology();
+
+    switch (ars.get_type()) {
+    case locator::replication_strategy_type::network_topology: {
+        const auto* rs = static_cast<const locator::network_topology_strategy*>(std::addressof(ars));
+
+        for (const auto& [dc, rack_map] : topology.get_datacenter_racks()) {
+            const auto dc_rf = rs->get_replication_factor(dc);
+            const auto rack_count = rack_map.size();
+
+            if (dc_rf != rack_count) {
+                throw exceptions::invalid_request_exception(seastar::format("Mismatched replication factor and rack count (in data center '{}') for keyspace '{}': {} vs. {}",
+                        dc, keyspace, dc_rf, rack_count));
+            }
+        }
+
+        break;
+    }
+
+    case locator::replication_strategy_type::simple: {
+        const auto rf = ars.get_replication_factor(tm);
+        size_t rack_count = 0;
+        for (const auto& [dc, rack_map] : topology.get_datacenter_racks()) {
+            auto x = seastar::format("!!! DC: {}, rack size: {}", dc, rack_map.size());
+            fmt::println(stdout, "{}", x);
+            rack_count += rack_map.size();
+        }
+
+        if (rf != rack_count) {
+            throw exceptions::invalid_request_exception(seastar::format("Mismatched replication factor and rack count for keyspace '{}': {} vs. {}",
+                    keyspace, rf, rack_count));
+        }
+
+        break;
+    }
+
+    case locator::replication_strategy_type::everywhere_topology:
+        // Irrelevant. All data in this keyspace is replicated across the whole cluster.
+        break;
+
+    case locator::replication_strategy_type::local:
+        // Irrelevant. All data in this keyspace is stored on one specific node.
+        break;
+    }
+}
+
 std::pair<view_ptr, cql3::cql_warnings_vec> create_view_statement::prepare_view(data_dictionary::database db) const {
     // We need to make sure that:
     //  - materialized view name is valid
@@ -151,8 +204,44 @@ std::pair<view_ptr, cql3::cql_warnings_vec> create_view_statement::prepare_view(
 
     schema_ptr schema = validation::validate_column_family(db, _base_name.get_keyspace(), _base_name.get_column_family());
 
-    if (!db.features().views_with_tablets && db.find_keyspace(keyspace()).get_replication_strategy().uses_tablets()) {
+    const locator::abstract_replication_strategy& ars = db.find_keyspace(keyspace()).get_replication_strategy();
+
+    if (!db.features().views_with_tablets && ars.uses_tablets()) {
         throw exceptions::invalid_request_exception(format("Materialized views are not supported on base tables with tablets"));
+    }
+    if (ars.uses_tablets()) {
+        // With tablets enabled, we want to restrict materialized views to keyspaces that satisfy RF == the number of racks.
+        //
+        // Long story short, doing that, we want to ensure that:
+        // * pairing the base and view replicas occurs within the same rack,
+        // * there's only one replica per rack,
+        // * tablet replicas never leave their original rack.
+        //
+        // You can find more context about the pre-existing problems and solutions in: scylladb/scylladb#23030.
+        //
+        // Moreover, you can refer to the document "Consistency problems in Materialized Views arising from replica order changes"
+        // for an even broader perspective.
+
+        const locator::topology& topology = db.real_database().get_token_metadata().get_topology();
+        // Note that a keyspace can only have tablets enabled if the used replication strategy is NetworkTopologyStrategy, cf.
+        //
+        // "When creating a new keyspace with tablets enabled (the default), you can still disable them on a per-keyspace basis.
+        //  The recommended NetworkTopologyStrategy for keyspaces remains required when using tablets."
+        //
+        // --- "Data Distribution with Tablets" in our documentation.
+        //
+        // That's why we're only considering that case and that's why this cast is correct.
+        const auto* replication_strategy = static_cast<const locator::network_topology_strategy*>(std::addressof(ars));
+
+        for (const auto& [dc, rack_map] : topology.get_datacenter_racks()) {
+            const auto dc_rf = replication_strategy->get_replication_factor(dc);
+            const auto rack_count = rack_map.size();
+
+            if (dc_rf != rack_count) {
+                throw exceptions::invalid_request_exception(seastar::format("Mismatched replication factor and rack count (in data center '{}') for keyspace '{}': {} vs. {}",
+                        dc, keyspace(), dc_rf, rack_count));
+            }
+        }
     }
     if (schema->is_counter()) {
         throw exceptions::invalid_request_exception(format("Materialized views are not supported on counter tables"));
