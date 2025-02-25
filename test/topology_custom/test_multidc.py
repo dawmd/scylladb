@@ -172,6 +172,8 @@ async def test_1(manager: ManagerClient):
 
     await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "true")
     await try_fail("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "true", f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 1 vs. 2")
+    await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "false")
+    await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "false")
 
     await try_pass("SimpleStrategy", "'replication_factor': 3", "false")
     await try_pass("SimpleStrategy", "'replication_factor': 2", "false")
