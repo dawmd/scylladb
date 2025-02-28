@@ -58,14 +58,17 @@ async def test_create_mv_with_racks(manager: ManagerClient):
     await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "false")
 
     # RF != #racks for dc1.
-    await try_fail("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "true", f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 1 vs. 2")
+    await try_fail("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "true",
+                   f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 1 vs. 2")
     await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "false")
 
     # RF != #racks for dc2 and edge case for RF == 0.
-    await try_fail("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 0", "true", f"Mismatched replication factor and rack count \(in data center 'dc2'\) for keyspace '{{ks}}': 0 vs. 1")
+    await try_fail("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 0", "true",
+                   f"Mismatched replication factor and rack count \(in data center 'dc2'\) for keyspace '{{ks}}': 0 vs. 1")
     await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 0", "false")
     # Ditto, just for dc1.
-    await try_fail("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "true", f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 0 vs. 2")
+    await try_fail("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "true",
+                   f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 0 vs. 2")
     await try_pass("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "false")
 
     # Note: in case these checks start failing or causing issues, feel free to get rid of them.
@@ -84,18 +87,22 @@ async def test_create_mv_with_racks(manager: ManagerClient):
     await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "false")
 
     # RF < #racks for dc1.
-    await try_fail("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "true", f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 1 vs. 2")
+    await try_fail("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "true",
+                   f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 1 vs. 2")
     await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "false")
 
     # RF > #racks for dc1.
-    await try_fail("NetworkTopologyStrategy", "'dc1': 3, 'dc2': 1", "true", f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 3 vs. 2")
+    await try_fail("NetworkTopologyStrategy", "'dc1': 3, 'dc2': 1", "true",
+                   f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 3 vs. 2")
     await try_pass("NetworkTopologyStrategy", "'dc1': 3, 'dc2': 1", "false")
 
     # RF != #racks for dc2 and edge case for RF == 0.
-    await try_fail("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 0", "true", f"Mismatched replication factor and rack count \(in data center 'dc2'\) for keyspace '{{ks}}': 0 vs. 1")
+    await try_fail("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 0", "true",
+                   f"Mismatched replication factor and rack count \(in data center 'dc2'\) for keyspace '{{ks}}': 0 vs. 1")
     await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 0", "false")
     # Ditto, just for dc1.
-    await try_fail("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "true", f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 0 vs. 2")
+    await try_fail("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "true",
+                   f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 0 vs. 2")
     await try_pass("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "false")
 
     # Note: ditto, same as in part 1.
@@ -112,14 +119,17 @@ async def test_create_mv_with_racks(manager: ManagerClient):
     await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "false")
 
     # RF > #racks for dc1.
-    await try_fail("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "true", f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 2 vs. 1")
+    await try_fail("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "true",
+                   f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 2 vs. 1")
     await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "false")
 
     # RF != #racks for dc2 and edge case for RF == 0.
-    await try_fail("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 0", "true", f"Mismatched replication factor and rack count \(in data center 'dc2'\) for keyspace '{{ks}}': 0 vs. 1")
+    await try_fail("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 0", "true",
+                   f"Mismatched replication factor and rack count \(in data center 'dc2'\) for keyspace '{{ks}}': 0 vs. 1")
     await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 0", "false")
     # Ditto, just for dc1.
-    await try_fail("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "true", f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 0 vs. 1")
+    await try_fail("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "true",
+                   f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 0 vs. 1")
     await try_pass("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "false")
 
     # Note: ditto, same as in part 1.
