@@ -149,11 +149,12 @@ CONFIG = {"endpoint_snitch": "GossipingPropertyFileSnitch"}
 @pytest.mark.asyncio
 async def test_1(manager: ManagerClient):
     assert len(await manager.running_servers()) == 0
+
     cmd = ["--experimental-features", "views-with-tablets"]
 
-    s1 = await manager.server_add(cmdline=cmd, property_file={"dc": "dc1", "rack": "r1"})
-    s2 = await manager.server_add(cmdline=cmd, property_file={"dc": "dc1", "rack": "r2"})
-    s3 = await manager.server_add(cmdline=cmd, property_file={"dc": "dc2", "rack": "r1"})
+    _ = await manager.server_add(cmdline=cmd, property_file={"dc": "dc1", "rack": "r1"})
+    _ = await manager.server_add(cmdline=cmd, property_file={"dc": "dc1", "rack": "r2"})
+    _ = await manager.server_add(cmdline=cmd, property_file={"dc": "dc2", "rack": "r1"})
 
     async def try_pass(replication_class: str, replication_details: str, tablets: str):
         async with new_test_keyspace(manager, f"WITH REPLICATION = {{'class': '{replication_class}', {replication_details}}} AND tablets = {{'enabled': {tablets}}}") as ks:
@@ -172,6 +173,7 @@ async def test_1(manager: ManagerClient):
 
     await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "true")
     await try_fail("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "true", f"Mismatched replication factor and rack count \(in data center 'dc1'\) for keyspace '{{ks}}': 1 vs. 2")
+    await try_fail("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 0", "true", f"Mismatched replication factor and rack count \(in data center 'dc2'\) for keyspace '{{ks}}': 0 vs. 1")
     await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "false")
     await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "false")
 
