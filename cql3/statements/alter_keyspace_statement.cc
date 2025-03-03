@@ -120,7 +120,7 @@ void cql3::statements::alter_keyspace_statement::validate(query_processor& qp, c
                     if (new_rf_value != rack_count && new_rf_value != 1) {
                         throw exceptions::invalid_request_exception(seastar::format("Keyspace '{}' uses tablets. "
                                 "That enforces RF == rack count or RF == 1, but your query would violate that in data center '{}': "
-                                "rack count={} vs. RF={}",
+                                "RF={} vs. rack count={}",
                                 _name, new_dc, new_rf_value, rack_count));
                     }
                 }
