@@ -87,6 +87,8 @@ void cql3::statements::alter_keyspace_statement::validate(query_processor& qp, c
                 auto new_rf_per_dc = _attrs->get_replication_options();
                 new_rf_per_dc.erase(ks_prop_defs::REPLICATION_STRATEGY_CLASS_KEY);
 
+                const auto& rack_map = qp.proxy().get_token_metadata_ptr()->get_topology().get_datacenter_racks();
+
                 unsigned total_abs_rfs_diff = 0;
 
                 for (const auto& [new_dc, new_rf] : new_rf_per_dc) {
@@ -108,6 +110,17 @@ void cql3::statements::alter_keyspace_statement::validate(query_processor& qp, c
 
                     if (total_abs_rfs_diff += rf_diff; total_abs_rfs_diff >= 2) {
                         throw exceptions::invalid_request_exception("Only one DC's RF can be changed at a time and not by more than 1");
+                    }
+
+                    // We enforce RF == #racks OR RF == 1 for every DC if the keyspace uses tablets.
+                    // For more context, see: scylladb/scylladb#23071.
+                    const auto rack_count = rack_map.at(new_dc).size();
+
+                    if (new_rf_value != (int64_t) rack_count && new_rf_value != 1) {
+                        throw exceptions::invalid_request_exception(seastar::format("Keyspace '{}' uses tablets. "
+                                "That enforces RF == rack count or RF == 1, but your query would violate that in data center '{}': "
+                                "RF={} vs. rack count={}",
+                                _name, new_dc, new_rf_value, rack_count));
                     }
                 }
             }
