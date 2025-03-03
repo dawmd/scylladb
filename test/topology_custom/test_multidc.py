@@ -5,6 +5,7 @@
 #
 import logging
 import sys
+from typing import List
 
 import pytest
 from cassandra.policies import WhiteListRoundRobinPolicy
@@ -152,44 +153,55 @@ async def test_create_and_drop_keyspace_with_altering_rack_count(manager: Manage
 
     cql = None
 
-    async def try_pass(replication_cfg: str) -> str:
+    async def try_pass(rf: List[int]) -> str:
         ks = unique_name()
-        await cql.run_async(f"CREATE KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', {replication_cfg}}}"
+        await cql.run_async(f"CREATE KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'dc1': {rf}}}"
                             " AND tablets = {'enabled': true}")
         return ks
 
-    async def try_fail(replication_cfg: str, err: str) -> None:
+    async def try_fail(rf: List[int], rack_count: List[int]) -> None:
         ks = unique_name()
-        with pytest.raises(InvalidRequest, match=err.format(ks=ks)):
-            await cql.run_async(f"CREATE KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', {replication_cfg}}}"
+        err = "When using tablets, every DC must satisfy RF == rack count or RF == 1. That condition is not satisfied for DC " \
+                f"'dc1': RF={rf} vs. rack count={rack_count}"
+        with pytest.raises(InvalidRequest, match=err):
+            await cql.run_async(f"CREATE KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'dc1': {rf}}}"
                                 " AND tablets = {'enabled': true}")
 
+    # r1: 1 node.
     s1 = await manager.server_add(property_file={"dc": "dc1", "rack": "r1"})
     cql = manager.get_cql()
 
-    ks1 = await try_pass("'dc1': 1")
-    # await try_fail("'dc1': 2", "Creating a keyspace with RF != #racks should fail")
+    # #racks = 1.
+    ks1 = await try_pass(1)
+    await try_fail(2, 1)
 
+    # r1: 1 node, r2: 1 node.
     s2 = await manager.server_add(property_file={"dc": "dc1", "rack": "r2"})
 
-    ks2 = await try_pass("'dc1': 1")
-    ks3 = await try_pass("'dc1': 2")
-    # await try_fail("'dc1': 3")
+    # #racks = 2.
+    ks2 = await try_pass(1)
+    ks3 = await try_pass(2)
+    await try_fail(3, 2)
 
+    # r1: 1 node, r2: 1 node, r3: 1 node.
     s3 = await manager.server_add(property_file={"dc": "dc1", "rack": "r3"})
 
     # with pytest.raises(???):
     #     await manager.decommission_node(s1.server_id)
 
+    # r1: 2 nodes, r2: 1 node, r3: 1 node.
     s4 = await manager.server_add(property_file={"dc": "dc1", "rack": "r1"})
 
+    # r1: 1 node, r2: 1 node, r3: 1 node.
     await manager.decommission_node(s1.server_id)
 
-    ks4 = await try_pass("'dc1': 1")
-    # ks5 = await try_fail("'dc1': 2")
-    ks6 = await try_pass("'dc1': 3")
+    # #racks = 3.
+    ks4 = await try_pass(1)
+    ks5 = await try_fail(2, 3)
+    ks6 = await try_pass(3)
 
     # with pytest.raises(???):
     #     await manager.decomission_node(s2.server_id)
 
+    # r2: 1 node, r3: 1 node.
     await manager.decommission_node(s4.server_id)
