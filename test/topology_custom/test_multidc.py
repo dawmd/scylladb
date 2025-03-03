@@ -161,13 +161,13 @@ async def test_create_and_alter_keyspace_with_altering_rf_and_racks(manager: Man
 
     cql = None
 
-    async def try_create_ok(rfs: List[int]) -> str:
+    async def create_ok(rfs: List[int]) -> str:
         ks = unique_name()
         dcs = [f"'dc{i}': {rf}" for rf, i in enumerate(rfs)]
         await cql.run_async(f"CREATE KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', {dcs}}} AND tablets = {{'enabled': true}}")
         return ks
 
-    async def try_create_fail(rfs: List[int], failed_dc: int, rack_count: int) -> None:
+    async def create_fail(rfs: List[int], failed_dc: int, rack_count: int) -> None:
         ks = unique_name()
         dcs = [f"'dc{i}': {rf}" for rf, i in enumerate(rfs)]
         idx = failed_dc - 1
@@ -178,11 +178,11 @@ async def test_create_and_alter_keyspace_with_altering_rf_and_racks(manager: Man
         with pytest.raises(InvalidRequest, match=err):
             await cql.run_async(f"CREATE KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', {dcs}}} AND tablets = {'enabled': true}")
 
-    async def try_alter_ok(ks: str, rfs: List[int]) -> None:
+    async def alter_ok(ks: str, rfs: List[int]) -> None:
         dcs = [f"'dc{i}': {rf}" for rf, i in enumerate(rfs)]
         await cql.run_async(f"ALTER KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', {dcs}}}")
 
-    async def try_alter_fail(ks: str, rfs: List[int], failed_dc: int, rack_count: int) -> None:
+    async def alter_fail(ks: str, rfs: List[int], failed_dc: int, rack_count: int) -> None:
         dcs = [f"'dc{i}': {rf}" for rf, i in enumerate(rfs)]
         idx = failed_dc - 1
 
@@ -192,7 +192,54 @@ async def test_create_and_alter_keyspace_with_altering_rf_and_racks(manager: Man
         with pytest.raises(InvalidRequest, match=err):
             await cql.run_async(f"ALTER KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', {dcs}}}")
 
-    s1 = await manager.server_add(property_file={"dc": "dc1", "rack": "r1"})
+    # dc1: r1=1.
+    _ = await manager.server_add(property_file={"dc": "dc1", "rack": "r1"})
     cql = manager.get_cql()
 
-    
+    ks1 = await create_ok([1])
+    await create_fail([2], 1, 1)
+
+    await alter_ok(ks1, [1])
+    await alter_fail(ks1, [2], 1, 1)
+    await alter_fail(ks1, [0], 1, 1)
+
+    # dc1: r1=1.
+    # dc2: r1=1.
+    _ = await manager.server_add(property_file={"dc": "dc2", "rack": "r1"})
+
+    ks2 = await create_ok([1, 1])
+    await create_fail([2, 1])
+    await create_fail([1, 2])
+
+    await alter_fail(ks1, [2, 0], 1, 1)
+    await alter_fail(ks1, [0, 0], 1, 1)
+    await alter_fail(ks1, [2], 1, 1)
+    await alter_fail(ks1, [0], 1, 1)
+
+    await alter_ok(ks1, [1, 1])
+
+    await alter_fail(ks2, [2, 1], 1, 1)
+    await alter_fail(ks2, [0, 1], 1, 1)
+    await alter_fail(ks2, [1, 2], 2, 1)
+    await alter_fail(ks2, [1, 0], 2, 1)
+
+    # dc1: r1=1, r2=1.
+    # dc2: r1=1.
+    _ = await manager.server_add(property_file={"dc": "dc1", "rack": "r2"})
+
+    ks3 = await create_ok([2, 1])
+    await create_fail([1, 1], 1, 2)
+    await create_fail([1, 2], 2, 1)
+    await create_fail([2, 2], 2, 1)
+    await create_fail([2, 0], 2, 1)
+    await create_fail([2], 2, 1)
+    await create_fail([0, 1], 1, 2)
+
+    await alter_fail(ks1, [1, 1], 1, 2)
+    await alter_ok(ks1, [2, 1])
+    await alter_fail(ks1, [0, 2], 2, 1)
+    await alter_fail(ks1, [2, 2], 2, 1)
+
+    await alter_ok(ks2, [2, 1])
+
+    await alter_ok(ks3, [2, 1])
