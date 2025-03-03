@@ -14,7 +14,6 @@
 #include <stdexcept>
 #include "alter_keyspace_statement.hh"
 #include "exceptions/exceptions.hh"
-#include "locator/network_topology_strategy.hh"
 #include "prepared_statement.hh"
 #include "service/migration_manager.hh"
 #include "service/storage_proxy.hh"
@@ -83,27 +82,22 @@ void cql3::statements::alter_keyspace_statement::validate(query_processor& qp, c
 
             auto new_ks = _attrs->as_ks_metadata_update(ks.metadata(), *qp.proxy().get_token_metadata_ptr(), qp.proxy().features());
 
-            // FIXME: We're going to start enforcing RF == #racks unconditionally for tablets. In that case,
-            //        this whole big `if` will most likely be able to get reduced to something much simpler.
-            //
-            //        See: scylladb/scylladb#23071.
             if (ks.get_replication_strategy().uses_tablets()) {
                 const std::map<sstring, sstring>& current_rf_per_dc = ks.metadata()->strategy_options();
 
                 auto new_rf_per_dc = _attrs->get_replication_options();
                 new_rf_per_dc.erase(ks_prop_defs::REPLICATION_STRATEGY_CLASS_KEY);
 
-                const auto views_present = !ks.metadata()->views().empty();
                 const auto& rack_map = qp.proxy().get_token_metadata_ptr()->get_topology().get_datacenter_racks();
 
                 unsigned total_abs_rfs_diff = 0;
 
                 for (const auto& [new_dc, new_rf] : new_rf_per_dc) {
-                    unsigned old_rf = 0;
+                    unsigned old_rf_value = 0;
 
                     if (auto new_dc_in_current_mapping = current_rf_per_dc.find(new_dc);
                              new_dc_in_current_mapping != current_rf_per_dc.end()) {
-                        old_rf = parse_rf(new_dc_in_current_mapping->second);
+                        old_rf_value = parse_rf(new_dc_in_current_mapping->second);
                     } else if (!qp.proxy().get_token_metadata_ptr()->get_topology().get_datacenters().contains(new_dc)) {
                         // This means that the DC listed in ALTER doesn't exist. This error will be reported later,
                         // during validation in abstract_replication_strategy::validate_replication_strategy.
@@ -112,21 +106,22 @@ void cql3::statements::alter_keyspace_statement::validate(query_processor& qp, c
                         continue;
                     }
 
-                    const auto next_rf = parse_rf(new_rf);
-                    const auto rf_diff = std::abs<int64_t>(next_rf - old_rf);
+                    const auto new_rf_value = parse_rf(new_rf);
+                    const auto rf_diff = std::abs<int64_t>(new_rf_value - old_rf_value);
 
                     if (total_abs_rfs_diff += rf_diff; total_abs_rfs_diff >= 2) {
                         throw exceptions::invalid_request_exception("Only one DC's RF can be changed at a time and not by more than 1");
                     }
 
-                    // We enforce RF == #racks for every DC if the keyspace uses tablets and has materialized views.
-                    // The number of racks does NOT change, which means that if the new value of RF differs from
-                    // the previous one, it must be invalid because the previous one was valid.
-                    if (views_present && rf_diff != 0) {
-                        const auto rack_count = rack_map.at(new_dc).size();
-                        throw exceptions::invalid_request_exception(seastar::format("Keyspace '{}' uses tablets and materialized views. "
-                                "That enforces RF == rack count, but your query would violate that in data center '{}': {} vs. {}",
-                                _name, new_dc, next_rf, rack_count));
+                    // We enforce RF == #racks OR RF == 1 for every DC if the keyspace uses tablets.
+                    // For more context, see: scylladb/scylladb#23071.
+                    const auto rack_count = rack_map.at(new_dc).size();
+
+                    if (new_rf_value != rack_count && new_rf_value != 1) {
+                        throw exceptions::invalid_request_exception(seastar::format("Keyspace '{}' uses tablets. "
+                                "That enforces RF == rack count or RF == 1, but your query would violate that in data center '{}': "
+                                "rack count={} vs. RF={}",
+                                _name, new_dc, new_rf_value, rack_count));
                     }
                 }
             }
