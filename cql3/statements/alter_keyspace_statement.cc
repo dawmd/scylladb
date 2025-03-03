@@ -13,6 +13,8 @@
 #include <seastar/core/on_internal_error.hh>
 #include <stdexcept>
 #include "alter_keyspace_statement.hh"
+#include "exceptions/exceptions.hh"
+#include "locator/network_topology_strategy.hh"
 #include "prepared_statement.hh"
 #include "service/migration_manager.hh"
 #include "service/storage_proxy.hh"
@@ -81,11 +83,18 @@ void cql3::statements::alter_keyspace_statement::validate(query_processor& qp, c
 
             auto new_ks = _attrs->as_ks_metadata_update(ks.metadata(), *qp.proxy().get_token_metadata_ptr(), qp.proxy().features());
 
+            // FIXME: We're going to start enforcing RF == #racks unconditionally for tablets. In that case,
+            //        this whole big `if` will most likely be able to get reduced to something much simpler.
+            //
+            //        See: scylladb/scylladb#23071.
             if (ks.get_replication_strategy().uses_tablets()) {
                 const std::map<sstring, sstring>& current_rf_per_dc = ks.metadata()->strategy_options();
 
                 auto new_rf_per_dc = _attrs->get_replication_options();
                 new_rf_per_dc.erase(ks_prop_defs::REPLICATION_STRATEGY_CLASS_KEY);
+
+                const auto views_present = !ks.metadata()->views().empty();
+                const auto& rack_map = qp.proxy().get_token_metadata_ptr()->get_topology().get_datacenter_racks();
 
                 unsigned total_abs_rfs_diff = 0;
 
@@ -103,11 +112,21 @@ void cql3::statements::alter_keyspace_statement::validate(query_processor& qp, c
                         continue;
                     }
 
-                    const unsigned next_rf = parse_rf(new_rf);
-                    const int64_t diff_rf = next_rf - old_rf;
+                    const auto next_rf = parse_rf(new_rf);
+                    const auto rf_diff = std::abs<int64_t>(next_rf - old_rf);
 
-                    if (total_abs_rfs_diff += std::abs(diff_rf); total_abs_rfs_diff >= 2) {
+                    if (total_abs_rfs_diff += rf_diff; total_abs_rfs_diff >= 2) {
                         throw exceptions::invalid_request_exception("Only one DC's RF can be changed at a time and not by more than 1");
+                    }
+
+                    // We enforce RF == #racks for every DC if the keyspace uses tablets and has materialized views.
+                    // The number of racks does NOT change, which means that if the new value of RF differs from
+                    // the previous one, it must be invalid because the previous one was valid.
+                    if (views_present && rf_diff != 0) {
+                        const auto rack_count = rack_map.at(new_dc).size();
+                        throw exceptions::invalid_request_exception(seastar::format("Keyspace '{}' uses tablets and materialized views. "
+                                "That enforces RF == rack count, but your query would violate that in data center '{}': {} vs. {}",
+                                _name, new_dc, next_rf, rack_count));
                     }
                 }
             }
