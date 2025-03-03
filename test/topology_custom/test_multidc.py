@@ -163,31 +163,35 @@ async def test_create_and_alter_keyspace_with_altering_rf_and_racks(manager: Man
 
     async def create_ok(rfs: List[int]) -> str:
         ks = unique_name()
-        dcs = [f"'dc{i}': {rf}" for rf, i in enumerate(rfs)]
+        dcs = [f"'dc{i + 1}': {rf}" for i, rf in enumerate(rfs)]
+        dcs = ", ".join(dcs)
         await cql.run_async(f"CREATE KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', {dcs}}} AND tablets = {{'enabled': true}}")
         return ks
 
     async def create_fail(rfs: List[int], failed_dc: int, rack_count: int) -> None:
         ks = unique_name()
-        dcs = [f"'dc{i}': {rf}" for rf, i in enumerate(rfs)]
+        dcs = [f"'dc{i + 1}': {rf}" for i, rf in enumerate(rfs)]
+        dcs = ", ".join(dcs)
         idx = failed_dc - 1
 
         err = "When using tablets, every DC must satisfy RF == rack count or RF == 1. That condition is not satisfied for DC " \
-                f"'dc{idx}': RF={rfs[idx]} vs. rack count={rack_count}"
+                f"'dc{failed_dc}': RF={rfs[idx]} vs. rack count={rack_count}"
 
         with pytest.raises(InvalidRequest, match=err):
-            await cql.run_async(f"CREATE KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', {dcs}}} AND tablets = {'enabled': true}")
+            await cql.run_async(f"CREATE KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', {dcs}}} AND tablets = {{'enabled': true}}")
 
     async def alter_ok(ks: str, rfs: List[int]) -> None:
-        dcs = [f"'dc{i}': {rf}" for rf, i in enumerate(rfs)]
+        dcs = [f"'dc{i + 1}': {rf}" for i, rf in enumerate(rfs)]
+        dcs = ", ".join(dcs)
         await cql.run_async(f"ALTER KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', {dcs}}}")
 
     async def alter_fail(ks: str, rfs: List[int], failed_dc: int, rack_count: int) -> None:
-        dcs = [f"'dc{i}': {rf}" for rf, i in enumerate(rfs)]
+        dcs = [f"'dc{i + 1}': {rf}" for i, rf in enumerate(rfs)]
+        dcs = ", ".join(dcs)
         idx = failed_dc - 1
 
-        err = "Keyspace '{}' uses tablets. That enforces RF == rack count or RF == 1, but your query would violate that " \
-                f"in data center 'dc{idx}': RF={rfs[idx]} vs. rack count={rack_count}"
+        err = f"Keyspace '{ks}' uses tablets. That enforces RF == rack count or RF == 1, but your query would violate that " \
+                f"in data center 'dc{failed_dc}': RF={rfs[idx]} vs. rack count={rack_count}"
 
         with pytest.raises(InvalidRequest, match=err):
             await cql.run_async(f"ALTER KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', {dcs}}}")
@@ -208,8 +212,8 @@ async def test_create_and_alter_keyspace_with_altering_rf_and_racks(manager: Man
     _ = await manager.server_add(property_file={"dc": "dc2", "rack": "r1"})
 
     ks2 = await create_ok([1, 1])
-    await create_fail([2, 1])
-    await create_fail([1, 2])
+    await create_fail([2, 1], 1, 1)
+    await create_fail([1, 2], 2, 1)
 
     await alter_fail(ks1, [2, 0], 1, 1)
     await alter_fail(ks1, [0, 0], 1, 1)
@@ -228,18 +232,19 @@ async def test_create_and_alter_keyspace_with_altering_rf_and_racks(manager: Man
     _ = await manager.server_add(property_file={"dc": "dc1", "rack": "r2"})
 
     ks3 = await create_ok([2, 1])
-    await create_fail([1, 1], 1, 2)
+    # RF = 1 is always OK!
+    ks4 = await create_ok([1, 1])
+
     await create_fail([1, 2], 2, 1)
     await create_fail([2, 2], 2, 1)
     await create_fail([2, 0], 2, 1)
-    await create_fail([2], 2, 1)
     await create_fail([0, 1], 1, 2)
 
-    await alter_fail(ks1, [1, 1], 1, 2)
     await alter_ok(ks1, [2, 1])
-    await alter_fail(ks1, [0, 2], 2, 1)
     await alter_fail(ks1, [2, 2], 2, 1)
 
     await alter_ok(ks2, [2, 1])
-
     await alter_ok(ks3, [2, 1])
+    await alter_ok(ks4, [2, 1])
+    # RF = 1 is always OK!
+    await alter_ok(ks3, [1, 1])

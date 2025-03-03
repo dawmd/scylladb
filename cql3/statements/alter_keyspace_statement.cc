@@ -107,7 +107,7 @@ void cql3::statements::alter_keyspace_statement::validate(query_processor& qp, c
                     }
 
                     const auto new_rf_value = parse_rf(new_rf);
-                    const auto rf_diff = std::abs<int64_t>(new_rf_value - old_rf_value);
+                    const auto rf_diff = std::abs(static_cast<int64_t>(new_rf_value) - static_cast<int64_t>(old_rf_value));
 
                     if (total_abs_rfs_diff += rf_diff; total_abs_rfs_diff >= 2) {
                         throw exceptions::invalid_request_exception("Only one DC's RF can be changed at a time and not by more than 1");
