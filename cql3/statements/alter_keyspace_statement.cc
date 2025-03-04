@@ -116,7 +116,7 @@ void cql3::statements::alter_keyspace_statement::validate(query_processor& qp, c
                     // For more context, see: scylladb/scylladb#23071.
                     const auto rack_count = rack_map.at(new_dc).size();
 
-                    if (new_rf_value != (int64_t) rack_count && new_rf_value != 1) {
+                    if (new_rf_value != (int64_t) rack_count && new_rf_value != 1 && new_rf_value != 0) {
                         throw exceptions::invalid_request_exception(seastar::format("Keyspace '{}' uses tablets. "
                                 "That enforces RF == rack count or RF == 1, but your query would violate that in data center '{}': "
                                 "RF={} vs. rack count={}",

@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
 #
 
+from typing import List
 import pytest
 from cassandra.protocol import InvalidRequest
 from test.topology.util import new_materialized_view, new_test_keyspace, new_test_table

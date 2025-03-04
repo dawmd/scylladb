@@ -185,7 +185,7 @@ std::pair<view_ptr, cql3::cql_warnings_vec> create_view_statement::prepare_view(
             const auto dc_rf = replication_strategy->get_replication_factor(dc);
             const auto rack_count = rack_map.size();
 
-            if (dc_rf != rack_count && dc_rf != 1) {
+            if (dc_rf != rack_count && dc_rf != 1 && dc_rf != 0) {
                 throw exceptions::invalid_request_exception(seastar::format("Mismatched replication factor and rack count (in data center '{}') for keyspace '{}': {} vs. {}",
                         dc, keyspace(), dc_rf, rack_count));
             }

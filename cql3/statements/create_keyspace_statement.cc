@@ -102,7 +102,7 @@ void create_keyspace_statement::validate(query_processor& qp, const service::cli
 
             // When using tablets, we enforce RF == #racks or RF == 1 in every data center.
             // For more context, see: scylladb/scylladb#23071.
-            if (rf != rack_count && rf != 1) {
+            if (rf != rack_count && rf != 1 && rf != 0) {
                 throw exceptions::invalid_request_exception(seastar::format("When using tablets, every DC must satisfy "
                         "RF == rack count or RF == 1. That condition is not satisfied for DC '{}': RF={} vs. rack count={}",
                         dc, rf, rack_count));
