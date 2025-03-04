@@ -12,6 +12,7 @@
 #include "cql3/statements/create_keyspace_statement.hh"
 #include "cql3/statements/ks_prop_defs.hh"
 #include "exceptions/exceptions.hh"
+#include "locator/abstract_replication_strategy.hh"
 #include "locator/network_topology_strategy.hh"
 #include "prepared_statement.hh"
 #include "data_dictionary/data_dictionary.hh"
@@ -87,7 +88,8 @@ void create_keyspace_statement::validate(query_processor& qp, const service::cli
             ksm->strategy_name(),
             locator::replication_strategy_params(ksm->strategy_options(), ksm->initial_tablets()));
 
-    if (rs->uses_tablets()) {
+    // At this point, we don't know yet if the replication strategy is NetworkTopologyStrategy!
+    if (rs->get_type() == locator::replication_strategy_type::network_topology && rs->uses_tablets()) {
         // We can assume that the used replication strategy is NetworkTopologyStrategy, cf.:
         //
         // "When creating a new keyspace with tablets enabled (the default), you can still disable them on a per-keyspace basis.

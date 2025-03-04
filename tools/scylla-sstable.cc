@@ -226,8 +226,10 @@ std::optional<schema_with_source> try_load_schema_from_user_provided_source(cons
     sstring schema_source_opt;
     try {
         if (!app_config["schema-file"].defaulted()) {
+            sst_log.info("IF 1!");
             schema_source_opt = "schema-file";
             const auto schema_file_path = std::filesystem::path(app_config["schema-file"].as<sstring>());
+            sst_log.info("IF 1.1!");
             return schema_with_source{.schema = tools::load_one_schema_from_file(cfg, schema_file_path).get(),
                 .source = schema_source_opt,
                 .path = schema_file_path,
@@ -236,12 +238,14 @@ std::optional<schema_with_source> try_load_schema_from_user_provided_source(cons
         // All the below schema sources require this.
         const auto [keyspace_name, table_name] = get_keyspace_and_table_options(app_config);
         if (app_config.contains("system-schema")) {
+            sst_log.info("IF 2!");
             schema_source_opt = "system-schema";
             return schema_with_source{.schema = tools::load_system_schema(cfg, keyspace_name, table_name),
                 .source = schema_source_opt,
                 .obtained_from = "--system-schema parameter"};
         }
         if (app_config.contains("schema-tables")) {
+            sst_log.info("IF 3!");
             const auto path_with_source = obtain_data_dir(app_config, cfg);
             schema_source_opt = "schema-tables";
             return schema_with_source{.schema = tools::load_schema_from_schema_tables(cfg, path_with_source.path, keyspace_name, table_name).get(),
@@ -250,6 +254,7 @@ std::optional<schema_with_source> try_load_schema_from_user_provided_source(cons
                 .obtained_from = format("--schema-tables parameter (data-dir path obtained via {})", path_with_source.source)};
         }
         if (app_config.contains("sstable-schema")) {
+            sst_log.info("IF 4!");
             const auto sst_path = fs::path(app_config["sstables"].as<std::vector<sstring>>().front());
             return schema_with_source{.schema = tools::load_schema_from_sstable(cfg, sst_path, keyspace_name, table_name).get(),
                 .source= schema_source_opt,

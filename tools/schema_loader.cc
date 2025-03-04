@@ -105,6 +105,7 @@ public:
 
 private:
     virtual const table_schema_version& get_version(data_dictionary::database) const override {
+        sllog.info("GET VERSION");
         throw std::bad_function_call();
     }
     virtual std::optional<data_dictionary::keyspace> try_find_keyspace(data_dictionary::database db, std::string_view name) const override {
@@ -199,6 +200,8 @@ private:
         return unwrap(db).features;
     }
     virtual replica::database& real_database(data_dictionary::database db) const override {
+        SCYLLA_ASSERT(false);
+        sllog.info("REAL DATABASE!");
         throw std::bad_function_call();
     }
     virtual replica::database* real_database_ptr(data_dictionary::database db) const override {
