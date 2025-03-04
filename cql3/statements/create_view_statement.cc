@@ -8,6 +8,7 @@
  * SPDX-License-Identifier: (LicenseRef-ScyllaDB-Source-Available-1.0 and Apache-2.0)
  */
 
+#include "db/config.hh"
 #include "exceptions/exceptions.hh"
 #include "locator/network_topology_strategy.hh"
 #include "utils/assert.hh"
@@ -157,7 +158,7 @@ std::pair<view_ptr, cql3::cql_warnings_vec> create_view_statement::prepare_view(
     if (!db.features().views_with_tablets && ars.uses_tablets()) {
         throw exceptions::invalid_request_exception(format("Materialized views are not supported on base tables with tablets"));
     }
-    if (ars.uses_tablets()) {
+    if (ars.uses_tablets() && db.real_database_ptr()) {
         // With tablets enabled, we want to restrict materialized views to keyspaces that satisfy RF == the number of racks OR RF == 1.
         //
         // Long story short, doing that, we want to ensure that:
@@ -186,7 +187,8 @@ std::pair<view_ptr, cql3::cql_warnings_vec> create_view_statement::prepare_view(
             const auto rack_count = rack_map.size();
 
             // RF = 0 is OK. That just means the user doesn't want to replicate data in that data center.
-            if (dc_rf != rack_count && dc_rf != 1 && dc_rf != 0) {
+            const bool rf_rack_restr_ks = db.get_config().check_experimental(db::experimental_features_t::feature::RF_RACK_RESTRICTED_KEYSPACES);
+            if (rf_rack_restr_ks && dc_rf != rack_count && dc_rf != 1 && dc_rf != 0) {
                 throw exceptions::invalid_request_exception(seastar::format("Mismatched replication factor and rack count (in data center '{}') for keyspace '{}': {} vs. {}",
                         dc, keyspace(), dc_rf, rack_count));
             }

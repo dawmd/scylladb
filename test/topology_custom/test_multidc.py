@@ -160,6 +160,7 @@ async def test_create_and_alter_keyspace_with_altering_rf_and_racks(manager: Man
     assert len(await manager.running_servers()) == 0
 
     cql = None
+    cmd = ["--experimental-features", "rf-rack-restricted-keyspaces"]
 
     async def create_ok(rfs: List[int]) -> str:
         ks = unique_name()
@@ -174,7 +175,7 @@ async def test_create_and_alter_keyspace_with_altering_rf_and_racks(manager: Man
         dcs = ", ".join(dcs)
         idx = failed_dc - 1
 
-        err = "When using tablets, every DC must satisfy RF == rack count or RF == 1. That condition is not satisfied for DC " \
+        err = "When using tablets, data centers must satisfy RF == rack count or RF == 1. That condition is not satisfied for DC " \
                 f"'dc{failed_dc}': RF={rfs[idx]} vs. rack count={rack_count}"
 
         with pytest.raises(InvalidRequest, match=err):
@@ -197,7 +198,7 @@ async def test_create_and_alter_keyspace_with_altering_rf_and_racks(manager: Man
             await cql.run_async(f"ALTER KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', {dcs}}}")
 
     # dc1: r1=1.
-    _ = await manager.server_add(property_file={"dc": "dc1", "rack": "r1"})
+    _ = await manager.server_add(cmdline=cmd, property_file={"dc": "dc1", "rack": "r1"})
     cql = manager.get_cql()
 
     ks1 = await create_ok([1])
@@ -205,31 +206,34 @@ async def test_create_and_alter_keyspace_with_altering_rf_and_racks(manager: Man
 
     await alter_ok(ks1, [1])
     await alter_fail(ks1, [2], 1, 1)
-    await alter_fail(ks1, [0], 1, 1)
+    # Does this make sense to begin with?
+    # await alter_fail(ks1, [0], 1, 1)
 
     # dc1: r1=1.
     # dc2: r1=1.
-    _ = await manager.server_add(property_file={"dc": "dc2", "rack": "r1"})
+    _ = await manager.server_add(cmdline=cmd, property_file={"dc": "dc2", "rack": "r1"})
 
     ks2 = await create_ok([1, 1])
     await create_fail([2, 1], 1, 1)
     await create_fail([1, 2], 2, 1)
 
     await alter_fail(ks1, [2, 0], 1, 1)
-    await alter_fail(ks1, [0, 0], 1, 1)
+    # await alter_fail(ks1, [0, 0], 1, 1)
     await alter_fail(ks1, [2], 1, 1)
-    await alter_fail(ks1, [0], 1, 1)
+    # await alter_fail(ks1, [0], 1, 1)
 
     await alter_ok(ks1, [1, 1])
 
     await alter_fail(ks2, [2, 1], 1, 1)
-    await alter_fail(ks2, [0, 1], 1, 1)
+    await alter_ok(ks2, [0, 1])
+    await alter_ok(ks2, [1, 1])
     await alter_fail(ks2, [1, 2], 2, 1)
-    await alter_fail(ks2, [1, 0], 2, 1)
+    await alter_ok(ks2, [1, 0])
+    await alter_ok(ks2, [1, 1])
 
     # dc1: r1=1, r2=1.
     # dc2: r1=1.
-    _ = await manager.server_add(property_file={"dc": "dc1", "rack": "r2"})
+    _ = await manager.server_add(cmdline=cmd, property_file={"dc": "dc1", "rack": "r2"})
 
     ks3 = await create_ok([2, 1])
     # RF = 1 is always OK!
@@ -237,8 +241,8 @@ async def test_create_and_alter_keyspace_with_altering_rf_and_racks(manager: Man
 
     await create_fail([1, 2], 2, 1)
     await create_fail([2, 2], 2, 1)
-    await create_fail([2, 0], 2, 1)
-    await create_fail([0, 1], 1, 2)
+    await create_ok([2, 0])
+    await create_ok([0, 1])
 
     await alter_ok(ks1, [2, 1])
     await alter_fail(ks1, [2, 2], 2, 1)

@@ -104,7 +104,8 @@ void create_keyspace_statement::validate(query_processor& qp, const service::cli
             // For more context, see: scylladb/scylladb#23071.
             //
             // We allow for RF == 0. That just means that the user doesn't want to replicate data in that data center.
-            if (rf != rack_count && rf != 1 && rf != 0) {
+            const bool rf_rack_restr_ks = qp.db().get_config().check_experimental(db::experimental_features_t::feature::RF_RACK_RESTRICTED_KEYSPACES);
+            if (rf_rack_restr_ks && rf != rack_count && rf != 1 && rf != 0) {
                 throw exceptions::invalid_request_exception(seastar::format("When using tablets, data centers must satisfy "
                         "RF == rack count or RF == 1. That condition is not satisfied for DC '{}': RF={} vs. rack count={}",
                         dc, rf, rack_count));

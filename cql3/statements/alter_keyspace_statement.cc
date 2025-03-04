@@ -13,6 +13,7 @@
 #include <seastar/core/on_internal_error.hh>
 #include <stdexcept>
 #include "alter_keyspace_statement.hh"
+#include "db/config.hh"
 #include "prepared_statement.hh"
 #include "service/migration_manager.hh"
 #include "service/storage_proxy.hh"
@@ -117,7 +118,8 @@ void cql3::statements::alter_keyspace_statement::validate(query_processor& qp, c
                     const auto rack_count = rack_map.at(new_dc).size();
 
                     // RF == 0 is OK. That just means that the user doesn't want to replicate data in that data center.
-                    if (new_rf_value != (int64_t) rack_count && new_rf_value != 1 && new_rf_value != 0) {
+                    const bool rf_rack_restr_ks = qp.db().get_config().check_experimental(db::experimental_features_t::feature::RF_RACK_RESTRICTED_KEYSPACES);
+                    if (rf_rack_restr_ks && new_rf_value != (int64_t) rack_count && new_rf_value != 1 && new_rf_value != 0) {
                         throw exceptions::invalid_request_exception(seastar::format("Keyspace '{}' uses tablets. "
                                 "That enforces RF == rack count or RF == 1, but your query would violate that in data center '{}': "
                                 "RF={} vs. rack count={}",

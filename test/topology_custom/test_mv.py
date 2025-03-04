@@ -22,7 +22,7 @@ async def test_create_mv_with_racks(manager: ManagerClient):
     # We need to have an isolated environment for the test to be reliable.
     assert len(await manager.running_servers()) == 0
 
-    cmd = ["--experimental-features", "views-with-tablets"]
+    cmd = ["--experimental-features=views-with-tablets", "--experimental-features=rf-rack-restricted-keyspaces"]
 
     s1 = await manager.server_add(cmdline=cmd, property_file={"dc": "dc1", "rack": "r1"})
     _ = await manager.server_add(cmdline=cmd, property_file={"dc": "dc1", "rack": "r2"})
