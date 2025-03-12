@@ -1050,6 +1050,17 @@ private:
                 throw;
             }
 
+            if (cfg->rf_rack_valid_keyspaces()) {
+                startlog.info("Verifying that all of the keyspaces are RF-rack-valid");
+                try {
+                    _db.local().check_rf_rack_validity(_token_metadata.local().get());
+                } catch (const std::exception& e) {
+                    // We wrap this because we can't assume anything about the type of the thrown exception.
+                    throw exceptions::server_exception(e.what());
+                }
+                startlog.info("All keyspaces are RF-rack-valid");
+            }
+
             utils::loading_cache_config perm_cache_config;
             perm_cache_config.max_size = cfg->permissions_cache_max_entries();
             perm_cache_config.expiry = std::chrono::milliseconds(cfg->permissions_validity_in_ms());
