@@ -31,7 +31,10 @@ async def test_zero_token_nodes_multidc_basic(manager: ManagerClient, zero_token
     property_file_dc2 = {'dc': 'dc2', 'rack': 'rack'}
 
     logging.info('Creating dc1 with 2 token-owning nodes')
-    servers = await manager.servers_add(2, config=normal_cfg, property_file=property_file_dc1)
+    servers = [
+        await manager.server_add(config=normal_cfg, property_file={"dc": "dc1", "rack": "r1"}),
+        await manager.server_add(config=normal_cfg, property_file={"dc": "dc1", "rack": "r2"})
+    ]
 
     normal_nodes_in_dc2 = 2 - zero_token_nodes
     logging.info(f'Creating dc2 with {normal_nodes_in_dc2} token-owning and {zero_token_nodes} zero-token nodes')

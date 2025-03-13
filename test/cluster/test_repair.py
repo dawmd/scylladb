@@ -40,8 +40,8 @@ async def test_enable_compacting_data_for_streaming_and_repair_live_update(manag
     silently broken in the past.
     """
     cmdline = ["--enable-compacting-data-for-streaming-and-repair", "0", "--smp", "1", "--logger-log-level", "api=trace"]
-    node1 = await manager.server_add(cmdline=cmdline)
-    node2 = await manager.server_add(cmdline=cmdline)
+    node1 = await manager.server_add(cmdline=cmdline, property_file={"dc": "dc1", "rack": "r1"})
+    node2 = await manager.server_add(cmdline=cmdline, property_file={"dc": "dc1", "rack": "r2"})
 
     cql = manager.get_cql()
 
@@ -89,8 +89,8 @@ async def test_tombstone_gc_for_streaming_and_repair(manager):
             "--hinted-handoff-enabled", "0",
             "--smp", "1",
             "--logger-log-level", "api=trace:database=trace"]
-    node1 = await manager.server_add(cmdline=cmdline)
-    node2 = await manager.server_add(cmdline=cmdline)
+    node1 = await manager.server_add(cmdline=cmdline, property_file={"dc": "dc1", "rack": "r1"})
+    node2 = await manager.server_add(cmdline=cmdline, property_file={"dc": "dc1", "rack": "r2"})
 
     cql = manager.get_cql()
 
@@ -149,8 +149,8 @@ async def test_tombstone_gc_for_streaming_and_repair(manager):
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
 async def test_repair_succeeds_with_unitialized_bm(manager):
-    await manager.server_add()
-    await manager.server_add()
+    await manager.server_add(property_file={"dc": "dc1", "rack": "r1"})
+    await manager.server_add(property_file={"dc": "dc1", "rack": "r2"})
     servers = await manager.running_servers()
 
     cql = manager.get_cql()
@@ -171,8 +171,8 @@ async def do_batchlog_flush_in_repair(manager, cache_time_in_ms):
     total_repair_duration = 0
 
     cmdline = ["--repair-hints-batchlog-flush-cache-time-in-ms", str(cache_time_in_ms), "--smp", "1", "--logger-log-level", "api=trace"]
-    node1 = await manager.server_add(cmdline=cmdline)
-    node2 = await manager.server_add(cmdline=cmdline)
+    node1 = await manager.server_add(cmdline=cmdline, property_file={"dc": "dc1", "rack": "r1"})
+    node2 = await manager.server_add(cmdline=cmdline, property_file={"dc": "dc1", "rack": "r2"})
 
     cql = manager.get_cql()
     cql.execute("CREATE KEYSPACE ks WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2}")
@@ -226,8 +226,8 @@ async def test_batchlog_flush_in_repair_without_cache(manager):
 @skip_mode('release', 'error injections are not supported in release mode')
 async def test_repair_abort(manager):
     cfg = {'enable_tablets': True}
-    await manager.server_add(config=cfg)
-    await manager.server_add(config=cfg)
+    await manager.server_add(config=cfg, property_file={"dc": "dc1", "rack": "r1"})
+    await manager.server_add(config=cfg, property_file={"dc": "dc1", "rack": "r2"})
     servers = await manager.running_servers()
 
     cql = manager.get_cql()

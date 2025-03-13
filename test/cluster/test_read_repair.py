@@ -381,14 +381,14 @@ async def test_read_repair_with_trace_logging(request, manager):
     logger.info("Creating a new cluster")
     cmdline = ["--hinted-handoff-enabled", "0", "--logger-log-level", "mutation_data=trace"]
 
-    for i in range(2):
-        await manager.server_add(cmdline=cmdline)
+    await manager.server_add(cmdline=cmdline, property_file={"dc": "dc1", "rack": "r1"})
+    await manager.server_add(cmdline=cmdline, property_file={"dc": "dc1", "rack": "r2"})
 
     cql = manager.get_cql()
     srvs = await manager.running_servers()
     await wait_for_cql_and_get_hosts(cql, srvs, time.time() + 60)
 
-    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2};") as ks:
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 2};") as ks:
         await cql.run_async(f"CREATE TABLE {ks}.t (pk bigint PRIMARY KEY, c int);")
 
         await cql.run_async(f"INSERT INTO {ks}.t (pk, c) VALUES (0, 0)")

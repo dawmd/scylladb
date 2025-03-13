@@ -270,4 +270,6 @@ def skip_mode_fixture(request, build_mode):
 @pytest.fixture(scope="function", autouse=True)
 async def prepare_3_nodes_cluster(request, manager):
     if request.node.get_closest_marker("prepare_3_nodes_cluster"):
-        await manager.servers_add(3)
+        await manager.server_add(property_file={"dc": "dc1", "rack": "r1"})
+        await manager.server_add(property_file={"dc": "dc1", "rack": "r2"})
+        await manager.server_add(property_file={"dc": "dc1", "rack": "r3"})

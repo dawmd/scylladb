@@ -22,7 +22,10 @@ async def test_remove_rpc_client_with_pending_requests(request, manager: Manager
     # Regression test for #17445
 
     logger.info("starting first two nodes")
-    servers = await manager.servers_add(2)
+    servers = [
+        await manager.server_add(property_file={"dc": "dc1", "rack": "r1"}),
+        await manager.server_add(property_file={"dc": "dc1", "rack": "r2"})
+    ]
 
     logger.info(f"wait_for_cql_and_get_hosts for the first node {servers[0]}")
     host0 = (await wait_for_cql_and_get_hosts(manager.get_cql(), [servers[0]], time.time() + 60))[0]
@@ -48,7 +51,7 @@ async def test_remove_rpc_client_with_pending_requests(request, manager: Manager
     expected_data.sort()
 
     logger.info(f"adding the third node")
-    servers += [await manager.server_add(start=False)]
+    servers += [await manager.server_add(start=False, property_file={"dc": "dc1", "rack": "r1"})]
 
     logger.info(f"starting the third node [{servers[2]}]")
     third_node_future = asyncio.create_task(manager.server_start(servers[2].server_id))

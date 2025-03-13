@@ -61,7 +61,10 @@ async def test_basic(manager: ManagerClient) -> None:
         'internode_compression': "all",
         'internode_compression_zstd_max_cpu_fraction': 0.0}
     logger.info(f"Booting initial cluster")
-    servers = await manager.servers_add(servers_num=2, config=cfg)
+    servers = [
+        await manager.server_add(config=cfg, property_file={"dc": "dc1", "rack": "r1"}),
+        await manager.server_add(config=cfg, property_file={"dc": "dc1", "rack": "r2"})
+    ]
 
     cql = manager.get_cql()
 
@@ -108,7 +111,10 @@ async def test_dict_training(manager: ManagerClient) -> None:
         '--logger-log-level=dict_training=trace'
     ]
     logger.info(f"Booting initial cluster")
-    servers = await manager.servers_add(servers_num=2, config=cfg, cmdline=cmdline)
+    servers = [
+        await manager.server_add(config=cfg, cmdline=cmdline, property_file={"dc": "dc1", "rack": "r1"}),
+        await manager.server_add(config=cfg, cmdline=cmdline, property_file={"dc": "dc1", "rack": "r2"})
+    ]
 
     cql = manager.get_cql()
 
@@ -170,7 +176,10 @@ async def test_external_dicts(manager: ManagerClient) -> None:
         '--logger-log-level=advanced_rpc_compressor=debug'
     ]
     logger.info(f"Booting initial cluster")
-    servers = await manager.servers_add(servers_num=2, config=cfg, cmdline=cmdline)
+    servers = [
+        await manager.server_add(config=cfg, cmdline=cmdline, property_file={"dc": "dc1", "rack": "r1"}),
+        await manager.server_add(config=cfg, cmdline=cmdline, property_file={"dc": "dc1", "rack": "r2"})
+    ]
 
     cql = manager.get_cql()
 
@@ -233,7 +242,10 @@ async def test_external_dicts_sanity(manager: ManagerClient) -> None:
         '--logger-log-level=advanced_rpc_compressor=debug',
     ]
     logger.info(f"Booting initial cluster")
-    servers = await manager.servers_add(servers_num=2, config=cfg, cmdline=cmdline)
+    servers = [
+        await manager.server_add(config=cfg, cmdline=cmdline, property_file={"dc": "dc1", "rack": "r1"}),
+        await manager.server_add(config=cfg, cmdline=cmdline, property_file={"dc": "dc1", "rack": "r2"})
+    ]
 
     cql = manager.get_cql()
 

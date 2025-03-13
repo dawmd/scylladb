@@ -25,27 +25,25 @@ async def test_no_cleanup_when_unnecessary(request, manager: ManagerClient):
     servers = await manager.running_servers()
     logs = [await manager.server_open_log(srv.server_id) for srv in servers]
     marks = [await log.mark() for log in logs]
-    await manager.server_add()
-    await manager.server_add()
+    servers += [await manager.server_add(property_file={"dc": servers[0].datacenter, "rack": servers[0].rack}),
+                await manager.server_add(property_file={"dc": servers[1].datacenter, "rack": servers[1].rack})]
     matches = [await log.grep("raft_topology - start cleanup", from_mark=mark) for log, mark in zip(logs, marks)]
     assert sum(len(x) for x in matches) == 0
 
-    servers = await manager.running_servers()
     logs = [await manager.server_open_log(srv.server_id) for srv in servers]
     marks = [await log.mark() for log in logs]
     await manager.decommission_node(servers[4].server_id)
     matches = [await log.grep("raft_topology - start cleanup", from_mark=mark) for log, mark in zip(logs, marks)]
     assert sum(len(x) for x in matches) == 4
 
-    servers = await manager.running_servers()
+    servers = servers[:-1]
     logs = [await manager.server_open_log(srv.server_id) for srv in servers]
     marks = [await log.mark() for log in logs]
     await manager.decommission_node(servers[3].server_id)
     matches = [await log.grep("raft_topology - start cleanup", from_mark=mark) for log, mark in zip(logs, marks)]
     assert sum(len(x) for x in matches) == 0
 
-    await manager.server_add()
-    servers = await manager.running_servers()
+    servers[3] = await manager.server_add(property_file={"dc": servers[0].datacenter, "rack": servers[0].rack})
     logs = [await manager.server_open_log(srv.server_id) for srv in servers]
     marks = [await log.mark() for log in logs]
     await manager.api.client.post("/storage_service/cleanup_all", servers[0].ip_addr)

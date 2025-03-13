@@ -29,14 +29,14 @@ async def test_topology_ops(request, manager: ManagerClient, tablets_enabled: bo
         num_nodes += 1
 
     logger.info("Bootstrapping first node")
-    servers = [await manager.server_add(config=cfg)]
+    servers = [await manager.server_add(config=cfg, property_file={"dc": "dc1", "rack": "r1"})]
 
     logger.info(f"Restarting node {servers[0]}")
     await manager.server_stop_gracefully(servers[0].server_id)
     await manager.server_start(servers[0].server_id)
 
     logger.info("Bootstrapping other nodes")
-    servers += await manager.servers_add(num_nodes, config=cfg)
+    servers += [await manager.server_add(config=cfg, property_file={"dc": "dc1", "rack": f"r{i % rf}"}) for i in range(rf)]
 
     await wait_for_cql_and_get_hosts(manager.cql, servers, time.time() + 60)
     cql = await reconnect_driver(manager)
@@ -57,7 +57,7 @@ async def test_topology_ops(request, manager: ManagerClient, tablets_enabled: bo
 
     logger.info(f"Replacing node {servers[0]}")
     replace_cfg = ReplaceConfig(replaced_id = servers[0].server_id, reuse_ip_addr = False, use_host_id = False)
-    servers = servers[1:] + [await manager.server_add(replace_cfg)]
+    servers = servers[1:] + [await manager.server_add(replace_cfg, property_file={"dc": "dc1", "rack": "r1"})]
     await check_token_ring_and_group0_consistency(manager)
 
     logger.info(f"Stopping node {servers[0]}")
