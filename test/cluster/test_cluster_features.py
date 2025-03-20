@@ -145,13 +145,13 @@ async def test_joining_old_node_fails(manager: ManagerClient) -> None:
     await asyncio.gather(*(wait_for_feature(TEST_FEATURE_NAME, cql, h, time.time() + 60) for h in hosts))
 
     # Try to add a node that doesn't support the feature - should fail
-    new_server_info = await manager.server_add(start=False)
+    new_server_info = await manager.server_add(start=False, property_file={"dc": "dc1", "rack": "r1"})
     await manager.server_start(new_server_info.server_id, expected_error="Feature check failed")
 
     # Try to replace with a node that doesn't support the feature - should fail
     await manager.server_stop_gracefully(servers[0].server_id)
     replace_cfg = ReplaceConfig(replaced_id=servers[0].server_id, reuse_ip_addr=False, use_host_id=False)
-    new_server_info = await manager.server_add(start=False, replace_cfg=replace_cfg)
+    new_server_info = await manager.server_add(start=False, replace_cfg=replace_cfg, property_file={"dc": servers[0].datacenter, "rack": servers[0].rack})
     await manager.server_start(new_server_info.server_id, expected_error="Feature check failed")
 
 

@@ -39,7 +39,7 @@ async def test_snapshot(manager, random_tables):
         await t.add_column()
 
     manager.driver_close()
-    server_d = await manager.server_add()
+    server_d = await manager.server_add(property_file={"dc": server_a.datacenter, "rack": server_a.rack})
     logger.info("Started D %s", server_d)
 
     logger.info("Stopping A %s, B %s, and C %s", server_a, server_b, server_c)

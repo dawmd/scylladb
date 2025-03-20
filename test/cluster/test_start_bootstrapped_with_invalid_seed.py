@@ -12,7 +12,7 @@ from test.pylib.internal_types import IPAddress
 from test.pylib.manager_client import ManagerClient
 
 logger = logging.getLogger(__name__)
-pytestmark = pytest.mark.prepare_3_nodes_cluster
+# pytestmark = pytest.mark.prepare_3_nodes_cluster # WHY THIS??
 
 
 @pytest.mark.asyncio
@@ -31,7 +31,7 @@ async def test_start_bootstrapped_with_invalid_seed(manager: ManagerClient):
      3. Make sure the node started successfully since it's already bootstrapped (i.e. is a cluster member).
     """
 
-    s1 = await manager.server_add(start=False)
+    s1 = await manager.server_add(start=False, property_file={"dc": "dc1", "rack": "r1"})
 
     # Start the node with an invalid seed and make sure it fails with an error message.
     await manager.server_start(s1.server_id, seeds=[IPAddress("no_address")],
