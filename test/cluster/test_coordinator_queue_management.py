@@ -12,7 +12,6 @@ import logging
 import asyncio
 
 logger = logging.getLogger(__name__)
-pytestmark = pytest.mark.prepare_3_nodes_cluster
 
 
 @pytest.mark.asyncio
@@ -24,9 +23,13 @@ async def test_coordinator_queue_management(manager: ManagerClient):
        Then it downs one node and creates a queue with two requests:
        bootstrap and decommission. Since none can proceed both should be canceled.
     """
-    await manager.server_add()
-    await manager.server_add()
-    servers = await manager.running_servers()
+    servers = [
+        await manager.server_add(property_file={"dc": "dc1", "rack": "r1"}),
+        await manager.server_add(property_file={"dc": "dc1", "rack": "r2"}),
+        await manager.server_add(property_file={"dc": "dc1", "rack": "r3"}),
+        await manager.server_add(property_file={"dc": "dc1", "rack": "r2"}),
+        await manager.server_add(property_file={"dc": "dc1", "rack": "r3"})
+    ]
     logs = [await manager.server_open_log(srv.server_id) for srv in servers]
     marks = [await log.mark() for log in logs]
     await manager.server_stop_gracefully(servers[3].server_id)
@@ -38,7 +41,7 @@ async def test_coordinator_queue_management(manager: ManagerClient):
     [await manager.api.enable_injection(s.ip_addr, inj, one_shot=True) for s in servers[:3]]
 
     s3_id = await manager.get_host_id(servers[3].server_id)
-    tasks = [asyncio.create_task(manager.server_add()),
+    tasks = [asyncio.create_task(manager.server_add(property_file={"dc": "dc1", "rack": "r2"})),
              asyncio.create_task(manager.remove_node(servers[0].server_id, servers[3].server_id)),
              asyncio.create_task(manager.remove_node(servers[0].server_id, servers[4].server_id, [s3_id]))]
 
@@ -57,7 +60,7 @@ async def test_coordinator_queue_management(manager: ManagerClient):
 
     [await manager.api.enable_injection(s.ip_addr, inj, one_shot=True) for s in servers[:3]]
 
-    s = await manager.server_add(start=False)
+    s = await manager.server_add(start=False, property_file={"dc": "dc1", "rack": "r1"})
 
     tasks = [asyncio.create_task(manager.server_start(s.server_id, expected_error="request canceled because some required nodes are dead")),
              asyncio.create_task(manager.decommission_node(servers[1].server_id, expected_error="Decommission failed. See earlier errors"))]
