@@ -287,3 +287,10 @@ async def prepare_3_nodes_cluster(is_test_needed_cluster, manager):
     if not servers and is_test_needed_cluster:
         await manager.servers_add(3)
         await manager.mark_clean()
+
+
+@pytest.fixture(scope="function", autouse=True)
+async def prepare_3_racks_cluster(request, manager):
+    if request.node.get_closest_marker("prepare_3_racks_cluster"):
+        await manager.servers_add(3, auto_rack_dc="dc1")
+        await manager.mark_clean()
