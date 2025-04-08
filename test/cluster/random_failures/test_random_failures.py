@@ -66,8 +66,8 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
 @pytest.fixture
 async def four_nodes_cluster(manager: ManagerClient) -> None:
     LOGGER.info("Booting initial 4-node cluster.")
-    for _ in range(4):
-        server = await manager.server_add()
+    for i in range(4):
+        server = await manager.server_add(property_file={"dc": "dc1", "rack": f"r{i % 3}"})
         await manager.api.enable_injection(
             node_ip=server.ip_addr,
             injection="raft_server_set_snapshot_thresholds",
@@ -116,7 +116,8 @@ async def test_random_failures(manager: ManagerClient,
         )
         coordinator_log = await manager.server_open_log(server_id=coordinator.server_id)
         coordinator_log_mark = await coordinator_log.mark()
-        s_info = await manager.server_add(expected_server_up_state=ServerUpState.PROCESS_STARTED)
+        s_info = await manager.server_add(expected_server_up_state=ServerUpState.PROCESS_STARTED,
+                                          property_file={"dc": "dc1", "rack": "r1"})
         await coordinator_log.wait_for(
             pattern="topology_coordinator_pause_after_updating_cdc_generation: waiting",
             from_mark=coordinator_log_mark,
@@ -129,6 +130,7 @@ async def test_random_failures(manager: ManagerClient,
     else:
         s_info = await manager.server_add(
             config={"error_injections_at_startup": [{"name": error_injection, "one_shot": True}]},
+            property_file={"dc": "dc1", "rack": "r2"},
             expected_server_up_state=ServerUpState.PROCESS_STARTED,
         )
 
