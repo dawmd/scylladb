@@ -69,7 +69,13 @@ async def test_replace(manager: ManagerClient):
         '--logger-log-level', 'raft_topology=trace',
     ]
 
-    servers = await manager.servers_add(3, cmdline=cmdline)
+    # Necessary before we implement scylladb/scylladb#23426.
+    config = {"rf_rack_valid_keyspaces": "false"}
+
+    servers = await manager.servers_add(2, cmdline=cmdline, config=config, property_file=[
+        {"dc": "dc1", "rack": "r1"},
+        {"dc": "dc1", "rack": "r2"}
+    ])
 
     cql = manager.get_cql()
 
@@ -81,6 +87,8 @@ async def test_replace(manager: ManagerClient):
     # Otherwise, some reads would fail to find a quorum.
     ks2 = await create_keyspace(cql, 32, rf=2)
     await cql.run_async(f"CREATE TABLE {ks2}.test (pk int PRIMARY KEY, c int);")
+
+    servers += [await manager.server_add(cmdline=cmdline, config=config, property_file={"dc": "dc1", "rack": "r3"})]
 
     ks3 = await create_keyspace(cql, 32, rf=3)
     await cql.run_async(f"CREATE TABLE {ks3}.test (pk int PRIMARY KEY, c int);")
@@ -116,9 +124,10 @@ async def test_replace(manager: ManagerClient):
     finish_writes = await start_writes(cql, ks3, "test2")
 
     logger.info('Replacing a node')
-    await manager.server_stop_gracefully(servers[0].server_id)
-    replace_cfg = ReplaceConfig(replaced_id = servers[0].server_id, reuse_ip_addr = False, use_host_id = True)
-    servers.append(await manager.server_add(replace_cfg))
+    replaced_node = servers[0]
+    await manager.server_stop_gracefully(replaced_node.server_id)
+    replace_cfg = ReplaceConfig(replaced_id = replaced_node.server_id, reuse_ip_addr = False, use_host_id = True)
+    servers.append(await manager.server_add(replace_cfg, config=config, property_file=replaced_node.property_file()))
     servers = servers[1:]
 
     key_count = await finish_writes()
@@ -146,8 +155,14 @@ async def test_removenode(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cmdline = ['--logger-log-level', 'storage_service=trace']
 
-    # 4 nodes so that we can find new tablet replica for the RF=3 table on removenode
-    servers = await manager.servers_add(4, cmdline=cmdline)
+    # Necessary before we implement scylladb/scylladb#23426.
+    config = {"rf_rack_valid_keyspaces": "false"}
+
+    # Ultimately 4 nodes so that we can find new tablet replica for the RF=3 table on removenode
+    servers = await manager.servers_add(2, cmdline=cmdline, config=config, property_file=[
+        {"dc": "dc1", "rack": "r1"},
+        {"dc": "dc1", "rack": "r2"}
+    ])
 
     cql = manager.get_cql()
 
@@ -159,9 +174,14 @@ async def test_removenode(manager: ManagerClient):
     ks2 = await create_keyspace(cql, 32, rf=2)
     await cql.run_async(f"CREATE TABLE {ks2}.test (pk int PRIMARY KEY, c int);")
 
+    servers += [await manager.server_add(cmdline=cmdline, config=config, property_file={"dc": "dc1", "rack": "r3"})]
+
     # RF=3
     ks3 = await create_keyspace(cql, 32, rf=3)
     await cql.run_async(f"CREATE TABLE {ks3}.test (pk int PRIMARY KEY, c int);")
+
+    # Note: Later on, we're removing `servers[0]`, so let's assign this node to the same rack.
+    servers += [await manager.server_add(cmdline=cmdline, config=config, property_file={"dc": "dc1", "rack": servers[0].rack})]
 
     logger.info("Populating table")
 
@@ -211,7 +231,13 @@ async def test_removenode_with_ignored_node(manager: ManagerClient):
 
     # 5 nodes because we need a quorum with 2 nodes down.
     # 4 nodes would be enough to not lose data with RF=3.
-    servers = await manager.servers_add(5, cmdline=cmdline)
+    servers = await manager.servers_add(5, cmdline=cmdline, property_file=[
+        {"dc": "dc1", "rack": "r1"},
+        {"dc": "dc1", "rack": "r1"},
+        {"dc": "dc1", "rack": "r1"},
+        {"dc": "dc1", "rack": "r2"},
+        {"dc": "dc1", "rack": "r3"}
+    ])
 
     cql = manager.get_cql()
 
