@@ -51,7 +51,8 @@ async def create_table_insert_data_for_repair(manager, rf = 3 , tablets = 8, fas
         config = {}
     if disable_flush_cache_time:
         config.update({'repair_hints_batchlog_flush_cache_time_in_ms': 0})
-    servers = [await manager.server_add(config=config, cmdline=cmdline), await manager.server_add(config=config, cmdline=cmdline), await manager.server_add(config=config, cmdline=cmdline)]
+    servers = await manager.servers_add(3, config=config, cmdline=cmdline,
+                                        property_file=[{"dc": "dc1", "rack": f"r{i % rf}"} for i in range(rf)])
     cql = manager.get_cql()
     ks = await create_new_test_keyspace(cql, "WITH replication = {{'class': 'NetworkTopologyStrategy', "
                   "'replication_factor': {}}} AND tablets = {{'initial': {}}};".format(rf, tablets))
