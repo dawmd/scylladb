@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 @pytest.mark.asyncio
 async def test_tablet_replication_factor_enough_nodes(manager: ManagerClient):
     cfg = {'enable_user_defined_functions': False, 'tablets_mode_for_new_keyspaces': 'enabled'}
+    # This test checks that Scylla rejects creating a table if there are too few token-owning nodes.
+    # That means that a keyspace must already be in place, but that's impossible with RF-rack-valid
+    # keyspaces being enforced. We could go over this constraint by creating 3 nodes and then
+    # decommissioning one of them before attempting to create a table, but if we decide to constraint
+    # decommission later on, this test will have to be modified again. Let's simply disable the option.
+    cfg = cfg | {'rf_rack_valid_keyspaces': False}
     servers = await manager.servers_add(2, config=cfg)
 
     cql = manager.get_cql()
@@ -66,7 +72,12 @@ async def test_tablet_scaling_option_is_respected(manager: ManagerClient):
 async def test_tablet_cannot_decommision_below_replication_factor(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cfg = {'enable_user_defined_functions': False, 'tablets_mode_for_new_keyspaces': 'enabled'}
-    servers = await manager.servers_add(4, config=cfg)
+    servers = await manager.servers_add(4, config=cfg, property_file=[
+        {"dc": "dc1", "rack": "r1"},
+        {"dc": "dc1", "rack": "r1"},
+        {"dc": "dc1", "rack": "r2"},
+        {"dc": "dc1", "rack": "r3"}
+    ])
 
     logger.info("Creating table")
     cql = manager.get_cql()
@@ -132,7 +143,7 @@ async def test_reshape_with_tablets(manager: ManagerClient):
 @pytest.mark.asyncio
 async def test_tablet_rf_change(manager: ManagerClient, direction):
     cfg = {'enable_user_defined_functions': False, 'tablets_mode_for_new_keyspaces': 'enabled'}
-    servers = await manager.servers_add(3, config=cfg)
+    servers = await manager.servers_add(2, config=cfg, auto_rack_dc="dc1")
     for s in servers:
         await manager.api.disable_tablet_balancing(s.ip_addr)
 
@@ -141,11 +152,11 @@ async def test_tablet_rf_change(manager: ManagerClient, direction):
     this_dc = res[0].data_center
 
     if direction == 'up':
-        rf_from = 2
-        rf_to = 3
-    if direction == 'down':
-        rf_from = 3
+        rf_from = 1
         rf_to = 2
+    if direction == 'down':
+        rf_from = 2
+        rf_to = 1
     if direction == 'none':
         rf_from = 2
         rf_to = 2
@@ -199,7 +210,11 @@ async def test_tablet_mutation_fragments_unowned_partition(manager: ManagerClien
     not owned by the node is attempted to be read."""
     cfg = {'enable_user_defined_functions': False,
            'tablets_mode_for_new_keyspaces': 'enabled' }
-    servers = await manager.servers_add(3, config=cfg)
+    servers = await manager.servers_add(3, config=cfg, property_file=[
+        {"dc": "dc1", "rack": "r1"},
+        {"dc": "dc1", "rack": "r1"},
+        {"dc": "dc1", "rack": "r2"}
+    ])
 
     cql = manager.get_cql()
 
@@ -657,12 +672,14 @@ async def test_remove_failure_with_no_normal_token_owners_in_dc(manager: Manager
     and when there is another down node in the datacenter, leaving no normal token owners.
     """
     servers: dict[str, list[ServerInfo]] = dict()
-    servers['dc1'] = await manager.servers_add(servers_num=2, property_file={'dc': 'dc1', 'rack': 'rack1'})
+    servers['dc1'] = await manager.servers_add(servers_num=2, property_file=[
+        {'dc': 'dc1', 'rack': 'rack1_1'},
+        {'dc': 'dc1', 'rack': 'rack1_2'}])
     # if testing with no zero-token-node, add an additional node to dc2 to maintain raft quorum
     extra_node = 0 if with_zero_token_node else 1
     servers['dc2'] = await manager.servers_add(servers_num=2 + extra_node, property_file={'dc': 'dc2', 'rack': 'rack2'})
     if with_zero_token_node:
-        servers['dc1'].append(await manager.server_add(config={'join_ring': False}, property_file={'dc': 'dc1', 'rack': 'rack1'}))
+        servers['dc1'].append(await manager.server_add(config={'join_ring': False}, property_file={'dc': 'dc1', 'rack': 'rack1_1'}))
         servers['dc3'] = [await manager.server_add(config={'join_ring': False}, property_file={'dc': 'dc3', 'rack': 'rack3'})]
 
     cql = manager.get_cql()
@@ -684,7 +701,7 @@ async def test_remove_failure_with_no_normal_token_owners_in_dc(manager: Manager
 
         logger.info(f"Replacing {node_to_replace} with a new node")
         replace_cfg = ReplaceConfig(replaced_id=node_to_remove.server_id, reuse_ip_addr = False, use_host_id=True, wait_replaced_dead=True)
-        await manager.server_add(replace_cfg=replace_cfg, property_file={'dc': 'dc1', 'rack': 'rack1'})
+        await manager.server_add(replace_cfg=replace_cfg, property_file={'dc': 'dc1', 'rack': node_to_remove.rack})
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("with_zero_token_node", [False, True])
@@ -696,10 +713,12 @@ async def test_remove_failure_then_replace(manager: ManagerClient, with_zero_tok
     And then verify that that node can be replaced successfully.
     """
     servers: dict[str, list[ServerInfo]] = dict()
-    servers['dc1'] = await manager.servers_add(servers_num=2, property_file={'dc': 'dc1', 'rack': 'rack1'})
+    servers['dc1'] = await manager.servers_add(servers_num=2, property_file=[
+        {'dc': 'dc1', 'rack': 'rack1_1'},
+        {'dc': 'dc1', 'rack': 'rack1_2'}])
     servers['dc2'] = await manager.servers_add(servers_num=2, property_file={'dc': 'dc2', 'rack': 'rack2'})
     if with_zero_token_node:
-        servers['dc1'].append(await manager.server_add(config={'join_ring': False}, property_file={'dc': 'dc1', 'rack': 'rack1'}))
+        servers['dc1'].append(await manager.server_add(config={'join_ring': False}, property_file={'dc': 'dc1', 'rack': 'rack1_1'}))
         servers['dc3'] = [await manager.server_add(config={'join_ring': False}, property_file={'dc': 'dc3', 'rack': 'rack3'})]
 
     cql = manager.get_cql()
@@ -717,7 +736,7 @@ async def test_remove_failure_then_replace(manager: ManagerClient, with_zero_tok
 
         logger.info(f"Replacing {node_to_remove} with a new node")
         replace_cfg = ReplaceConfig(replaced_id=node_to_remove.server_id, reuse_ip_addr = False, use_host_id=True, wait_replaced_dead=True)
-        await manager.server_add(replace_cfg=replace_cfg, property_file={'dc': 'dc1', 'rack': 'rack1'})
+        await manager.server_add(replace_cfg=replace_cfg, property_file={'dc': 'dc1', 'rack': node_to_remove.rack})
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("with_zero_token_node", [False, True])
@@ -730,12 +749,14 @@ async def test_replace_with_no_normal_token_owners_in_dc(manager: ManagerClient,
     but other datacenters can be used to rebuild the data.
     """
     servers: dict[str, list[ServerInfo]] = dict()
-    servers['dc1'] = await manager.servers_add(servers_num=2, property_file={'dc': 'dc1', 'rack': 'rack1'})
+    servers['dc1'] = await manager.servers_add(servers_num=2, property_file=[
+        {'dc': 'dc1', 'rack': 'rack1_1'},
+        {'dc': 'dc1', 'rack': 'rack1_2'}])
     # if testing with no zero-token-node, add an additional node to dc2 to maintain raft quorum
     extra_node = 0 if with_zero_token_node else 1
     servers['dc2'] = await manager.servers_add(servers_num=2 + extra_node, property_file={'dc': 'dc2', 'rack': 'rack2'})
     if with_zero_token_node:
-        servers['dc1'].append(await manager.server_add(config={'join_ring': False}, property_file={'dc': 'dc1', 'rack': 'rack1'}))
+        servers['dc1'].append(await manager.server_add(config={'join_ring': False}, property_file={'dc': 'dc1', 'rack': 'rack1_1'}))
         servers['dc3'] = [await manager.server_add(config={'join_ring': False}, property_file={'dc': 'dc3', 'rack': 'rack3'})]
 
     cql = manager.get_cql()
@@ -757,11 +778,11 @@ async def test_replace_with_no_normal_token_owners_in_dc(manager: ManagerClient,
         logger.info(f"Replacing {nodes_to_replace[0]} with a new node")
         replace_cfg = ReplaceConfig(replaced_id=nodes_to_replace[0].server_id, reuse_ip_addr = False, use_host_id=True, wait_replaced_dead=True,
                                     ignore_dead_nodes=[replaced_host_id])
-        await manager.server_add(replace_cfg=replace_cfg, property_file={'dc': 'dc1', 'rack': 'rack1'})
+        await manager.server_add(replace_cfg=replace_cfg, property_file={'dc': 'dc1', 'rack': nodes_to_replace[0].rack})
 
         logger.info(f"Replacing {nodes_to_replace[1]} with a new node")
         replace_cfg = ReplaceConfig(replaced_id=nodes_to_replace[1].server_id, reuse_ip_addr = False, use_host_id=True, wait_replaced_dead=True)
-        await manager.server_add(replace_cfg=replace_cfg, property_file={'dc': 'dc1', 'rack': 'rack1'})
+        await manager.server_add(replace_cfg=replace_cfg, property_file={'dc': 'dc1', 'rack': nodes_to_replace[1].rack})
 
         logger.info("Verifying data")
         for node in servers['dc2']:
@@ -982,15 +1003,15 @@ async def check_tablet_rebuild_with_repair(manager: ManagerClient, fail: bool):
     host_ids = []
     servers = []
 
-    async def make_server():
-        s = await manager.server_add(config=cfg)
+    async def make_server(rack: str):
+        s = await manager.server_add(config=cfg, property_file={"dc": "dc1", "rack": rack})
         servers.append(s)
         host_ids.append(await manager.get_host_id(s.server_id))
         await manager.api.disable_tablet_balancing(s.ip_addr)
 
-    await make_server()
-    await make_server()
-    await make_server()
+    await make_server("r1")
+    await make_server("r1")
+    await make_server("r2")
 
     cql = manager.get_cql()
 
