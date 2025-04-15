@@ -2174,6 +2174,8 @@ sharded<locator::shared_token_metadata> token_metadata;
                 startlog.info("All keyspaces are RF-rack-valid");
             }
 
+            db.local().check_tablet_mvs();
+
             dictionary_service dict_service(
                 dict_sampler,
                 sys_ks.local(),
