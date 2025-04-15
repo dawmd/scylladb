@@ -7,7 +7,7 @@ import asyncio
 import logging
 import sys
 
-from typing import List, Union
+from typing import Any, List, Union
 
 import pytest
 from cassandra.policies import WhiteListRoundRobinPolicy
@@ -476,7 +476,7 @@ async def test_create_mv_with_racks(manager: ManagerClient):
 
     cfg = {"rf_rack_valid_keyspaces": "true"}
 
-    s1, _, _ = await manager.servers_add(3, config=cfg, property_file=[
+    _ = await manager.servers_add(3, config=cfg, property_file=[
         {"dc": "dc1", "rack": "r1_1"},
         {"dc": "dc1", "rack": "r1_2"},
         {"dc": "dc2", "rack": "r2_1"},
@@ -494,15 +494,21 @@ async def test_create_mv_with_racks(manager: ManagerClient):
 
         return (ks, t)
 
-    async def try_pass(ks: str, table: str) -> None:
-        async with new_materialized_view(manager, f"{ks}.{table}", "*", "p, v", "p IS NOT NULL AND v IS NOT NULL"):
-            pass
+    async def test_scenario(good: list[Any], bad: list[Any], dc: int | None = None, rf: int | None = None, rack_count: int | None = None):
+        async def try_pass(ks: str, table: str) -> None:
+            async with new_materialized_view(manager, f"{ks}.{table}", "*", "p, v", "p IS NOT NULL AND v IS NOT NULL"):
+                pass
 
-    async def try_fail(ks: str, table: str, dc: int, rf: int, rack_count: int) -> None:
-        err = "The option `rf_rack_valid_keyspaces` is enabled. It requires that all keyspaces are RF-rack-valid. " \
-              f"That condition is violated: keyspace '{ks}' doesn't satisfy it for DC 'dc{dc}': RF={rf} vs. rack count={rack_count}."
-        with pytest.raises(InvalidRequest, match=err):
-            await try_pass(ks, table)
+        async def try_fail(ks: str, table: str, dc: int, rf: int, rack_count: int) -> None:
+            err = "The option `rf_rack_valid_keyspaces` is enabled. It requires that all keyspaces are RF-rack-valid. " \
+                f"That condition is violated: keyspace '{ks}' doesn't satisfy it for DC 'dc{dc}': RF={rf} vs. rack count={rack_count}."
+            with pytest.raises(InvalidRequest, match=err):
+                await try_pass(ks, table)
+
+        good = [try_pass(ks, t) for ks, t in good]
+        bad = [try_fail(ks, t, dc, rf, rack_count) for ks, t in bad]
+
+        await asyncio.gather(*[*good, *bad])
 
     # Scenario 1: [dc1: 2 racks, dc2: 1 rack].
     # ----------------------------------------
@@ -516,139 +522,51 @@ async def test_create_mv_with_racks(manager: ManagerClient):
     ])
 
     # All of the created keyspaces are RF-rack-valid, so creating views in them should proceed without an issue.
-    await asyncio.gather(*[try_pass(ks, t) for ks, t in setups1])
+    await test_scenario(setups1, [])
 
-    # Scenario 2: [dc1: 2 racks, dc2: 2 racks].
+    # Valid in the next scenario.
+    valid_setups1 = setups1[:-2]
+    # Invalid in the next scenario.
+    invalid_setups1 = setups1[-2:]
+
+    # Scenario 2: [dc1: 3 racks, dc2: 2 racks].
     # -----------------------------------------
-    _ = await manager.server_add(property_file={"dc": "dc2", "rack": "r2_2"})
+    _ = await manager.servers_add(3, config=cfg, property_file=[
+        {"dc": "dc1", "rack": "r1_3"},
+        {"dc": "dc1", "rack": "r1_1"},
+        {"dc": "dc2", "rack": "r2_2"}])
 
     setups2 = await asyncio.gather(*[
-        prepare()
+        prepare(3, 0),
+        prepare(3, 1),
+        prepare(3, 2),
+        prepare(1, 2),
+        prepare(0, 2)
     ])
 
-    ### NOTE!!!
-    ### BELOW THE CHANGES ARE OLD AND TAKEN FROM MY PREVIOUS PR.
+    await test_scenario(valid_setups1 + setups2, invalid_setups1, dc=1, rf=2, rack_count=3)
 
-    # Below, we test each case twice: with tablets on and off.
-    # Note that we only use NetworkTopologyStrategy. That's because of this fragment of our documentation:
-    #
-    # "When creating a new keyspace with tablets enabled (the default), you can still disable them on a per-keyspace basis.
-    #  The recommended NetworkTopologyStrategy for keyspaces remains REQUIRED when using tablets."
-    #
-    # --- "Data Distribution with Tablets"
+    valid_setups2 = valid_setups1 + setups2[:-3]
+    invalid_setups2 = setups2[-3:]
 
-    # Part 1: Test the current state of the cluster. Note that every rack currently consists of one node.
+    # Scenario 3: [dc1: 3 racks, dc2: 3 racks].
+    # -----------------------------------------
+    _ = await manager.server_add(config=cfg, property_file={"dc": "dc2", "rack": "r2_3"})
 
-    # RF = #racks for every DC.
-    await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "true")
-    await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "false")
+    setups3 = await asyncio.gather(*[
+        prepare(0, 3),
+        prepare(1, 3),
+        prepare(3, 3)])
 
-    # RF != #racks for dc1, but we accept RF = 1.
-    await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "true")
-    await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "false")
+    await test_scenario(valid_setups2 + setups3, invalid_setups2, dc=2, rf=2, rack_count=3)
 
-    # RF != #racks for dc2, but we accept RF = 0.
-    await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 0", "true")
-    await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 0", "false")
-    # Ditto, just for dc1.
-    await try_pass("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "true")
-    await try_pass("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "false")
+    valid_setups3 = valid_setups2 + setups3
 
-    # Note: in case these checks start failing or causing issues, feel free to get rid of them.
-    #       We don't care about it (just like we don't care about EverywhereStrategy and LocalStrategy),
-    #       so these are more of sanity checks than something we really want to test.
-    for rf in [1, 2, 3]:
-        await try_pass("SimpleStrategy", f"'replication_factor': {rf}", "false")
+    # Scenario 4: [dc1: 3 racks + 1 zero-token rack, dc2: 3 racks].
+    # -------------------------------------------------------------
+    _ = await manager.servers_add(2, config=cfg | {"join_ring": False}, property_file=[
+        {"dc": "dc1", "rack": "r1_1"},
+        {"dc": "dc1", "rack": "r1_z"}
+    ])
 
-    # Part 2: We extend the cluster by one node in dc1/r2. We no longer have a bijection: nodes -> racks.
-
-    _ = await manager.server_add(cmdline=cmd, property_file={"dc": "dc1", "rack": "r2"}, config=cfg)
-
-    # RF = #racks for every DC.
-    await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "true")
-    await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "false")
-
-    # RF < #racks for dc1, but we accept RF = 1.
-    await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "true")
-    await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "false")
-
-    # RF > #racks for dc1.
-    await try_fail("NetworkTopologyStrategy", "'dc1': 3, 'dc2': 1", "true",
-                   "The option `rf-rack-valid-keyspaces` is enabled, which forbids creating " \
-                   "a materialized view in an RF-rack-invalid keyspace: the mismatch occurs for " \
-                   r"keyspace='{ks}', data center='dc1': RF=3 vs. rack count=2")
-    await try_pass("NetworkTopologyStrategy", "'dc1': 3, 'dc2': 1", "false")
-
-    # RF != #racks for dc2, but we accept RF = 0.
-    await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 0", "true")
-    await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 0", "false")
-    # Ditto, just for dc1.
-    await try_pass("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "true")
-    await try_pass("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "false")
-
-    # Note: ditto, same as in part 1.
-    for rf in [1, 2, 3, 4]:
-        await try_pass("SimpleStrategy", f"'replication_factor': {rf}", "false")
-
-    # Part 3: We get rid of dc1/r1. This way, we have two nodes in dc1, but only one rack.
-
-    await manager.decommission_node(s1.server_id)
-
-    # RF = #racks for every DC.
-    await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "true")
-    await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 1", "false")
-
-    # RF > #racks for dc1.
-    await try_fail("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "true",
-                   "The option `rf-rack-valid-keyspaces` is enabled, which forbids creating " \
-                   "a materialized view in an RF-rack-invalid keyspace: the mismatch occurs for " \
-                   r"keyspace='{ks}', data center='dc1': RF=2 vs. rack count=1")
-    await try_pass("NetworkTopologyStrategy", "'dc1': 2, 'dc2': 1", "false")
-
-    # RF != #racks for dc2, but we accept RF = 0.
-    await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 0", "true")
-    await try_pass("NetworkTopologyStrategy", "'dc1': 1, 'dc2': 0", "false")
-    # Ditto, just for dc1.
-    await try_pass("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "true")
-    await try_pass("NetworkTopologyStrategy", "'dc1': 0, 'dc2': 1", "false")
-
-    # Note: ditto, same as in part 1.
-    for rf in [1, 2, 3]:
-        await try_pass("SimpleStrategy", f"'replication_factor': {rf}", "false")
-
-@pytest.mark.asyncio
-async def test_lol(manager: ManagerClient):
-    s, _, _ = await manager.servers_add(3,
-        config={"rf_rack_valid_keyspaces": True},
-        auto_rack_dc="dc1")
-    cql = manager.get_cql()
-
-    async def prepare_mv(tablets: bool) -> str:
-        tablets = str(tablets).lower()
-        ks, table, mv = [unique_name() for _ in range(3)]
-
-        await cql.run_async(f"CREATE KEYSPACE {ks} WITH replication = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 3}} "
-                            f"AND tablets = {{'enabled': {tablets}}}")
-        await cql.run_async(f"CREATE TABLE {ks}.{table} (p int PRIMARY KEY, v int)")
-        await cql.run_async(f"CREATE MATERIALIZED VIEW {ks}.{mv} AS SELECT * FROM {ks}.{table} "
-                            f"WHERE p IS NOT NULL AND v IS NOT NULL PRIMARY KEY(v, p)")
-
-        return f"{ks}.{mv}"
-
-    # Tablet & vnode schema.
-    tmv, _ = await asyncio.gather(*[prepare_mv(True), prepare_mv(False)])
-
-    async def try_start(value: bool, should_fail: bool):
-        err = r"Materialized views with tablets can only be used with the option `rf_rack_valid_keyspaces` " \
-              rf"enabled. That condition is violated for `{tmv}` because the option is disabled."
-        err = err if should_fail else None
-        await manager.server_update_config(server_id=s.server_id, key="rf_rack_valid_keyspaces", value=value)
-        await manager.server_start(server_id=s.server_id, expected_error=err)
-
-    # Scenario 1. Try to start the node with the option disabled. It should fail because we have an MV using tablets.
-    await manager.server_stop_gracefully(s.server_id)
-    await try_start(False, True)
-
-    # Scenario 2. We get rid of the tablet MV and the node starts successfully.
-    await cql.run_async(f"DROP MATERIALIZED VIEW {tmv}")
-    await try_start(False, False)
+    await test_scenario(valid_setups3, [])

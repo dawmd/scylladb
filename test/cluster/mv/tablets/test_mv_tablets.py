@@ -11,7 +11,7 @@ from test.pylib.rest_client import read_barrier
 from test.pylib.util import wait_for_cql_and_get_hosts
 from test.pylib.internal_types import ServerInfo
 from test.cluster.conftest import skip_mode
-from test.cluster.util import new_test_keyspace
+from test.cluster.util import new_materialized_view, new_test_keyspace, new_test_table
 
 from test.cluster.test_alternator import get_alternator, alternator_config, full_query
 
@@ -369,3 +369,58 @@ async def test_mv_tablet_split(manager: ManagerClient):
 
         tablet_count = await get_tablet_count(manager, servers[0], ks, 'tv', True)
         assert tablet_count > 1
+
+@pytest.mark.asyncio
+async def test_try_start_node_with_mv_using_tablets_with_and_without_rf_rack_valid_keyspaces(manager: ManagerClient):
+    s, _ = await manager.servers_add(2, config={"rf_rack_valid_keyspaces": True}, auto_rack_dc="dc1")
+    cql = manager.get_cql()
+
+    async def prepare_mv(tablets: bool) -> str:
+        tablets = str(tablets).lower()
+        ks, table, mv = [unique_name() for _ in range(3)]
+
+        await cql.run_async(f"CREATE KEYSPACE {ks} WITH replication = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 2}} "
+                            f"AND tablets = {{'enabled': {tablets}}}")
+        await cql.run_async(f"CREATE TABLE {ks}.{table} (p int PRIMARY KEY, v int)")
+        await cql.run_async(f"CREATE MATERIALIZED VIEW {ks}.{mv} AS SELECT * FROM {ks}.{table} "
+                            f"WHERE p IS NOT NULL AND v IS NOT NULL PRIMARY KEY(v, p)")
+
+        return f"{ks}.{mv}"
+
+    # Tablet & vnode schema.
+    tmv, _ = await asyncio.gather(*[prepare_mv(True), prepare_mv(False)])
+
+    async def try_start(value: bool, should_fail: bool):
+        err = r"Materialized views with tablets can only be used with the option `rf_rack_valid_keyspaces` " \
+              rf"enabled. That condition is violated for `{tmv}` because the option is disabled."
+        err = err if should_fail else None
+        await manager.server_update_config(server_id=s.server_id, key="rf_rack_valid_keyspaces", value=value)
+        await manager.server_start(server_id=s.server_id, expected_error=err)
+
+    # Scenario 1. Try to start the node with the option disabled. It should fail because we have an MV using tablets.
+    await manager.server_stop_gracefully(s.server_id)
+    await try_start(False, True)
+
+    # Scenario 2. We get rid of the tablet MV and the node starts successfully.
+    await cql.run_async(f"DROP MATERIALIZED VIEW {tmv}")
+    await try_start(False, False)
+
+@pytest.mark.asyncio
+async def test_mv_disabled_with_tablets_and_without_rf_rack_valid_keyspaces(manager: ManagerClient):
+    srvs = await manager.servers_add(2, config={"rf_rack_valid_keyspaces": False}, auto_rack_dc="dc1")
+
+    async def try_create_mv():
+        async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2} AND tablets = {'enabled': true}") as ks:
+            async with new_test_table(manager, ks, "p int PRIMARY KEY, v int") as table:
+                async with new_materialized_view(manager, table, "*", "v, p", "p IS NOT NULL AND v IS NOT NULL"):
+                    pass
+
+    with pytest.raises(Exception, match="Materialized views with tablets can only be created"):
+        await try_create_mv()
+
+    for s in srvs:
+        await manager.server_stop_gracefully(s.server_id)
+        await manager.server_update_config(s.server_id, "rf_rack_valid_keyspaces", True)
+        await manager.server_start(s.server_id)
+
+    await try_create_mv()

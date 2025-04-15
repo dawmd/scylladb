@@ -407,6 +407,9 @@ create_view_statement::prepare_schema_mutations(query_processor& qp, const query
             // wrap it manually here in a type that can be passed to the user.
             throw exceptions::invalid_request_exception(e.what());
         }
+    } else {
+        throw exceptions::invalid_request_exception(seastar::format(
+                "Materialized views with tablets can only be created"));
     }
 
     try {
