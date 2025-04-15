@@ -382,8 +382,6 @@ async def verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(manag
         await cql.run_async(f"CREATE KEYSPACE {ks} WITH replication = {{'class': 'NetworkTopologyStrategy', 'dc1': 3}} "
                             f"AND tablets = {{'enabled': {tablets}}}")
         await cql.run_async(f"CREATE TABLE {ks}.{table} (p int PRIMARY KEY, v int)")
-        await cql.run_async(f"CREATE MATERIALIZED VIEW {ks}.{mv} AS SELECT * FROM {ks}.{table} "
-                            f"WHERE p IS NOT NULL AND v IS NOT NULL PRIMARY KEY(v, p)")
         return await create_schema(ks, table)
 
     # Tablet & vnode schema.
@@ -425,7 +423,7 @@ async def test_try_start_node_with_mv_using_tablets_with_and_without_rf_rack_val
         cql = manager.get_cql()
         await cql.run_async(f"DROP MATERIALIZED VIEW {mv}")
 
-    await verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(create_mv, drop_mv)
+    await verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(manager, create_mv, drop_mv)
 
 @pytest.mark.asyncio
 async def test_try_start_node_with_secondary_index_using_tablets_with_and_without_rf_rack_valid_keyspaces(manager: ManagerClient):
@@ -440,14 +438,14 @@ async def test_try_start_node_with_secondary_index_using_tablets_with_and_withou
     async def create_si(ks: str, table: str) -> str:
         si = unique_name()
         cql = manager.get_cql()
-        await cql.run_async(f"CREATE INDEX {ks}.{si} ON {ks}.{table} (v)")
+        await cql.run_async(f"CREATE INDEX {si} ON {ks}.{table} (v)")
         return f"{ks}.{si}"
 
     async def drop_si(si: str) -> None:
         cql = manager.get_cql()
         await cql.run_async(f"DROP INDEX {si}")
 
-    await verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(create_si, drop_si)
+    await verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(manager, create_si, drop_si)
 
 @pytest.mark.asyncio
 async def test_mv_disabled_with_tablets_and_without_rf_rack_valid_keyspaces(manager: ManagerClient):

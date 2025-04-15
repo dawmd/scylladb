@@ -1058,7 +1058,7 @@ private:
                 startlog.info("All keyspaces are RF-rack-valid");
             }
 
-            _db.local().check_tablet_mvs();
+            _db.local().check_tablet_mvs_and_sis();
 
             utils::loading_cache_config perm_cache_config;
             perm_cache_config.max_size = cfg->permissions_cache_max_entries();

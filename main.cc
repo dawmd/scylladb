@@ -2176,7 +2176,7 @@ sharded<locator::shared_token_metadata> token_metadata;
 
             // Make sure that if there are existing materialized views that use tablets,
             // then the `rf_rack_valid_keyspaces` configuration option is enabled.
-            db.local().check_tablet_mvs();
+            db.local().check_tablet_mvs_and_sis();
 
             dictionary_service dict_service(
                 dict_sampler,
