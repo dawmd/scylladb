@@ -163,8 +163,8 @@ that has tablets enabled:
 * Materialized Views (MV)
 * Secondary indexes (SI, as it depends on MV)
 
-To enable MV and SI for tablet keyspaces, use the `--experimental-features=views-with-tablets`
-configuration option.  See :ref:`Views with tablets <admin-views-with-tablets>` for details.
+To enable MV and SI for tablet keyspaces, use the `--rf-rack-valid-keyspaces`
+configuration option. See :ref:`Views with tablets <admin-views-with-tablets>` for details.
 
 Resharding in keyspaces with tablets enabled has the following limitations:
 

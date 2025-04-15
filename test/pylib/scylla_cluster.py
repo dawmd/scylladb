@@ -102,8 +102,7 @@ def make_scylla_conf(mode: str, workdir: pathlib.Path, host_addr: str, seed_addr
         'experimental_features': ['udf',
                                   'alternator-streams',
                                   'broadcast-tables',
-                                  'keyspace-storage-options',
-                                  'views-with-tablets'],
+                                  'keyspace-storage-options'],
 
         'skip_wait_for_gossip_to_settle': 0,
         'ring_delay_ms': 0,

@@ -474,10 +474,9 @@ async def test_create_mv_with_racks(manager: ManagerClient):
     For more context, see: scylladb/scylladb#23030.
     """
 
-    cmd = ["--experimental-features=views-with-tablets"]
     cfg = {"rf_rack_valid_keyspaces": "true"}
 
-    s1, _, _ = await manager.servers_add(3, cmdline=cmd, config=cfg, property_file=[
+    s1, _, _ = await manager.servers_add(3, config=cfg, property_file=[
         {"dc": "dc1", "rack": "r1_1"},
         {"dc": "dc1", "rack": "r1_2"},
         {"dc": "dc2", "rack": "r2_1"},
@@ -620,7 +619,6 @@ async def test_create_mv_with_racks(manager: ManagerClient):
 @pytest.mark.asyncio
 async def test_lol(manager: ManagerClient):
     s, _, _ = await manager.servers_add(3,
-        cmdline=["--experimental-features=views-with-tablets"],
         config={"rf_rack_valid_keyspaces": True},
         auto_rack_dc="dc1")
     cql = manager.get_cql()
