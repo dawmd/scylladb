@@ -371,9 +371,34 @@ async def test_mv_tablet_split(manager: ManagerClient):
         tablet_count = await get_tablet_count(manager, servers[0], ks, 'tv', True)
         assert tablet_count > 1
 
-async def verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(manager: ManagerClient, create_schema: Any, drop_schema: Any):
+@pytest.mark.parametrize("mv_type", ["mv", "index"])
+@pytest.mark.asyncio
+async def test_try_start_with_tablet_mv_index(manager: ManagerClient, mv_type: str):
+    """
+    This test verifies that Scylla refuses to start if all of the following conditions are satisfied:
+    1. There exists a materialized view using tablets.
+    2. The `rf_rack_valid_keyspaces` configuration option is disabled.
+
+    For more context, see: scylladb/scylladb#23030.
+    """
     s, _, _ = await manager.servers_add(3, config={"rf_rack_valid_keyspaces": True}, auto_rack_dc="dc1")
     cql = manager.get_cql()
+
+    async def create_schema(ks: str, table: str) -> str:
+        mv = unique_name()
+        cql = manager.get_cql()
+        if mv_type == "mv":
+            await cql.run_async(f"CREATE MATERIALIZED VIEW {ks}.{mv} AS SELECT * FROM {ks}.{table} "
+                                f"WHERE p IS NOT NULL AND v IS NOT NULL PRIMARY KEY(v, p)")
+        else:
+            await cql.run_async(f"CREATE INDEX {mv} ON {ks}.{table} (v)")
+        return f"{ks}.{mv}"
+
+    async def drop_schema(mv: str) -> None:
+        if mv_type == "mv":
+            await cql.run_async(f"DROP MATERIALIZED VIEW IF EXISTS {mv}")
+        else:
+            await cql.run_async(f"DROP INDEX IF EXISTS {mv}")
 
     async def prepare_mv(tablets: bool) -> str:
         tablets = str(tablets).lower()
@@ -388,8 +413,9 @@ async def verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(manag
     tmv, _ = await asyncio.gather(*[prepare_mv(True), prepare_mv(False)])
 
     async def try_start(value: bool, should_fail: bool):
+        mv_name = tmv if mv_type == "mv" else f"{tmv}_index"
         err = r"Materialized views/secondary indices with tablets can only be used with the option `rf_rack_valid_keyspaces` " \
-              rf"enabled. That condition is violated for `{tmv}` because the option is disabled."
+              rf"enabled. That condition is violated for `{mv_name}` because the option is disabled."
         err = err if should_fail else None
         await manager.server_update_config(server_id=s.server_id, key="rf_rack_valid_keyspaces", value=value)
         await manager.server_start(server_id=s.server_id, expected_error=err)
@@ -401,51 +427,6 @@ async def verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(manag
     # Scenario 2. We get rid of the tablet MV and the node starts successfully.
     await drop_schema(tmv)
     await try_start(False, False)
-
-@pytest.mark.asyncio
-async def test_try_start_node_with_mv_using_tablets_with_and_without_rf_rack_valid_keyspaces(manager: ManagerClient):
-    """
-    This test verifies that Scylla refuses to start if all of the following conditions are satisfied:
-    1. There exists a materialized view using tablets.
-    2. The `rf_rack_valid_keyspaces` configuration option is disabled.
-
-    For more context, see: scylladb/scylladb#23030.
-    """
-
-    async def create_mv(ks: str, table: str) -> str:
-        mv = unique_name()
-        cql = manager.get_cql()
-        await cql.run_async(f"CREATE MATERIALIZED VIEW {ks}.{mv} AS SELECT * FROM {ks}.{table} "
-                            f"WHERE p IS NOT NULL AND v IS NOT NULL PRIMARY KEY(v, p)")
-        return f"{ks}.{mv}"
-
-    async def drop_mv(mv: str) -> None:
-        cql = manager.get_cql()
-        await cql.run_async(f"DROP MATERIALIZED VIEW {mv}")
-
-    await verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(manager, create_mv, drop_mv)
-
-@pytest.mark.asyncio
-async def test_try_start_node_with_secondary_index_using_tablets_with_and_without_rf_rack_valid_keyspaces(manager: ManagerClient):
-    """
-    This test verifies that Scylla refuses to start if all of the following conditions are satisfied:
-    1. There exists a secondary index using tablets.
-    2. The `rf_rack_valid_keyspaces` configuration option is disabled.
-
-    For more context, see: scylladb/scylladb#23030.
-    """
-
-    async def create_si(ks: str, table: str) -> str:
-        si = unique_name()
-        cql = manager.get_cql()
-        await cql.run_async(f"CREATE INDEX {si} ON {ks}.{table} (v)")
-        return f"{ks}.{si}"
-
-    async def drop_si(si: str) -> None:
-        cql = manager.get_cql()
-        await cql.run_async(f"DROP INDEX {si}")
-
-    await verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(manager, create_si, drop_si)
 
 @pytest.mark.asyncio
 async def test_create_mv_index_with_tablets(manager: ManagerClient):
