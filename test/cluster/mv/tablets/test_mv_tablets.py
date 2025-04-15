@@ -6,9 +6,10 @@
 
 # Tests for interaction of materialized views with *tablets*
 
+from typing import Any
 from test.pylib.manager_client import ManagerClient
 from test.pylib.rest_client import read_barrier
-from test.pylib.util import wait_for_cql_and_get_hosts
+from test.pylib.util import unique_name, wait_for_cql_and_get_hosts
 from test.pylib.internal_types import ServerInfo
 from test.cluster.conftest import skip_mode
 from test.cluster.util import new_test_keyspace
@@ -369,3 +370,82 @@ async def test_mv_tablet_split(manager: ManagerClient):
 
         tablet_count = await get_tablet_count(manager, servers[0], ks, 'tv', True)
         assert tablet_count > 1
+
+async def verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(manager: ManagerClient, create_schema: Any, drop_schema: Any):
+    s, _, _ = await manager.servers_add(3, cmdline=["--experimental-features=views-with-tablets"],
+                                        config={"rf_rack_valid_keyspaces": True}, auto_rack_dc="dc1")
+    cql = manager.get_cql()
+
+    async def prepare_mv(tablets: bool) -> str:
+        tablets = str(tablets).lower()
+        ks, table = [unique_name() for _ in range(2)]
+
+        await cql.run_async(f"CREATE KEYSPACE {ks} WITH replication = {{'class': 'NetworkTopologyStrategy', 'dc1': 3}} "
+                            f"AND tablets = {{'enabled': {tablets}}}")
+        await cql.run_async(f"CREATE TABLE {ks}.{table} (p int PRIMARY KEY, v int)")
+        await cql.run_async(f"CREATE MATERIALIZED VIEW {ks}.{mv} AS SELECT * FROM {ks}.{table} "
+                            f"WHERE p IS NOT NULL AND v IS NOT NULL PRIMARY KEY(v, p)")
+        return await create_schema(ks, table)
+
+    # Tablet & vnode schema.
+    tmv, _ = await asyncio.gather(*[prepare_mv(True), prepare_mv(False)])
+
+    async def try_start(value: bool, should_fail: bool):
+        err = r"Materialized views/secondary indices with tablets can only be used with the option `rf_rack_valid_keyspaces` " \
+              rf"enabled. That condition is violated for `{tmv}` because the option is disabled."
+        err = err if should_fail else None
+        await manager.server_update_config(server_id=s.server_id, key="rf_rack_valid_keyspaces", value=value)
+        await manager.server_start(server_id=s.server_id, expected_error=err)
+
+    # Scenario 1. Try to start the node with the option disabled. It should fail because we have an MV using tablets.
+    await manager.server_stop_gracefully(s.server_id)
+    await try_start(False, True)
+
+    # Scenario 2. We get rid of the tablet MV and the node starts successfully.
+    await drop_schema(tmv)
+    await try_start(False, False)
+
+@pytest.mark.asyncio
+async def test_try_start_node_with_mv_using_tablets_with_and_without_rf_rack_valid_keyspaces(manager: ManagerClient):
+    """
+    This test verifies that Scylla refuses to start if all of the following conditions are satisfied:
+    1. There exists a materialized view using tablets.
+    2. The `rf_rack_valid_keyspaces` configuration option is disabled.
+
+    For more context, see: scylladb/scylladb#23030.
+    """
+
+    async def create_mv(ks: str, table: str) -> str:
+        mv = unique_name()
+        cql = manager.get_cql()
+        await cql.run_async(f"CREATE MATERIALIZED VIEW {ks}.{mv} AS SELECT * FROM {ks}.{table} "
+                            f"WHERE p IS NOT NULL AND v IS NOT NULL PRIMARY KEY(v, p)")
+        return f"{ks}.{mv}"
+
+    async def drop_mv(mv: str) -> None:
+        cql = manager.get_cql()
+        await cql.run_async(f"DROP MATERIALIZED VIEW {mv}")
+
+    await verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(create_mv, drop_mv)
+
+@pytest.mark.asyncio
+async def test_try_start_node_with_secondary_index_using_tablets_with_and_without_rf_rack_valid_keyspaces(manager: ManagerClient):
+    """
+    This test verifies that Scylla refuses to start if all of the following conditions are satisfied:
+    1. There exists a secondary index using tablets.
+    2. The `rf_rack_valid_keyspaces` configuration option is disabled.
+
+    For more context, see: scylladb/scylladb#23030.
+    """
+
+    async def create_si(ks: str, table: str) -> str:
+        si = unique_name()
+        cql = manager.get_cql()
+        await cql.run_async(f"CREATE INDEX {ks}.{si} ON {ks}.{table} (v)")
+        return f"{ks}.{si}"
+
+    async def drop_si(si: str) -> None:
+        cql = manager.get_cql()
+        await cql.run_async(f"DROP INDEX {si}")
+
+    await verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(create_si, drop_si)
