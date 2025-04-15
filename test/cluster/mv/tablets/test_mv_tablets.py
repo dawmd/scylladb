@@ -448,7 +448,7 @@ async def test_try_start_node_with_secondary_index_using_tablets_with_and_withou
     await verify_start_node_mv_si_with_and_without_rf_rack_valid_keyspaces(manager, create_si, drop_si)
 
 @pytest.mark.asyncio
-async def test_mv_disabled_with_tablets_and_without_rf_rack_valid_keyspaces(manager: ManagerClient):
+async def test_create_mv_index_with_tablets(manager: ManagerClient):
     """
     This test verifies that creating a materialized view in a keyspace that uses tablets is impossible
     unless Scylla was started with the `rf_rack_valid_keyspaces` configuration option enabled.
@@ -457,16 +457,31 @@ async def test_mv_disabled_with_tablets_and_without_rf_rack_valid_keyspaces(mana
     """
     srvs = await manager.servers_add(2, config={"rf_rack_valid_keyspaces": False}, auto_rack_dc="dc1")
 
-    async def try_create_mv():
+    async def try_create(func: Any):
         async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2} AND tablets = {'enabled': true}") as ks:
             async with new_test_table(manager, ks, "p int PRIMARY KEY, v int") as table:
-                async with new_materialized_view(manager, table, "*", "v, p", "p IS NOT NULL AND v IS NOT NULL"):
-                    pass
+                await func(table)
 
-    err = "Creating a materialized view in a keyspace using tablets requires that Scylla " \
-          "use the `rf_rack_valid_keyspaces` configuration option."
-    with pytest.raises(Exception, match=err):
+    async def try_create_mv():
+        async def aux(table: str):
+            async with new_materialized_view(manager, table, "*", "v, p", "p IS NOT NULL AND v IS NOT NULL"):
+                pass
+        await try_create(aux)
+
+    async def try_create_index():
+        async def aux(table: str):
+            cql = manager.get_cql()
+            idx = unique_name()
+            await cql.run_async(f"CREATE INDEX {idx} ON {table} (v)")
+        await try_create(aux)
+
+    err = lambda mv_type: f"Creating a {mv_type} in a keyspace using tablets requires that Scylla " \
+                          "use the `rf_rack_valid_keyspaces` configuration option."
+
+    with pytest.raises(Exception, match=err("materialized view")):
         await try_create_mv()
+    with pytest.raises(Exception, match=err("secondary index")):
+        await try_create_index()
 
     for s in srvs:
         await manager.server_stop_gracefully(s.server_id)
@@ -474,3 +489,4 @@ async def test_mv_disabled_with_tablets_and_without_rf_rack_valid_keyspaces(mana
         await manager.server_start(s.server_id)
 
     await try_create_mv()
+    await try_create_index()

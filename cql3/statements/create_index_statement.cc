@@ -402,6 +402,10 @@ create_index_statement::prepare_schema_mutations(query_processor& qp, const quer
             // wrap it manually here in a type that can be passed to the user.
             throw exceptions::invalid_request_exception(e.what());
         }
+    } else {
+        throw exceptions::invalid_request_exception(
+                "Creating a secondary index in a keyspace using tablets requires that Scylla "
+                "use the `rf_rack_valid_keyspaces` configuration option.");
     }
 
     if (res) {
