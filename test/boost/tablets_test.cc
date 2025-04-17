@@ -3285,8 +3285,8 @@ SEASTAR_THREAD_TEST_CASE(test_load_balancing_resize_requests) {
     do_with_cql_env_thread([] (auto& e) {
         topology_builder topo(e);
 
-        topo.add_node(node_state::normal, 2);
-        topo.add_node(node_state::normal, 2);
+        topo.add_node(node_state::normal, 2, endpoint_dc_rack{.dc = "dc1", .rack = "r1"});
+        topo.add_node(node_state::normal, 2, endpoint_dc_rack{.dc = "dc1", .rack = "r2"});
 
         const size_t initial_tablets = 2;
         auto ks_name = add_keyspace(e, {{topo.dc(), 2}}, initial_tablets);
