@@ -2124,9 +2124,9 @@ SEASTAR_THREAD_TEST_CASE(test_load_balancing_works_with_in_progress_transitions)
     // which is a proof that it doesn't stop due to active migrations.
 
     topology_builder topo(e);
-    auto host1 = topo.add_node(node_state::normal, 1);
-    auto host2 = topo.add_node(node_state::normal, 1);
-    auto host3 = topo.add_node(node_state::normal, 2);
+    auto host1 = topo.add_node(node_state::normal, 1, endpoint_dc_rack{.dc = "dc1", .rack = "r1"});
+    auto host2 = topo.add_node(node_state::normal, 1, endpoint_dc_rack{.dc = "dc1", .rack = "r1"});
+    auto host3 = topo.add_node(node_state::normal, 2, endpoint_dc_rack{.dc = "dc1", .rack = "r2"});
 
     auto ks_name = add_keyspace(e, {{topo.dc(), 2}}, 4);
     auto table1 = add_table(e, ks_name).get();
