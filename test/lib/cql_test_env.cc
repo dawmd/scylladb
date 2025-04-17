@@ -94,7 +94,11 @@ future<scheduling_groups> get_scheduling_groups() {
 }
 
 cql_test_config::cql_test_config()
-    : cql_test_config(make_shared<db::config>())
+    : cql_test_config(std::invoke([] {
+        auto cfg = make_shared<db::config>();
+        cfg->rf_rack_valid_keyspaces.set(false);
+        return cfg;
+    }))
 {}
 
 cql_test_config::cql_test_config(shared_ptr<db::config> cfg)
