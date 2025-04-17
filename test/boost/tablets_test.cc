@@ -2125,6 +2125,7 @@ SEASTAR_THREAD_TEST_CASE(test_load_balancing_works_with_in_progress_transitions)
     topology_builder topo(e);
     auto host1 = topo.add_node(node_state::normal, 1);
     auto host2 = topo.add_node(node_state::normal, 1);
+    topo.start_new_rack();
     auto host3 = topo.add_node(node_state::normal, 2);
 
     auto ks_name = add_keyspace(e, {{topo.dc(), 2}}, 4);
