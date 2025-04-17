@@ -2226,10 +2226,10 @@ SEASTAR_THREAD_TEST_CASE(test_load_balancing_with_two_empty_nodes) {
     topology_builder topo(e);
 
     const auto shard_count = 2;
-    auto host1 = topo.add_node(node_state::normal, shard_count);
-    auto host2 = topo.add_node(node_state::normal, shard_count);
-    auto host3 = topo.add_node(node_state::normal, shard_count);
-    auto host4 = topo.add_node(node_state::normal, shard_count);
+    auto host1 = topo.add_node(node_state::normal, shard_count, endpoint_dc_rack{.dc = "dc1", .rack = "r1"});
+    auto host2 = topo.add_node(node_state::normal, shard_count, endpoint_dc_rack{.dc = "dc1", .rack = "r2"});
+    auto host3 = topo.add_node(node_state::normal, shard_count, endpoint_dc_rack{.dc = "dc1", .rack = "r1"});
+    auto host4 = topo.add_node(node_state::normal, shard_count, endpoint_dc_rack{.dc = "dc1", .rack = "r2"});
 
     auto ks_name = add_keyspace(e, {{topo.dc(), 2}}, 16);
     auto table1 = add_table(e, ks_name).get();
