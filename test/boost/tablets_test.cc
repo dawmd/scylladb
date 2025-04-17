@@ -8,6 +8,7 @@
 
 
 
+#include "locator/types.hh"
 #include <seastar/core/shard_id.hh>
 #include <seastar/coroutine/as_future.hh>
 #undef SEASTAR_TESTING_MAIN
@@ -2182,9 +2183,9 @@ SEASTAR_THREAD_TEST_CASE(test_load_balancer_shuffle_mode) {
   do_with_cql_env_thread([] (auto& e) {
     topology_builder topo(e);
 
-    auto host1 = topo.add_node(node_state::normal, 1);
-    auto host2 = topo.add_node(node_state::normal, 1);
-    topo.add_node(node_state::normal, 2);
+    auto host1 = topo.add_node(node_state::normal, 1, endpoint_dc_rack{.dc = "dc1", .rack = "r1"});
+    auto host2 = topo.add_node(node_state::normal, 1, endpoint_dc_rack{.dc = "dc1", .rack = "r2"});
+    topo.add_node(node_state::normal, 2, endpoint_dc_rack{.dc = "dc1", .rack = "r2"});
 
     auto ks_name = add_keyspace(e, {{topo.dc(), 2}}, 4);
     auto table1 = add_table(e, ks_name).get();
