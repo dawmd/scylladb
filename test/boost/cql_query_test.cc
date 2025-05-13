@@ -4224,6 +4224,13 @@ std::string normalize_white_space(const std::string& str) {
   return boost::regex_replace(boost::regex_replace(" " + str + " ", boost::regex("\\s+"), " "), boost::regex(", "), ",");
 }
 
+static std::string description_to_string(cql3::description desc) {
+    managed_bytes bytes = std::move(desc.create_statement)->as_managed_bytes();
+    return std::move(bytes).with_linearized([] (auto&& view) -> std::string {
+        return std::string(to_string_view(view));
+    });
+}
+
 cql_test_config describe_test_config() {
     auto ext = std::make_shared<db::extensions>();
     ext->add_schema_extension<db::tags_extension>(db::tags_extension::NAME);
@@ -4360,7 +4367,7 @@ SEASTAR_TEST_CASE(test_describe_simple_schema) {
             auto schema = e.local_db().find_schema("ks", ct.first);
             auto schema_desc = schema->describe(describe_helper, cql3::describe_option::STMTS);
 
-            BOOST_CHECK_EQUAL(normalize_white_space(*schema_desc.create_statement), normalize_white_space(ct.second));
+            BOOST_CHECK_EQUAL(normalize_white_space(description_to_string(std::move(schema_desc))), normalize_white_space(ct.second));
         }
     }, describe_test_config());
 }
@@ -4429,12 +4436,12 @@ SEASTAR_TEST_CASE(test_describe_view_schema) {
             auto schema = e.local_db().find_schema("KS", ct.first);
             auto schema_desc = schema->describe(describe_helper, cql3::describe_option::STMTS);
 
-            BOOST_CHECK_EQUAL(normalize_white_space(*schema_desc.create_statement), normalize_white_space(ct.second));
+            BOOST_CHECK_EQUAL(normalize_white_space(description_to_string(std::move(schema_desc))), normalize_white_space(ct.second));
 
             auto base_schema = e.local_db().find_schema("KS", "cF");
             auto base_schema_desc = base_schema->describe(describe_helper, cql3::describe_option::STMTS);
 
-            BOOST_CHECK_EQUAL(normalize_white_space(*base_schema_desc.create_statement), normalize_white_space(base_table));
+            BOOST_CHECK_EQUAL(normalize_white_space(description_to_string(std::move(base_schema_desc))), normalize_white_space(base_table));
         }
     }, describe_test_config());
 }

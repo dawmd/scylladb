@@ -30,6 +30,7 @@
 #include "utils/assert.hh"
 #include "utils/logalloc.hh"
 #include "utils/checked-file-impl.hh"
+#include "utils/managed_bytes.hh"
 #include "view_info.hh"
 #include "db/data_listeners.hh"
 #include "memtable-sstable.hh"
@@ -2907,8 +2908,16 @@ future<> table::write_schema_as_cql(database& db, sstring dir) const {
     auto out = co_await make_file_output_stream(std::move(f));
     std::exception_ptr ex;
 
+    auto bytes = std::move(schema_description).as_managed_bytes();
+    auto view = managed_bytes_view(bytes);
+
     try {
-        co_await out.write(schema_description.c_str(), schema_description.size());
+        while (!view.empty()) {
+            auto sv = to_string_view(view.current_fragment());
+            co_await out.write(sv.data(), sv.size());
+
+            view.remove_current();
+        }
         co_await out.flush();
     } catch (...) {
         ex = std::current_exception();
