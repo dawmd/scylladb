@@ -40,4 +40,10 @@ std::vector<managed_bytes_opt> description::serialize(bool serialize_create_stat
     return result;
 }
 
+sstring description::deserialize_create_statement() const {
+    SCYLLA_ASSERT(create_statement.has_value());
+
+    return *create_statement;
+}
+
 } // namespace cql3
