@@ -11,10 +11,9 @@
 #include "cql3/util.hh"
 #include "utils/log.hh"
 #include "lang/wasm.hh"
+#include "utils/managed_string.hh"
 
 #include <seastar/core/thread.hh>
-
-#include <sstream>
 
 namespace cql3 {
 namespace functions {
@@ -70,12 +69,12 @@ bytes_opt user_function::execute(std::span<const bytes_opt> parameters) {
 }
 
 description user_function::describe(with_create_statement with_stmt) const {
-    auto maybe_create_statement = std::invoke([&] -> std::optional<sstring> {
+    auto maybe_create_statement = std::invoke([&] -> std::optional<managed_string> {
         if (!with_stmt) {
             return std::nullopt;
         }
 
-        std::ostringstream os;
+        fragmented_ostringstream os;
 
         os << "CREATE FUNCTION " << cql3::util::maybe_quote(name().keyspace) << "." << cql3::util::maybe_quote(name().name) << "(";
 
@@ -101,7 +100,7 @@ description user_function::describe(with_create_statement with_stmt) const {
         os << "LANGUAGE " << _language << "\n";
         os << "AS $$" << _body << "$$;";
 
-        return std::move(os).str();
+        return std::move(os).to_managed_string();
     });
 
     return description {
