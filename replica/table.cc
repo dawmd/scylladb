@@ -2901,14 +2901,13 @@ future<> table::write_schema_as_cql(database& db, sstring dir) const {
     replica::schema_describe_helper describe_helper{db.as_data_dictionary()};
     auto schema_desc = this->schema()->describe(describe_helper, cql3::describe_option::STMTS);
 
-    auto schema_description = std::move(*schema_desc.create_statement);
     auto schema_file_name = dir + "/schema.cql";
     auto f = co_await open_checked_file_dma(general_disk_error_handler, schema_file_name, open_flags::wo | open_flags::create | open_flags::truncate);
     auto out = co_await make_file_output_stream(std::move(f));
     std::exception_ptr ex;
 
     try {
-        co_await out.write(schema_description.c_str(), schema_description.size());
+        co_await out.write(schema_desc.deserialize_create_statement());
         co_await out.flush();
     } catch (...) {
         ex = std::current_exception();
