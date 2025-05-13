@@ -241,13 +241,13 @@ std::optional<description> describe_cdc_log_table(const data_dictionary::databas
         return std::nullopt;
     }
 
-    std::ostringstream os;
+    bytes_ostream os;
     auto schema = table->schema();
     replica::schema_describe_helper describe_helper{db};
     schema->describe_alter_with_properties(describe_helper, os);
 
     auto schema_desc = schema->describe(describe_helper, describe_option::NO_STMTS);
-    schema_desc.create_statement = std::move(os).str();
+    schema_desc.create_statement = std::move(os).to_managed_bytes();
     return schema_desc;
 }
 
@@ -273,12 +273,21 @@ future<std::vector<description>> table(const data_dictionary::database& db, cons
     if (cdc::is_log_for_some_table(db.real_database(), ks, name)) {
         // If the table the user wants to describe is a CDC log table, we want to print it as a CQL comment.
         // This way, the user learns about the internals of the table, but they're also told not to execute it.
-        table_desc.create_statement = seastar::format(
-                "/* Do NOT execute this statement! It's only for informational purposes.\n"
-                "   A CDC log table is created automatically when the base is created.\n"
-                "\n{}\n"
-                "*/",
-                *table_desc.create_statement);
+        bytes_ostream bo{};
+
+        bo << "/* Do NOT execute this statement! It's only for informational purposes.\n"
+              "   A CDC log table is created automatically when the base is created.\n"
+              "\n";
+
+        auto view = managed_bytes_view(*table_desc.create_statement);
+        while (!view.empty()) {
+            bo.write(view.current_fragment());
+            view.remove_current();
+        }
+
+        bo << "\n*/";
+
+        table_desc.create_statement = std::move(bo).to_managed_bytes();
     }
     result.push_back(std::move(table_desc));
 
