@@ -2907,7 +2907,12 @@ future<> table::write_schema_as_cql(database& db, sstring dir) const {
     std::exception_ptr ex;
 
     try {
-        co_await out.write(schema_desc.deserialize_create_statement());
+        auto view = managed_bytes_view(*schema_desc.create_statement);
+        while (!view.empty()) {
+            std::string_view sv = to_string_view(view.current_fragment());
+            co_await out.write(sv.data(), sv.size());
+            view.remove_current();
+        }
         co_await out.flush();
     } catch (...) {
         ex = std::current_exception();
