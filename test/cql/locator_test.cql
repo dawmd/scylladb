@@ -2,8 +2,8 @@
 -- https://github.com/scylladb/scylla/issues/7595
 -- Fail on wrong DC name
 --
-CREATE KEYSPACE t WITH REPLICATION = { 'class' : 'NetworkTopologyStrategy', 'nosuchdc' : 3 } AND DURABLE_WRITES = true;
-CREATE KEYSPACE t WITH REPLICATION = { 'class' : 'NetworkTopologyStrategy', 'datacenter1' : 3 } AND DURABLE_WRITES = true;
+CREATE KEYSPACE t WITH REPLICATION = { 'class' : 'NetworkTopologyStrategy', 'nosuchdc' : 1 } AND DURABLE_WRITES = true;
+CREATE KEYSPACE t WITH REPLICATION = { 'class' : 'NetworkTopologyStrategy', 'datacenter1' : 1 } AND DURABLE_WRITES = true;
 DROP KEYSPACE t;
 --
 -- https://github.com/scylladb/scylla/issues/5962

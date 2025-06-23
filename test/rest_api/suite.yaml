@@ -10,3 +10,4 @@ extra_scylla_cmdline_options:
   - '--enable-tablets=true'
   - '--experimental-features=views-with-tablets'
   - '--tablets-initial-scale-factor=1'
+  - '--rf-rack-valid-keyspaces=true'
