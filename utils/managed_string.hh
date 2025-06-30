@@ -88,6 +88,10 @@ public:
     void write(std::string_view sv) {
         _impl.write(sv.data(), sv.size());
     }
+    void write(char c) {
+        _impl.write(static_cast<typename bytes_view::value_type>(c));
+    }
+
     fragmented_ostringstream& operator<<(std::string_view sv) {
         write(sv);
         return *this;
@@ -97,6 +101,28 @@ public:
             _impl.write(fragment);
         }
         return *this;
+    }
+
+    struct iter {
+        fragmented_ostringstream& stream;
+
+        iter& operator=(char c) {
+            stream.write(c);
+            return *this;
+        }
+        iter& operator*() noexcept {
+            return *this;
+        }
+        iter& operator++() noexcept {
+            return *this;
+        }
+        iter& operator++(int) noexcept {
+            return *this;
+        }
+    };
+
+    iter out() noexcept {
+        return iter {*this};
     }
 
     managed_string to_managed_string() && {

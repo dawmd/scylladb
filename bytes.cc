@@ -9,6 +9,7 @@
 #include "bytes.hh"
 #include <fmt/ostream.h>
 #include <seastar/core/format.hh>
+#include "bytes_ostream.hh"
 
 static inline int8_t hex_to_int(unsigned char c) {
     switch (c) {
@@ -60,6 +61,19 @@ sstring to_hex(const bytes& b) {
 
 sstring to_hex(const bytes_opt& b) {
     return !b ? "null" : to_hex(*b);
+}
+
+
+void bytes_ostream::write(value_type byte) {
+    if (current_space_left()) {
+        _current->data[_current->frag_size++] = byte;
+        _size += 1;
+    } else {
+        alloc_new(1);
+        _current->data[_current->frag_size] = byte;
+        // auto* chunk = alloc_new(1);
+        // chunk[0] = byte;
+    }
 }
 
 namespace std {

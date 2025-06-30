@@ -76,31 +76,52 @@ description user_function::describe(with_create_statement with_stmt) const {
 
         fragmented_ostringstream os;
 
-        os << "CREATE FUNCTION " << cql3::util::maybe_quote(name().keyspace) << "." << cql3::util::maybe_quote(name().name) << "(";
+        auto arg_type_range = _arg_types | std::views::transform(std::mem_fn(&abstract_type::cql3_type_name_without_frozen));
+        auto arg_range = std::views::zip(_arg_names, arg_type_range)
+                | std::views::transform([] (std::tuple<std::string_view, std::string_view> arg) {
+                    const auto [name, type] = arg;
+                    return seastar::format("{} {}", name, type);
+                });
 
-        // Arguments of the UDF.
-        for (size_t i = 0; i < _arg_types.size(); ++i) {
-            if (i > 0) {
-                os << ", ";
-            }
-
-            const auto& name = _arg_names[i];
-            const auto& type = _arg_types[i];
-
-            // Scylla doesn't allow for the types of arguments to be frozen.
-            // For more details, see issue: scylladb/scylladb#20256.
-            os << name << " " << type->cql3_type_name_without_frozen();
-        }
-
-        os << ")\n";
-        os << (_called_on_null_input ? "CALLED" : "RETURNS NULL") << " ON NULL INPUT\n";
-        // Scylla doesn't allow for the return type to be frozen.
-        // For more details, see issue: scylladb/scylladb#20256.
-        os << "RETURNS " << _return_type->cql3_type_name_without_frozen() << "\n";
-        os << "LANGUAGE " << _language << "\n";
-        os << "AS $$" << _body << "$$;";
-
+        fmt::format_to(os.out(), "CREATE FUNCTION {}.{}({})\n"
+                "{} ON NULL INPUT\n"
+                "RETURNS {}\n"
+                "LANGUAGE {}\n"
+                "AS $${}$$;",
+                cql3::util::maybe_quote(name().keyspace), cql3::util::maybe_quote(name().name), fmt::join(arg_range, ", "),
+                _called_on_null_input ? "CALLED" : "RETURNS NULL",
+                _return_type->cql3_type_name_without_frozen(),
+                _language,
+                _body);
+        
         return std::move(os).to_managed_string();
+        // fmt::format_to(os.out(), "asdasd");
+
+        // os << "CREATE FUNCTION " << cql3::util::maybe_quote(name().keyspace) << "." << cql3::util::maybe_quote(name().name) << "(";
+
+        // // Arguments of the UDF.
+        // for (size_t i = 0; i < _arg_types.size(); ++i) {
+        //     if (i > 0) {
+        //         os << ", ";
+        //     }
+
+        //     const auto& name = _arg_names[i];
+        //     const auto& type = _arg_types[i];
+
+        //     // Scylla doesn't allow for the types of arguments to be frozen.
+        //     // For more details, see issue: scylladb/scylladb#20256.
+        //     os << name << " " << type->cql3_type_name_without_frozen();
+        // }
+
+        // os << ")\n";
+        // os << (_called_on_null_input ? "CALLED" : "RETURNS NULL") << " ON NULL INPUT\n";
+        // // Scylla doesn't allow for the return type to be frozen.
+        // // For more details, see issue: scylladb/scylladb#20256.
+        // os << "RETURNS " << _return_type->cql3_type_name_without_frozen() << "\n";
+        // os << "LANGUAGE " << _language << "\n";
+        // os << "AS $$" << _body << "$$;";
+
+        // return std::move(os).to_managed_string();
     });
 
     return description {

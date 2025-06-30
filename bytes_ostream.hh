@@ -268,6 +268,8 @@ public:
         write(bytes_view(reinterpret_cast<const signed char*>(ptr), size));
     }
 
+    void write(value_type byte);
+
     bool is_linearized() const {
         return !_begin || !_begin->next;
     }
