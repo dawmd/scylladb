@@ -10,7 +10,7 @@
 
 #pragma once
 
-#include "property_definitions.hh"
+#include "cql3/statements/cf_properties.hh"
 #include <seastar/core/sstring.hh>
 
 #include <unordered_map>
@@ -22,7 +22,7 @@ namespace cql3 {
 
 namespace statements {
 
-class index_prop_defs : public property_definitions {
+class index_prop_defs : public cf_properties {
 public:
     static constexpr auto KW_OPTIONS = "options";
 

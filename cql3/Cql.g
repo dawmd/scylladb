@@ -908,8 +908,8 @@ typeColumns[create_type_statement& expr]
 
 
 /**
- * CREATE INDEX [IF NOT EXISTS] [indexName] ON <columnFamily> (<columnName>);
- * CREATE CUSTOM INDEX [IF NOT EXISTS] [indexName] ON <columnFamily> (<columnName>) USING <indexClass>;
+ * CREATE INDEX [IF NOT EXISTS] [indexName] ON <columnFamily> (<columnName>) [WITH <property> = <value> AND ...];
+ * CREATE CUSTOM INDEX [IF NOT EXISTS] [indexName] ON <columnFamily> (<columnName>) USING <indexClass> [WITH <property> = <value> AND ...];
  */
 createIndexStatement returns [std::unique_ptr<create_index_statement> expr]
     @init {
