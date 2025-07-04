@@ -33,6 +33,8 @@ class index_prop_defs;
 class create_index_statement : public schema_altering_statement {
     const sstring _index_name;
     const std::vector<::shared_ptr<index_target::raw>> _raw_targets;
+    bool _is_custom = false;
+    std::optional<sstring> _custom_class;
     const ::shared_ptr<index_prop_defs> _properties;
     const bool _if_not_exists;
     cql_stats* _cql_stats = nullptr;
@@ -40,6 +42,7 @@ class create_index_statement : public schema_altering_statement {
 public:
     create_index_statement(cf_name name, ::shared_ptr<index_name> index_name,
             std::vector<::shared_ptr<index_target::raw>> raw_targets,
+            bool is_custom, std::optional<sstring> custom_class,
             ::shared_ptr<index_prop_defs> properties, bool if_not_exists);
 
     future<> check_access(query_processor& qp, const service::client_state& state) const override;

@@ -19,13 +19,6 @@ void cql3::statements::index_prop_defs::validate() {
 
     property_definitions::validate(keywords);
 
-    if (is_custom && !custom_class) {
-        throw exceptions::invalid_request_exception("CUSTOM index requires specifying the index class");
-    }
-    
-    if (!custom_class && !_properties.empty()) {
-        throw exceptions::invalid_request_exception("Cannot specify options for a non-CUSTOM index");
-    }
     if (get_raw_options().count(
             db::index::secondary_index::custom_index_option_name)) {
         throw exceptions::invalid_request_exception(
@@ -39,11 +32,4 @@ index_options_map
 cql3::statements::index_prop_defs::get_raw_options() {
     auto options = get_map(KW_OPTIONS);
     return !options ? std::unordered_map<sstring, sstring>() : std::unordered_map<sstring, sstring>(options->begin(), options->end());
-}
-
-index_options_map
-cql3::statements::index_prop_defs::get_options() {
-    auto options = get_raw_options();
-    options.emplace(db::index::secondary_index::custom_index_option_name, *custom_class);
-    return options;
 }

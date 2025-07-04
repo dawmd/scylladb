@@ -25,6 +25,7 @@
 #include "cql3/query_processor.hh"
 #include "cql3/index_name.hh"
 #include "cql3/statements/index_prop_defs.hh"
+#include "index/secondary_index.hh"
 #include "index/secondary_index_manager.hh"
 #include "mutation/mutation.hh"
 
@@ -37,11 +38,15 @@ namespace statements {
 create_index_statement::create_index_statement(cf_name name,
                                                ::shared_ptr<index_name> index_name,
                                                std::vector<::shared_ptr<index_target::raw>> raw_targets,
+                                               bool is_custom,
+                                               std::optional<sstring> custom_class,
                                                ::shared_ptr<index_prop_defs> properties,
                                                bool if_not_exists)
     : schema_altering_statement(name)
     , _index_name(index_name->get_idx())
     , _raw_targets(raw_targets)
+    , _is_custom(is_custom)
+    , _custom_class(std::move(custom_class))
     , _properties(properties)
     , _if_not_exists(if_not_exists)
 {
@@ -65,8 +70,15 @@ static sstring target_type_name(index_target::target_type type) {
 void
 create_index_statement::validate(query_processor& qp, const service::client_state& state) const
 {
-    if (_raw_targets.empty() && !_properties->is_custom) {
+    if (_raw_targets.empty() && !_is_custom) {
         throw exceptions::invalid_request_exception("Only CUSTOM indexes can be created without specifying a target column");
+    }
+    if (_is_custom && !_custom_class) {
+        throw exceptions::invalid_request_exception("CUSTOM index requires specifying the index class");
+    }
+    
+    if (!_custom_class && _properties->count() != 0) {
+        throw exceptions::invalid_request_exception("Cannot specify options for a non-CUSTOM index");
     }
 
     _properties->validate();
@@ -102,11 +114,11 @@ std::vector<::shared_ptr<index_target>> create_index_statement::validate_while_e
         targets.emplace_back(raw_target->prepare(*schema));
     }
 
-    if (_properties && _properties->custom_class) {
+    if (_properties && _custom_class) {
 
-        auto validator = secondary_index::secondary_index_manager::get_custom_class_factory(*_properties->custom_class);
+        auto validator = secondary_index::secondary_index_manager::get_custom_class_factory(*_custom_class);
         if (!validator) {
-            throw exceptions::invalid_request_exception(format("Non-supported custom class \'{}\' provided", *(_properties->custom_class)));
+            throw exceptions::invalid_request_exception(format("Non-supported custom class \'{}\' provided", *_custom_class));
         }
         (*validator)()->validate(*schema, *_properties, targets, db.features());
     }
@@ -327,7 +339,7 @@ void create_index_statement::validate_target_column_is_map_if_index_involves_key
 
 void create_index_statement::validate_targets_for_multi_column_index(std::vector<::shared_ptr<index_target>> targets) const
 {
-    if (!_properties->is_custom) {
+    if (!_is_custom) {
         if (targets.size() > 2 || (targets.size() == 2 && std::holds_alternative<index_target::single_column>(targets.front()->value))) {
             throw exceptions::invalid_request_exception("Only CUSTOM indexes support multiple columns");
         }
@@ -358,8 +370,9 @@ std::optional<create_index_statement::base_schema_with_new_index> create_index_s
     }
     index_metadata_kind kind;
     index_options_map index_options;
-    if (_properties->custom_class) {
-        index_options = _properties->get_options();
+    if (_custom_class) {
+        index_options = _properties->get_raw_options();
+        index_options.emplace(db::index::secondary_index::custom_index_option_name, *_custom_class);
         kind = index_metadata_kind::custom;
     } else {
         kind = schema->is_compound() ? index_metadata_kind::composites : index_metadata_kind::keys;

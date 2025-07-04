@@ -26,12 +26,8 @@ class index_prop_defs : public property_definitions {
 public:
     static constexpr auto KW_OPTIONS = "options";
 
-    bool is_custom = false;
-    std::optional<sstring> custom_class;
-
     void validate();
     index_options_map get_raw_options();
-    index_options_map get_options();
 };
 
 }
