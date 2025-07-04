@@ -909,7 +909,6 @@ typeColumns[create_type_statement& expr]
 
 /**
  * CREATE INDEX [IF NOT EXISTS] [indexName] ON <columnFamily> (<columnName>);
- * CREATE CUSTOM INDEX [IF NOT EXISTS] [indexName] ON <columnFamily> (<columnName>) USING <indexClass>;
  */
 createIndexStatement returns [std::unique_ptr<create_index_statement> expr]
     @init {
@@ -918,9 +917,25 @@ createIndexStatement returns [std::unique_ptr<create_index_statement> expr]
         auto name = ::make_shared<cql3::index_name>();
         std::vector<::shared_ptr<index_target::raw>> targets;
     }
-    : K_CREATE (K_CUSTOM { props->is_custom = true; })? K_INDEX (K_IF K_NOT K_EXISTS { if_not_exists = true; } )?
+    : K_CREATE K_INDEX (K_IF K_NOT K_EXISTS { if_not_exists = true; } )?
         (idxName[*name])? K_ON cf=columnFamilyName '(' (target1=indexIdent { targets.emplace_back(target1); } (',' target2=indexIdent { targets.emplace_back(target2); } )*)? ')'
-        (K_USING cls=STRING_LITERAL { props->custom_class = sstring{$cls.text}; })?
+        (K_WITH properties[*props])?
+      { $expr = std::make_unique<create_index_statement>(cf, name, targets, props, if_not_exists); }
+    ;
+
+/**
+ * CREATE CUSTOM INDEX [IF NOT EXISTS] [indexName] ON <columnFamily> (<columnName>) USING <indexClass>;
+ */
+createCustomIndexStatement returns [std::unique_ptr<create_index_statement> expr]
+    @init {
+        auto props = make_shared<index_prop_defs>();
+        bool if_not_exists = false;
+        auto name = ::make_shared<cql3::index_name>();
+        std::vector<::shared_ptr<index_target::raw>> targets;
+    }
+    : K_CREATE (K_CUSTOM { props->is_custom = true; }) K_INDEX (K_IF K_NOT K_EXISTS { if_not_exists = true; } )?
+        (idxName[*name])? K_ON cf=columnFamilyName '(' (target1=indexIdent { targets.emplace_back(target1); } (',' target2=indexIdent { targets.emplace_back(target2); } )*)? ')'
+        (K_USING cls=STRING_LITERAL { props->custom_class = sstring{$cls.text}; })
         (K_WITH properties[*props])?
       { $expr = std::make_unique<create_index_statement>(cf, name, targets, props, if_not_exists); }
     ;
