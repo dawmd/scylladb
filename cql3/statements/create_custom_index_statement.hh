@@ -29,8 +29,8 @@ namespace statements {
 
 class index_prop_defs;
 
-/** A <code>CREATE INDEX</code> statement parsed from a CQL query. */
-class create_index_statement : public schema_altering_statement {
+/** A <code>CREATE CUSTOM INDEX</code> statement parsed from a CQL query. */
+class create_custom_index_statement : public schema_altering_statement {
     const sstring _index_name;
     const std::vector<::shared_ptr<index_target::raw>> _raw_targets;
     const ::shared_ptr<index_prop_defs> _properties;
@@ -38,7 +38,7 @@ class create_index_statement : public schema_altering_statement {
     cql_stats* _cql_stats = nullptr;
 
 public:
-    create_index_statement(cf_name name, ::shared_ptr<index_name> index_name,
+    create_custom_index_statement(cf_name name, ::shared_ptr<index_name> index_name,
             std::vector<::shared_ptr<index_target::raw>> raw_targets,
             ::shared_ptr<index_prop_defs> properties, bool if_not_exists);
 

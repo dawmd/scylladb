@@ -9,7 +9,7 @@
  */
 
 #include <seastar/core/coroutine.hh>
-#include "create_index_statement.hh"
+#include "create_custom_index_statement.hh"
 #include "exceptions/exceptions.hh"
 #include "prepared_statement.hh"
 #include "types/types.hh"
@@ -34,7 +34,7 @@ namespace cql3 {
 
 namespace statements {
 
-create_index_statement::create_index_statement(cf_name name,
+create_custom_index_statement::create_custom_index_statement(cf_name name,
                                                ::shared_ptr<index_name> index_name,
                                                std::vector<::shared_ptr<index_target::raw>> raw_targets,
                                                ::shared_ptr<index_prop_defs> properties,
@@ -48,7 +48,7 @@ create_index_statement::create_index_statement(cf_name name,
 }
 
 future<>
-create_index_statement::check_access(query_processor& qp, const service::client_state& state) const {
+create_custom_index_statement::check_access(query_processor& qp, const service::client_state& state) const {
     return state.has_column_family_access(keyspace(), column_family(), auth::permission::ALTER);
 }
 
@@ -63,7 +63,7 @@ static sstring target_type_name(index_target::target_type type) {
 }
 
 void
-create_index_statement::validate(query_processor& qp, const service::client_state& state) const
+create_custom_index_statement::validate(query_processor& qp, const service::client_state& state) const
 {
     if (_raw_targets.empty() && !_properties->is_custom) {
         throw exceptions::invalid_request_exception("Only CUSTOM indexes can be created without specifying a target column");
@@ -72,7 +72,7 @@ create_index_statement::validate(query_processor& qp, const service::client_stat
     _properties->validate();
 }
 
-std::vector<::shared_ptr<index_target>> create_index_statement::validate_while_executing(data_dictionary::database db) const {
+std::vector<::shared_ptr<index_target>> create_custom_index_statement::validate_while_executing(data_dictionary::database db) const {
     auto schema = validation::validate_column_family(db, keyspace(), column_family());
 
     if (schema->is_counter()) {
@@ -191,7 +191,7 @@ std::vector<::shared_ptr<index_target>> create_index_statement::validate_while_e
     return targets;
 }
 
-void create_index_statement::validate_for_local_index(const schema& schema) const {
+void create_custom_index_statement::validate_for_local_index(const schema& schema) const {
     if (!_raw_targets.empty()) {
             if (const auto* index_pk = std::get_if<std::vector<::shared_ptr<column_identifier::raw>>>(&_raw_targets.front()->value)) {
                 auto base_pk_identifiers = *index_pk | std::views::transform([&schema] (const ::shared_ptr<column_identifier::raw>& raw_ident) {
@@ -233,7 +233,7 @@ void create_index_statement::validate_for_local_index(const schema& schema) cons
         }
 }
 
-void create_index_statement::validate_for_frozen_collection(const index_target& target) const
+void create_custom_index_statement::validate_for_frozen_collection(const index_target& target) const
 {
     if (target.type != index_target::target_type::full) {
         throw exceptions::invalid_request_exception(
@@ -243,14 +243,14 @@ void create_index_statement::validate_for_frozen_collection(const index_target& 
     }
 }
 
-void create_index_statement::validate_not_full_index(const index_target& target) const
+void create_custom_index_statement::validate_not_full_index(const index_target& target) const
 {
     if (target.type == index_target::target_type::full) {
         throw exceptions::invalid_request_exception("full() indexes can only be created on frozen collections");
     }
 }
 
-void create_index_statement::validate_for_collection(const index_target& target, const column_definition& cd) const
+void create_custom_index_statement::validate_for_collection(const index_target& target, const column_definition& cd) const
 {
     switch (target.type) {
         case index_target::target_type::full:
@@ -270,7 +270,7 @@ void create_index_statement::validate_for_collection(const index_target& target,
     }
 }
 
-void create_index_statement::rewrite_target_for_collection(index_target& target, const column_definition& cd) const
+void create_custom_index_statement::rewrite_target_for_collection(index_target& target, const column_definition& cd) const
 {
     // In Cassandra, `CREATE INDEX ON table(collection)` works the same as `CREATE INDEX ON table(VALUES(collection))`,
     // and index on VALUES(collection) indexes values, if the collection was a map or a list, but it indexes the keys, if it
@@ -300,7 +300,7 @@ void create_index_statement::rewrite_target_for_collection(index_target& target,
 }
 
 
-void create_index_statement::validate_is_values_index_if_target_column_not_collection(
+void create_custom_index_statement::validate_is_values_index_if_target_column_not_collection(
         const column_definition* cd, const index_target& target) const
 {
     if (!cd->type->is_collection()
@@ -313,7 +313,7 @@ void create_index_statement::validate_is_values_index_if_target_column_not_colle
     }
 }
 
-void create_index_statement::validate_target_column_is_map_if_index_involves_keys(bool is_map, const index_target& target) const
+void create_custom_index_statement::validate_target_column_is_map_if_index_involves_keys(bool is_map, const index_target& target) const
 {
     if (target.type == index_target::target_type::keys
             || target.type == index_target::target_type::keys_and_values) {
@@ -325,7 +325,7 @@ void create_index_statement::validate_target_column_is_map_if_index_involves_key
     }
 }
 
-void create_index_statement::validate_targets_for_multi_column_index(std::vector<::shared_ptr<index_target>> targets) const
+void create_custom_index_statement::validate_targets_for_multi_column_index(std::vector<::shared_ptr<index_target>> targets) const
 {
     if (!_properties->is_custom) {
         if (targets.size() > 2 || (targets.size() == 2 && std::holds_alternative<index_target::single_column>(targets.front()->value))) {
@@ -341,7 +341,7 @@ void create_index_statement::validate_targets_for_multi_column_index(std::vector
     }
 }
 
-std::optional<create_index_statement::base_schema_with_new_index> create_index_statement::build_index_schema(data_dictionary::database db) const {
+std::optional<create_custom_index_statement::base_schema_with_new_index> create_custom_index_statement::build_index_schema(data_dictionary::database db) const {
     auto targets = validate_while_executing(db);
 
     auto schema = db.find_schema(keyspace(), column_family());
@@ -389,7 +389,7 @@ std::optional<create_index_statement::base_schema_with_new_index> create_index_s
 }
 
 future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, std::vector<mutation>, cql3::cql_warnings_vec>>
-create_index_statement::prepare_schema_mutations(query_processor& qp, const query_options&, api::timestamp_type ts) const {
+create_custom_index_statement::prepare_schema_mutations(query_processor& qp, const query_options&, api::timestamp_type ts) const {
     using namespace cql_transport;
     auto res = build_index_schema(qp.db());
 
@@ -410,12 +410,12 @@ create_index_statement::prepare_schema_mutations(query_processor& qp, const quer
 }
 
 std::unique_ptr<cql3::statements::prepared_statement>
-create_index_statement::prepare(data_dictionary::database db, cql_stats& stats) {
+create_custom_index_statement::prepare(data_dictionary::database db, cql_stats& stats) {
     _cql_stats = &stats;
-    return std::make_unique<prepared_statement>(audit_info(), make_shared<create_index_statement>(*this));
+    return std::make_unique<prepared_statement>(audit_info(), make_shared<create_custom_index_statement>(*this));
 }
 
-index_metadata create_index_statement::make_index_metadata(const std::vector<::shared_ptr<index_target>>& targets,
+index_metadata create_custom_index_statement::make_index_metadata(const std::vector<::shared_ptr<index_target>>& targets,
                                                            const sstring& name,
                                                            index_metadata_kind kind,
                                                            const index_options_map& options)
