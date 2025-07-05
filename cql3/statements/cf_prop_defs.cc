@@ -57,6 +57,29 @@ const sstring cf_prop_defs::COMPACTION_ENABLED_KEY = "enabled";
 
 const sstring cf_prop_defs::KW_TABLETS = "tablets";
 
+std::span<sstring> cf_prop_defs::keywords() {
+    static sstring result[] = {
+        KW_COMMENT,
+        KW_GCGRACESECONDS, KW_CACHING, KW_DEFAULT_TIME_TO_LIVE,
+        KW_MIN_INDEX_INTERVAL, KW_MAX_INDEX_INTERVAL, KW_SPECULATIVE_RETRY,
+        KW_BF_FP_CHANCE, KW_MEMTABLE_FLUSH_PERIOD, KW_COMPACTION,
+        KW_COMPRESSION, KW_CRC_CHECK_CHANCE,  KW_ID, KW_PAXOSGRACESECONDS,
+        KW_SYNCHRONOUS_UPDATES, KW_TABLETS
+    };
+    return result;
+}
+
+std::span<sstring> cf_prop_defs::obsolete_keywords() {
+    static sstring result[] = {
+        "index_interval",
+        "replicate_on_write",
+        "populate_io_cache_on_flush",
+        "read_repair_chance",
+        "dclocal_read_repair_chance"
+    };
+    return result;
+}
+
 schema::extensions_map cf_prop_defs::make_schema_extensions(const db::extensions& exts) const {
     schema::extensions_map er;
     for (auto& p : exts.schema_extensions()) {
@@ -90,21 +113,8 @@ void cf_prop_defs::validate(const data_dictionary::database db, sstring ks_name,
 
     const auto& ks = find_keyspace(db, ks_name);
 
-    static std::set<sstring> keywords({
-        KW_COMMENT,
-        KW_GCGRACESECONDS, KW_CACHING, KW_DEFAULT_TIME_TO_LIVE,
-        KW_MIN_INDEX_INTERVAL, KW_MAX_INDEX_INTERVAL, KW_SPECULATIVE_RETRY,
-        KW_BF_FP_CHANCE, KW_MEMTABLE_FLUSH_PERIOD, KW_COMPACTION,
-        KW_COMPRESSION, KW_CRC_CHECK_CHANCE,  KW_ID, KW_PAXOSGRACESECONDS,
-        KW_SYNCHRONOUS_UPDATES, KW_TABLETS,
-    });
-    static std::set<sstring> obsolete_keywords({
-        sstring("index_interval"),
-        sstring("replicate_on_write"),
-        sstring("populate_io_cache_on_flush"),
-        sstring("read_repair_chance"),
-        sstring("dclocal_read_repair_chance"),
-    });
+    static auto keywords = cf_prop_defs::keywords() | std::ranges::to<std::set>();
+    static auto obsolete_keywords = cf_prop_defs::obsolete_keywords() | std::ranges::to<std::set>();;
 
     const auto& exts = db.extensions();
     property_definitions::validate(keywords, exts.schema_extension_keywords(), obsolete_keywords);

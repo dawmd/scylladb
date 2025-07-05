@@ -16,6 +16,8 @@
 #include "compaction/compaction_strategy.hh"
 #include "utils/UUID.hh"
 
+#include <span>
+
 namespace data_dictionary {
 class database;
 class keyspace;
@@ -71,6 +73,10 @@ public:
     static constexpr int32_t DEFAULT_MEMTABLE_FLUSH_PERIOD = 0;
 
     static constexpr int32_t DEFAULT_MEMTABLE_FLUSH_PERIOD_MIN_VALUE = 60000;
+
+public:
+    static std::span<sstring> keywords();
+    static std::span<sstring> obsolete_keywords();
 
 private:
     mutable std::optional<sstables::compaction_strategy_type> _compaction_strategy_class;
