@@ -51,4 +51,7 @@ struct index_options {
 // FIXME: It would be nice to accept a broader set of ranges here.
 std::expected<index_options, sstring> filter_options(index_type, const std::unordered_map<sstring, sstring>& options);
 
+// Returns an exception message if validation fails.
+std::expected<void, sstring> validate_index_options(const index_options&);
+
 } // namespace secondary_index
