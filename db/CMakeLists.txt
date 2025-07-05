@@ -32,6 +32,7 @@ target_sources(db
     batchlog_manager.cc
     tags/utils.cc
     view/view.cc
+    view/view_options.cc
     view/view_update_generator.cc
     view/row_locking.cc
     sstables-format-selector.cc
