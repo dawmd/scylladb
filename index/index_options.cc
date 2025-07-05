@@ -8,6 +8,7 @@
  * SPDX-License-Identifier: (LicenseRef-ScyllaDB-Source-Available-1.0 and Apache-2.0)
  */
 
+#include "db/view/view_options.hh"
 #include "index/index_options.hh"
 #include "utils/log.hh"
 
@@ -58,11 +59,16 @@ std::expected<index_options, sstring> filter_options(index_type type, const std:
 
     const auto index_opts = get_index_options(type);
     for (const auto& [key, value] : options) {
-        if (std::ranges::find(index_opts, key) == std::ranges::end(index_opts)) {
-            return std::unexpected(key);
+        if (std::ranges::find(index_opts, key) != std::ranges::end(index_opts)) {
+            result.idx_options.emplace(std::make_pair(key, value));
+            continue;
         }
-
-        result.idx_options.emplace(std::make_pair(key, value));
+        if (db::view::is_view_option(key)) {
+            result.mv_options.emplace(std::make_pair(key, value));
+            continue;
+        }
+        
+        return std::unexpected(key);
     }
 
     return result;
