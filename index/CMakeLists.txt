@@ -3,6 +3,7 @@ find_package(cryptopp REQUIRED)
 add_library(index STATIC)
 target_sources(index
   PRIVATE
+    index_options.cc
     secondary_index.cc
     secondary_index_manager.cc
     vector_index.cc)
