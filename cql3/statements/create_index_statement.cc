@@ -27,6 +27,7 @@
 #include "cql3/statements/index_prop_defs.hh"
 #include "index/secondary_index_manager.hh"
 #include "mutation/mutation.hh"
+#include "index/secondary_index.hh"
 
 #include <stdexcept>
 
@@ -69,7 +70,23 @@ create_index_statement::validate(query_processor& qp, const service::client_stat
         throw exceptions::invalid_request_exception("Only CUSTOM indexes can be created without specifying a target column");
     }
 
-    _properties->validate();
+    static std::set<sstring> keywords({ index_prop_defs::KW_OPTIONS });
+
+    _properties->validate(keywords);
+
+    if (_properties->is_custom && !_properties->custom_class) {
+        throw exceptions::invalid_request_exception("CUSTOM index requires specifying the index class");
+    }
+
+    if (!_properties->custom_class && !_properties->count()) {
+        throw exceptions::invalid_request_exception("Cannot specify options for a non-CUSTOM index");
+    }
+    if (_properties->get_raw_options().count(
+            db::index::secondary_index::custom_index_option_name)) {
+        throw exceptions::invalid_request_exception(
+                format("Cannot specify {} as a CUSTOM option",
+                        db::index::secondary_index::custom_index_option_name));
+    }
 }
 
 std::vector<::shared_ptr<index_target>> create_index_statement::validate_while_executing(data_dictionary::database db) const {
