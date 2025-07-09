@@ -909,9 +909,9 @@ future<std::vector<mutation>> prepare_view_drop_announcement(storage_proxy& sp, 
         if (!view->is_view()) {
             throw exceptions::invalid_request_exception("Cannot use DROP MATERIALIZED VIEW on Table");
         }
-        if (db.find_column_family(view->view_info()->base_id()).get_index_manager().is_index(view_ptr(view))) {
-            throw exceptions::invalid_request_exception("Cannot use DROP MATERIALIZED VIEW on Index");
-        }
+        // if (db.find_column_family(view->view_info()->base_id()).get_index_manager().is_index(view_ptr(view))) {
+        //     throw exceptions::invalid_request_exception("Cannot use DROP MATERIALIZED VIEW on Index");
+        // }
         auto keyspace = db.find_keyspace(ks_name).metadata();
         mlogger.info("Drop view '{}.{}'", view->ks_name(), view->cf_name());
         auto mutations = db::schema_tables::make_drop_view_mutations(keyspace, view_ptr(std::move(view)), ts);

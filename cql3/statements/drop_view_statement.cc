@@ -12,6 +12,7 @@
 #include "cql3/statements/drop_view_statement.hh"
 #include "cql3/statements/prepared_statement.hh"
 #include "cql3/query_processor.hh"
+#include "replica/database.hh"
 #include "service/migration_manager.hh"
 #include "service/storage_proxy.hh"
 #include "view_info.hh"
@@ -45,6 +46,12 @@ future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, std::vector
 drop_view_statement::prepare_schema_mutations(query_processor& qp, const query_options&, api::timestamp_type ts) const {
     ::shared_ptr<cql_transport::event::schema_change> ret;
     std::vector<mutation> m;
+
+    auto& db = qp.proxy().local_db();
+    auto ptr = db.find_schema(keyspace(), column_family());
+    if (db.find_column_family(keyspace(), column_family()).get_index_manager().is_index(*ptr)) {
+        throw exceptions::invalid_request_exception("Cannot use DROP MATERIALIZED VIEW on Index");
+    }
 
     try {
         m = co_await service::prepare_view_drop_announcement(qp.proxy(), keyspace(), column_family(), ts);
