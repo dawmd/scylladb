@@ -1866,10 +1866,6 @@ static void make_update_indices_mutations(
         return view;
     };
 
-    // old indices with updated attributes
-    for (auto&& name : diff.entries_differing) {
-        add_index(name);
-    }
     // Newly added indices. Because these are newly created tables (views),
     // we need to call the before_create_column_family callback for them.
     // If we don't, among other things *tablets* will not be created for
@@ -1882,6 +1878,10 @@ static void make_update_indices_mutations(
         auto ksm = db.find_keyspace(new_table->ks_name()).metadata();
         db.get_notifier().before_create_column_family(*ksm, *view, mutations, timestamp);
     }
+
+    // We're aware that we do nothing for `diff.entries_differing`.
+    // That set will always be empty. See the commit details adding this
+    // comment for more information.
 
     mutations.emplace_back(std::move(indices_mutation));
 }
