@@ -12,6 +12,7 @@
 #include "create_index_statement.hh"
 #include "exceptions/exceptions.hh"
 #include "prepared_statement.hh"
+#include "replica/database.hh"
 #include "types/types.hh"
 #include "validation.hh"
 #include "service/storage_proxy.hh"
@@ -395,9 +396,16 @@ create_index_statement::prepare_schema_mutations(query_processor& qp, const quer
 
     ::shared_ptr<event::schema_change> ret;
     std::vector<mutation> m;
-
+    
     if (res) {
+        const auto& replica_db = qp.proxy().local_db();
+        const auto& cf = replica_db.find_column_family(keyspace(), column_family());
+        auto view = cf.get_index_manager().create_view_for_index(res->index);
+
         m = co_await service::prepare_column_family_update_announcement(qp.proxy(), std::move(res->schema), {}, ts);
+
+        auto view_muts = co_await service::prepare_new_view_announcement(qp.proxy(), std::move(view), ts);
+        m.insert_range(std::ranges::end(m), std::move(view_muts));
 
         ret = ::make_shared<event::schema_change>(
                 event::schema_change::change_type::UPDATED,
