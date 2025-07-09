@@ -218,6 +218,8 @@ future<> with_merge_lock(noncopyable_function<future<> ()> func);
 
 future<> update_schema_version_and_announce(sharded<db::system_keyspace>& sys_ks, distributed<service::storage_proxy>& proxy, schema_features features, std::optional<table_schema_version> version_from_group0);
 
+schema_mutations make_view_mutations(view_ptr view, api::timestamp_type timestamp, bool with_columns);
+
 future<std::optional<table_schema_version>> get_group0_schema_version(db::system_keyspace& sys_ks);
 
 // Recalculates the local schema version.

@@ -10,8 +10,10 @@
 
 #include <seastar/core/coroutine.hh>
 #include "create_index_statement.hh"
+#include "db/schema_tables.hh"
 #include "exceptions/exceptions.hh"
 #include "prepared_statement.hh"
+#include "replica/database.hh"
 #include "types/types.hh"
 #include "validation.hh"
 #include "service/storage_proxy.hh"
@@ -398,6 +400,26 @@ create_index_statement::prepare_schema_mutations(query_processor& qp, const quer
 
     if (res) {
         m = co_await service::prepare_column_family_update_announcement(qp.proxy(), std::move(res->schema), {}, ts);
+
+        auto& replica_db = qp.proxy().local_db();
+        auto& cf = replica_db.find_column_family(keyspace(), column_family());
+        auto view = cf.get_index_manager().create_view_for_index(res->index);
+        auto view_mutations = db::schema_tables::make_view_mutations(view, ts, true);
+        view_mutations.copy_to(m);
+
+        // Newly added indices. Because these are newly created tables (views),
+        // we need to call the before_create_column_family callback for them.
+        // If we don't, among other things *tablets* will not be created for
+        // these new views.
+        // The callbacks must be called in a Seastar thread, which means that
+        // *this* function must be called in a Seastar thread when creating an
+        // index.
+
+        auto ksm = replica_db.find_keyspace(keyspace()).metadata();
+        SCYLLA_ASSERT(ksm);
+        co_await seastar::async([&] {
+            replica_db.get_notifier().before_create_column_family(*ksm, *view, m, ts);
+        });
 
         ret = ::make_shared<event::schema_change>(
                 event::schema_change::change_type::UPDATED,

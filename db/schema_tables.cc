@@ -1827,7 +1827,6 @@ void add_table_or_view_to_schema_mutation(schema_ptr s, api::timestamp_type time
     make_schema_mutations(s, timestamp, with_columns).copy_to(mutations);
 }
 
-static schema_mutations make_view_mutations(view_ptr view, api::timestamp_type timestamp, bool with_columns);
 static void make_drop_table_or_view_mutations(schema_ptr schema_table, schema_ptr table_or_view, api::timestamp_type timestamp, std::vector<mutation>& mutations);
 
 static void make_update_indices_mutations(
@@ -1856,27 +1855,13 @@ static void make_update_indices_mutations(
         make_drop_table_or_view_mutations(views(), view, timestamp, mutations);
     }
 
-    auto add_index = [&](const sstring& name) -> view_ptr {
+    auto add_index = [&](const sstring& name) -> void {
         const index_metadata& index = new_table->all_indices().at(name);
         add_index_to_schema_mutation(new_table, index, timestamp, indices_mutation);
-        auto& cf = db.find_column_family(new_table);
-        auto view = cf.get_index_manager().create_view_for_index(index);
-        auto view_mutations = make_view_mutations(view, timestamp, true);
-        view_mutations.copy_to(mutations);
-        return view;
     };
 
-    // Newly added indices. Because these are newly created tables (views),
-    // we need to call the before_create_column_family callback for them.
-    // If we don't, among other things *tablets* will not be created for
-    // these new views.
-    // The callbacks must be called in a Seastar thread, which means that
-    // *this* function must be called in a Seastar thread when creating an
-    // index.
     for (auto&& name : diff.entries_only_on_right) {
-        auto view = add_index(name);
-        auto ksm = db.find_keyspace(new_table->ks_name()).metadata();
-        db.get_notifier().before_create_column_family(*ksm, *view, mutations, timestamp);
+        add_index(name);
     }
 
     // We're aware that we do nothing for `diff.entries_differing`.
@@ -2561,7 +2546,7 @@ future<std::vector<view_ptr>> create_views_from_schema_partition(distributed<ser
     co_return std::move(views);
 }
 
-static schema_mutations make_view_mutations(view_ptr view, api::timestamp_type timestamp, bool with_columns)
+schema_mutations make_view_mutations(view_ptr view, api::timestamp_type timestamp, bool with_columns)
 {
     // When adding new schema properties, don't set cells for default values so that
     // both old and new nodes will see the same version during rolling upgrades.
