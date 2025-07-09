@@ -11,6 +11,7 @@
 #include <seastar/core/coroutine.hh>
 #include "cql3/statements/drop_index_statement.hh"
 #include "cql3/statements/prepared_statement.hh"
+#include "replica/database.hh"
 #include "service/migration_manager.hh"
 #include "service/storage_proxy.hh"
 #include "schema/schema_builder.hh"
@@ -79,6 +80,10 @@ drop_index_statement::prepare_schema_mutations(query_processor& qp, const query_
 
     if (cfm) {
         m = co_await service::prepare_column_family_update_announcement(qp.proxy(), cfm, {}, ts);
+
+        // Change these arguments to the view's name.
+        auto view_muts = co_await service::prepare_view_drop_announcement(qp.proxy(), keyspace(), secondary_index::index_table_name(_index_name), ts);
+        m.insert_range(std::ranges::end(m), std::move(view_muts));
 
         using namespace cql_transport;
         ret = ::make_shared<event::schema_change>(event::schema_change::change_type::UPDATED,
