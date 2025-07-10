@@ -481,7 +481,7 @@ static data_type type_for_computed_column(cql3::statements::index_target::target
     }
 }
 
-view_ptr create_index_statement::create_view_for_index(const schema_ptr schema, const index_metadata& im) const {
+view_ptr create_index_statement::create_view_for_index(const schema_ptr schema, const index_metadata& im, const data_dictionary::database& db) const {
     sstring index_target_name = im.options().at(cql3::statements::index_target::target_option_name);
     schema_builder builder{schema->ks_name(), secondary_index::index_table_name(im.name())};
     auto target_info = secondary_index::target_parser::parse(schema, im);
@@ -571,6 +571,8 @@ view_ptr create_index_statement::create_view_for_index(const schema_ptr schema, 
         std::map<sstring, sstring> tags_map = {{db::SYNCHRONOUS_VIEW_UPDATES_TAG_KEY, "true"}};
         builder.add_extension(db::tags_extension::NAME, ::make_shared<db::tags_extension>(tags_map));
     }
+    auto exts = _properties->properties()->make_schema_extensions(db.extensions());
+    _properties->properties()->apply_to_builder(builder, std::move(exts), db, keyspace());
     return view_ptr{builder.build()};
 }
 
@@ -587,7 +589,7 @@ create_index_statement::prepare_schema_mutations(query_processor& qp, const quer
 
         const auto& replica_db = qp.proxy().local_db();
         const auto& cf = replica_db.find_column_family(keyspace(), column_family());
-        auto view = create_view_for_index(cf.schema(), res->index);
+        auto view = create_view_for_index(cf.schema(), res->index, qp.db());
 
         auto view_muts = co_await service::prepare_new_view_announcement(qp.proxy(), std::move(view), ts);
         m.insert_range(m.end(), std::move(view_muts));
