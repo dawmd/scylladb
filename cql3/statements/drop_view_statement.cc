@@ -12,6 +12,8 @@
 #include "cql3/statements/drop_view_statement.hh"
 #include "cql3/statements/prepared_statement.hh"
 #include "cql3/query_processor.hh"
+#include "exceptions/exceptions.hh"
+#include "replica/database.hh"
 #include "service/migration_manager.hh"
 #include "service/storage_proxy.hh"
 #include "view_info.hh"
@@ -41,25 +43,44 @@ future<> drop_view_statement::check_access(query_processor& qp, const service::c
     return make_ready_future<>();
 }
 
+void drop_view_statement::validate(query_processor& qp, const service::client_state& state) const {
+    const auto& db = qp.proxy().local_db();
+
+    if (!db.has_schema(keyspace(), column_family())) {
+        if (_if_exists) {
+            return;
+        }
+
+        throw exceptions::configuration_exception(seastar::format(
+                "Cannot drop non existing materialized view '{}' in keyspace '{}'.", column_family(), keyspace()));
+    }
+
+    const auto& view = db.find_column_family(keyspace(), column_family()).schema();
+    if (!view->is_view()) {
+        throw exceptions::invalid_request_exception("Cannot use DROP MATERIALIZED VIEW on Table");
+    }
+    if (db.find_column_family(view->view_info()->base_id()).get_index_manager().is_index(view_ptr(view))) {
+        throw exceptions::invalid_request_exception("Cannot use DROP MATERIALIZED VIEW on Index");
+    }
+}
+
 future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, std::vector<mutation>, cql3::cql_warnings_vec>>
 drop_view_statement::prepare_schema_mutations(query_processor& qp, const query_options&, api::timestamp_type ts) const {
     ::shared_ptr<cql_transport::event::schema_change> ret;
     std::vector<mutation> m;
 
-    try {
-        m = co_await service::prepare_view_drop_announcement(qp.proxy(), keyspace(), column_family(), ts);
+    const auto& db = qp.proxy().local_db();
 
-        using namespace cql_transport;
-        ret = ::make_shared<event::schema_change>(
-            event::schema_change::change_type::DROPPED,
-            event::schema_change::target_type::TABLE,
-            keyspace(),
-            column_family());
-    } catch (const exceptions::configuration_exception& e) {
-        if (!_if_exists) {
-            co_return coroutine::exception(std::current_exception());
-        }
+    if (db.has_schema(keyspace(), column_family())) {
+        m = co_await service::prepare_view_drop_announcement(qp.proxy(), keyspace(), column_family(), ts);
     }
+
+    using namespace cql_transport;
+    ret = ::make_shared<event::schema_change>(
+        event::schema_change::change_type::DROPPED,
+        event::schema_change::target_type::TABLE,
+        keyspace(),
+        column_family());
 
     co_return std::make_tuple(std::move(ret), std::move(m), std::vector<sstring>());
 }
