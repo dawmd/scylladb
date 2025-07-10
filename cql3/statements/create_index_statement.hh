@@ -14,6 +14,7 @@
 #include "index_target.hh"
 
 #include "schema/schema_fwd.hh"
+#include "cql3/statements/index_prop_defs.hh"
 
 #include <seastar/core/shared_ptr.hh>
 
@@ -26,8 +27,6 @@ class query_processor;
 class index_name;
 
 namespace statements {
-
-class index_prop_defs;
 
 /** A <code>CREATE INDEX</code> statement parsed from a CQL query. */
 class create_index_statement : public schema_altering_statement {

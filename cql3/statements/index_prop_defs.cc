@@ -11,11 +11,22 @@
 #include <set>
 #include <seastar/core/format.hh>
 #include "index_prop_defs.hh"
+#include "cql3/statements/property_definitions.hh"
 #include "index/secondary_index.hh"
 #include "exceptions/exceptions.hh"
 
-void cql3::statements::index_prop_defs::validate() {
-    static std::set<sstring> keywords({ sstring(KW_OPTIONS) });
+#include <variant>
+
+namespace cql3::statements {
+
+namespace {
+
+const sstring KW_OPTIONS = "options";
+
+} // anonymous namespace
+
+void index_specific_prop_defs::validate() {
+    static std::set<sstring> keywords{KW_OPTIONS};
 
     property_definitions::validate(keywords);
 
@@ -36,14 +47,27 @@ void cql3::statements::index_prop_defs::validate() {
 }
 
 index_options_map
-cql3::statements::index_prop_defs::get_raw_options() {
+index_specific_prop_defs::get_raw_options() {
     auto options = get_map(KW_OPTIONS);
     return !options ? std::unordered_map<sstring, sstring>() : std::unordered_map<sstring, sstring>(options->begin(), options->end());
 }
 
 index_options_map
-cql3::statements::index_prop_defs::get_options() {
+index_specific_prop_defs::get_options() {
     auto options = get_raw_options();
     options.emplace(db::index::secondary_index::custom_index_option_name, *custom_class);
     return options;
 }
+
+void index_prop_defs::filter_options() {
+    if (has_property(KW_OPTIONS)) {
+        auto extracted_opt = remove_property(KW_OPTIONS);
+        if (std::holds_alternative<sstring>(extracted_opt)) {
+            idx_opts.add_property(KW_OPTIONS, std::move(std::get<sstring>(extracted_opt)));
+        } else if (std::holds_alternative<typename property_definitions::map_type>(extracted_opt)) {
+            idx_opts.add_property(KW_OPTIONS, std::move(std::get<typename property_definitions::map_type>(extracted_opt)));
+        }
+    }
+}
+
+} // namespace cql3::statements

@@ -22,16 +22,21 @@ namespace cql3 {
 
 namespace statements {
 
-class index_prop_defs : public property_definitions {
-public:
-    static constexpr auto KW_OPTIONS = "options";
-
+struct index_specific_prop_defs : public property_definitions {
     bool is_custom = false;
     std::optional<sstring> custom_class;
 
     void validate();
     index_options_map get_raw_options();
     index_options_map get_options();
+};
+
+class index_prop_defs : public property_definitions {
+public:
+    index_specific_prop_defs idx_opts;
+
+    // Extract all of the index-specific options from this object and put them into `idx_opts`.
+    void filter_options();
 };
 
 }
