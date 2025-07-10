@@ -8,7 +8,9 @@
  * SPDX-License-Identifier: (LicenseRef-ScyllaDB-Source-Available-1.0 and Apache-2.0)
  */
 
+#include <ranges>
 #include <seastar/core/format.hh>
+#include <variant>
 #include "cql3/statements/property_definitions.hh"
 #include "exceptions/exceptions.hh"
 
@@ -168,6 +170,68 @@ void property_definitions::remove_from_map_if_exists(const sstring& name, const 
     } catch (const std::bad_variant_access& e) {
         throw exceptions::syntax_exception(format("Invalid value for property '{}'. It should be a map.", name));
     }
+}
+
+// -------------
+
+std::expected<void, sstring> pdfs::validate_value_keywords(std::flat_set<sstring> valid_keywords) const {
+    for (const auto& prop : value_properties) {
+        if (std::ranges::find(valid_keywords, prop) == std::ranges::end(valid_keywords)) {
+            return std::unexpected(prop);
+        }
+    }
+
+    return {};
+}
+
+std::expected<void, sstring> pdfs::validate_mapping_keywords(
+        const std::flat_map<sstring, std::flat_set<sstring>>& valid_keywords,
+        const std::flat_set<sstring>& ignore_keys) const
+{
+    // First pass: just verify that the keys are OK.
+    for (const auto& key : mapping_properties | std::views::keys) {
+        if (!valid_keywords.contains(key)) {
+            return std::unexpected(key);
+        }
+    }
+
+    // Second pass: verify that the nested keys are OK.
+    for (const auto& [key, value] : mapping_properties) {
+        if (ignore_keys.contains(key)) {
+            continue;
+        }
+        // We don't check ANY values, only keys. Skip this one.
+        if (std::holds_alternative<sstring>(value)) {
+            continue;
+        }
+
+        const auto& valid_nested_keywords = valid_keywords.at(key);
+        for (const auto& keyword : std::get<map_type>(value) | std::views::keys) {
+            if (!valid_nested_keywords.contains(keyword)) {
+                return std::unexpected(keyword);
+            }
+        }
+    }
+
+    return {};
+}
+
+schema::extensions_map make_schema_extensions(const pdfs& props, const db::extensions& exts) {
+    schema::extensions_map result{};
+
+    for (const auto& [name, func] : exts.schema_extensions()) {
+        auto it = props.mapping_properties.find(name);
+        if (it != props.mapping_properties.end()) {
+            std::visit([&] (auto& value) {
+                auto ext_ptr = func(value);
+                if (ext_ptr) {
+                    result.emplace(name, std::move(ext_ptr));
+                }
+            }, it->second);
+        }
+    }
+
+    return result;
 }
 
 }
