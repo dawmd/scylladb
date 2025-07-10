@@ -27,6 +27,7 @@
 #include "cql3/statements/index_prop_defs.hh"
 #include "index/secondary_index_manager.hh"
 #include "mutation/mutation.hh"
+#include "replica/database.hh"
 
 #include <stdexcept>
 
@@ -398,6 +399,13 @@ create_index_statement::prepare_schema_mutations(query_processor& qp, const quer
 
     if (res) {
         m = co_await service::prepare_column_family_update_announcement(qp.proxy(), std::move(res->schema), {}, ts);
+
+        const auto& replica_db = qp.proxy().local_db();
+        const auto& cf = replica_db.find_column_family(keyspace(), column_family());
+        auto view = cf.get_index_manager().create_view_for_index(res->index);
+
+        auto view_muts = co_await service::prepare_new_view_announcement(qp.proxy(), std::move(view), ts);
+        m.insert_range(m.end(), std::move(view_muts));
 
         ret = ::make_shared<event::schema_change>(
                 event::schema_change::change_type::UPDATED,
