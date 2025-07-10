@@ -74,6 +74,23 @@ create_index_statement::validate(query_processor& qp, const service::client_stat
     }
 
     _properties->idx_opts.validate();
+
+    auto schema_extensions = _properties->properties()->make_schema_extensions(qp.db().extensions());
+    _properties->validate(qp.db(), keyspace(), schema_extensions);
+
+    if (_properties->use_compact_storage()) {
+        throw exceptions::invalid_request_exception(format("Cannot use 'COMPACT STORAGE' when defining a materialized view"));
+    }
+
+    if (_properties->properties()->get_cdc_options(schema_extensions)) {
+        throw exceptions::invalid_request_exception("Cannot enable CDC for a materialized view");
+    }
+
+    if (!_properties->defined_ordering().empty()) {
+        throw exceptions::invalid_request_exception("TODO");
+    }
+
+    // if (!_properties->)
 }
 
 std::vector<::shared_ptr<index_target>> create_index_statement::validate_while_executing(data_dictionary::database db) const {

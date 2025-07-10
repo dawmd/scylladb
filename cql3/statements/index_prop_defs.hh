@@ -10,7 +10,7 @@
 
 #pragma once
 
-#include "property_definitions.hh"
+#include "cql3/statements/cf_properties.hh"
 #include <seastar/core/sstring.hh>
 
 #include <unordered_map>
@@ -31,7 +31,7 @@ struct index_specific_prop_defs : public property_definitions {
     index_options_map get_options();
 };
 
-class index_prop_defs : public property_definitions {
+class index_prop_defs : public cf_properties {
 public:
     index_specific_prop_defs idx_opts;
 

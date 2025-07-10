@@ -60,8 +60,8 @@ index_specific_prop_defs::get_options() {
 }
 
 void index_prop_defs::filter_options() {
-    if (has_property(KW_OPTIONS)) {
-        auto extracted_opt = remove_property(KW_OPTIONS);
+    if (_properties->has_property(KW_OPTIONS)) {
+        auto extracted_opt = _properties->remove_property(KW_OPTIONS);
         if (std::holds_alternative<sstring>(extracted_opt)) {
             idx_opts.add_property(KW_OPTIONS, std::move(std::get<sstring>(extracted_opt)));
         } else if (std::holds_alternative<typename property_definitions::map_type>(extracted_opt)) {
