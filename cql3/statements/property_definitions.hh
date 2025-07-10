@@ -71,6 +71,9 @@ public:
 
     static long to_long(sstring key, std::optional<sstring> value, long default_value);
 
+    // Precondition: property `name` is present in the map.
+    value_type remove_property(const sstring& name);
+
     size_t count() const {
         return _properties.size();
     }

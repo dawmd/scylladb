@@ -11,6 +11,7 @@
 #include <seastar/core/format.hh>
 #include "cql3/statements/property_definitions.hh"
 #include "exceptions/exceptions.hh"
+#include "utils/assert.hh"
 
 namespace cql3 {
 
@@ -168,6 +169,15 @@ void property_definitions::remove_from_map_if_exists(const sstring& name, const 
     } catch (const std::bad_variant_access& e) {
         throw exceptions::syntax_exception(format("Invalid value for property '{}'. It should be a map.", name));
     }
+}
+
+property_definitions::value_type property_definitions::remove_property(const sstring& name) {
+    auto it = _properties.find(name);
+    SCYLLA_ASSERT(it != _properties.end());
+
+    auto result = std::move(it->second);
+    _properties.erase(it);
+    return result;
 }
 
 }
