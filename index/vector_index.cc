@@ -17,7 +17,7 @@
 
 namespace secondary_index {
 
-void vector_index::validate(const schema &schema, cql3::statements::index_prop_defs &properties, const std::vector<::shared_ptr<cql3::statements::index_target>> &targets, const gms::feature_service& fs) {
+void vector_index::validate(const schema &schema, const std::vector<::shared_ptr<cql3::statements::index_target>> &targets, const gms::feature_service& fs) {
     if (targets.size() != 1) {
         throw exceptions::invalid_request_exception("Vector index can only be created on a single column");
     }

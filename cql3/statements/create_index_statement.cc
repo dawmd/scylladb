@@ -142,7 +142,7 @@ std::vector<::shared_ptr<index_target>> create_index_statement::validate_while_e
         if (!validator) {
             throw exceptions::invalid_request_exception(format("Non-supported custom class \'{}\' provided", *(_properties->custom_class)));
         }
-        (*validator)()->validate(*schema, *_properties, targets, db.features());
+        (*validator)()->validate(*schema, targets, db.features());
 
         for (auto option: _properties->get_raw_options()) {
             auto it = supported_options.find(option.first);
