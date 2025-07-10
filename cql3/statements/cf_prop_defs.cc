@@ -9,6 +9,7 @@
  */
 
 #include "cql3/statements/cf_prop_defs.hh"
+#include "compaction/compaction_strategy_type.hh"
 #include "cql3/statements/request_validations.hh"
 #include "data_dictionary/data_dictionary.hh"
 #include "db/extensions.hh"
@@ -24,8 +25,11 @@
 #include "db/tablet_options.hh"
 #include "utils/bloom_calculations.hh"
 #include "db/config.hh"
+#include "utils/from_chars_exactly.hh"
+#include "utils/fundamental_types.hh"
 
 #include <boost/algorithm/string/predicate.hpp>
+#include <variant>
 
 namespace cql3 {
 
@@ -415,6 +419,237 @@ std::optional<sstables::compaction_strategy_type> cf_prop_defs::get_compaction_s
         return sstables::compaction_strategy::type(strategy->second);
     }
     return std::nullopt;
+}
+
+// -------------------
+
+namespace {
+
+void validate_keywords_pdfs(const pdfs& props) {
+    static const std::flat_set<sstring> valid_value_keywords = {};
+    static const std::flat_map<sstring, std::flat_set<sstring>> valid_mapping_keywords = {
+        {cf_prop_defs::KW_COMMENT, {}},
+        {cf_prop_defs::KW_GCGRACESECONDS, {}},
+        {cf_prop_defs::KW_CACHING, {}},
+        {cf_prop_defs::KW_DEFAULT_TIME_TO_LIVE, {}},
+        {cf_prop_defs::KW_MIN_INDEX_INTERVAL, {}},
+        {cf_prop_defs::KW_MAX_INDEX_INTERVAL, {}},
+        {cf_prop_defs::KW_SPECULATIVE_RETRY, {}},
+        {cf_prop_defs::KW_BF_FP_CHANCE, {}},
+        {cf_prop_defs::KW_MEMTABLE_FLUSH_PERIOD, {}},
+        {cf_prop_defs::KW_COMPACTION, {}},
+        {cf_prop_defs::KW_COMPRESSION, {}},
+        {cf_prop_defs::KW_CRC_CHECK_CHANCE, {}},
+        {cf_prop_defs::KW_ID, {}},
+        {cf_prop_defs::KW_PAXOSGRACESECONDS, {}},
+        {cf_prop_defs::KW_SYNCHRONOUS_UPDATES, {}},
+        {cf_prop_defs::KW_TABLETS, {}},
+        // Obsolete keywords.
+        {"index_interval", {}},
+        {"replicate_on_write", {}},
+        {"populate_io_cache_on_flush", {}},
+        {"read_repair_chance", {}},
+        {"dclocal_read_repair_chance", {}},
+    };
+    static const std::flat_set<sstring> ignore_mapping_keywords = {};
+
+    // We need to include schema extensions here...
+
+    if (auto result = props.validate_value_keywords(valid_value_keywords); !result) {
+        throw std::runtime_error(std::format("Invalid value property: {}", std::string_view(result.error())));
+    }
+    if (auto result = props.validate_mapping_keywords(valid_mapping_keywords, ignore_mapping_keywords); !result) {
+        throw std::runtime_error(std::format("Invalid mapping keyword: {}", std::string_view(result.error())));
+    }
+}
+
+// BEGIN Validators of values.
+
+std::optional<caching_options> get_caching_options(const pdfs& props, const schema::extensions_map& exts) {
+    const auto it = props.mapping_properties.find(cf_prop_defs::KW_CACHING);
+    if (it == props.mapping_properties.end()) {
+        return std::nullopt;
+    }
+
+    const auto& value = it->second;
+    return std::visit(make_visitor(
+        [] (const property_definitions::map_type& map) {
+            return map.empty() ? std::nullopt : std::optional<caching_options>(caching_options::from_map(map));
+        },
+        [] (const sstring& str) {
+            return std::optional<caching_options>(caching_options::from_sstring(str));
+        }
+    ), value);
+}
+
+// FIXME: Does this one make even sense? It doesn't rely on props...
+// FIXME: The original function returns a pointer. Why?
+std::optional<cdc::options> get_cdc_options(const pdfs& props, const schema::extensions_map& exts) {
+    const auto it = exts.find(cdc::cdc_extension::NAME);
+    if (it == exts.end()) {
+        return std::nullopt;
+    }
+
+    auto ext = dynamic_pointer_cast<cdc::cdc_extension>(it->second);
+    return ext->get_options();
+}
+
+std::optional<sstables::compaction_strategy_type> get_compaction_strategy_class(const pdfs& props, const schema::extensions_map& exts) {
+    const auto it = props.mapping_properties.find(cf_prop_defs::KW_COMPACTION);
+    if (it == props.mapping_properties.end()) {
+        return std::nullopt;
+    }
+
+    // Validate the keywords...
+
+    const auto& map = std::get<typename pdfs::map_type>(it->second);
+    const auto class_it = map.find(cf_prop_defs::COMPACTION_STRATEGY_CLASS_KEY);
+    if (class_it == map.end()) {
+        return std::nullopt;
+    }
+
+    return sstables::compaction_strategy::type(class_it->second);
+}
+
+std::optional<std::flat_map<sstring, sstring>> get_compaction_type_options(const pdfs& props, const schema::extensions_map& exts) {
+    const auto it = props.mapping_properties.find(cf_prop_defs::KW_COMPACTION);
+    if (it == props.mapping_properties.end()) {
+        return std::nullopt;
+    }
+
+    // Validat the type...
+
+    const auto& value = std::get<typename pdfs::map_type>(it->second);
+    return value | std::ranges::to<std::flat_map<sstring, sstring>>();
+}
+
+int32_t get_default_ttl(const pdfs& props, const schema::extensions_map& exts) {
+    const auto it = props.mapping_properties.find(cf_prop_defs::KW_DEFAULT_TIME_TO_LIVE);
+    if (it == props.mapping_properties.end()) {
+        return 0;
+    }
+
+    // Validate the type...
+    const auto& value = std::get<sstring>(it->second);
+    // FIXME: No exceptions thrown?
+    return utils::from_chars_exactly<int32_t>(value, [] (auto&&) {});
+}
+
+auto get_gc_grace_seconds(const pdfs& props, const schema::extensions_map& exts) {
+    const auto it = props.mapping_properties.find(cf_prop_defs::KW_GCGRACESECONDS);
+    if (it == props.mapping_properties.end()) {
+        return 0;
+    }
+
+    // Validate the type...
+    const auto& value = std::get<sstring>(it->second);
+    // FIXME: No exceptions thrown?
+    return utils::from_chars_exactly<int32_t>(value, [] (auto&&) {});
+}
+
+std::optional<table_id> get_id(const pdfs& props, const schema::extensions_map& exts) {
+    const auto it = props.mapping_properties.find(cf_prop_defs::KW_ID);
+    if (it == props.mapping_properties.end()) {
+        return std::nullopt;
+    }
+
+    const auto& value = it->second;
+    if (!std::holds_alternative<sstring>(value)) {
+        throw 1; // TODO
+    }
+
+    return std::optional<table_id>(utils::UUID(std::get<sstring>(value)));
+}
+
+int32_t get_paxos_grace_seconds(const pdfs& props, const schema::extensions_map& exts) {
+    const auto it = props.mapping_properties.find(cf_prop_defs::KW_PAXOSGRACESECONDS);
+    if (it == props.mapping_properties.end()) {
+        return 0;
+    }
+
+    // Validate the type...
+    const auto& value = std::get<sstring>(it->second);
+    // FIXME: No exceptions thrown?
+    return utils::from_chars_exactly<int32_t>(value, [] (auto&&) {});
+}
+
+// FIXME: Does this one make even sense? It doesn't rely on props...
+// FIXME: The original function returns a pointer. Why?
+std::optional<db::per_partition_rate_limit_options> get_per_partition_rate_limit_options(const pdfs& props,
+        const schema::extensions_map& exts)
+{
+    const auto it = exts.find(db::per_partition_rate_limit_extension::NAME);
+    if (it == exts.end()) {
+        return std::nullopt;
+    }
+
+    auto ext = dynamic_pointer_cast<db::per_partition_rate_limit_extension>(it->second);
+    return ext->get_options();
+}
+
+std::optional<bool> get_synchronous_updates(const pdfs& props, const schema::extensions_map& exts) {
+    const auto it = props.mapping_properties.find(cf_prop_defs::KW_SYNCHRONOUS_UPDATES);
+    if (it == props.mapping_properties.end()) {
+        return std::nullopt;
+    }
+
+    // Validate the value type...
+
+    const auto& value = std::get<sstring>(it->second);
+    const auto result = utils::parse_bool(value);
+    if (!result.has_value()) {
+        throw 1; // FIXME
+    }
+    return result.value();
+}
+
+std::optional<db::tablet_options::map_type> get_tablet_options(const pdfs& props, const schema::extensions_map& exts) {
+    const auto it = props.mapping_properties.find(cf_prop_defs::KW_TABLETS);
+    if (it == props.mapping_properties.end()) {
+        return std::nullopt;
+    }
+
+    // Validate the value...
+
+    const auto& map = std::get<typename pdfs::map_type>(it->second);
+    return map | std::ranges::to<db::tablet_options::map_type>();
+}
+
+// FIXME: Does this one make even sense? It doesn't rely on props...
+// FIXME: The original function returns a pointer. Why?
+std::optional<tombstone_gc_options> get_tombstone_gc_options(const pdfs& props, const schema::extensions_map& exts) {
+    const auto it = exts.find(tombstone_gc_extension::NAME);
+    if (it == exts.end()) {
+        return std::nullopt;
+    }
+
+    auto ext = dynamic_pointer_cast<tombstone_gc_extension>(it->second);
+    return ext->get_options();
+}
+
+// END Validators of values.
+
+} // anonymous namespace
+
+cf_pdfs cf_pdfs::from_pdfs(const pdfs& props, const schema::extensions_map& exts) {
+    validate_keywords_pdfs(props);
+
+    cf_pdfs result{};
+
+    result.caching_options = get_caching_options(props, exts);
+    result.cdc_options = get_cdc_options(props, exts);
+    result.compaction_strategy_class = get_compaction_strategy_class(props, exts);
+    result.compaction_type_options = get_compaction_type_options(props, exts);
+    result.default_ttl = get_default_ttl(props, exts);
+    result.gc_grace_seconds = get_gc_grace_seconds(props, exts);
+    result.id = get_id(props, exts);
+    result.paxos_grace_seconds = get_paxos_grace_seconds(props, exts);
+    result.per_partition_rate_limit_options = get_per_partition_rate_limit_options(props, exts);
+    result.synchronous_updates = get_synchronous_updates(props, exts);
+    result.tablet_options = get_tablet_options(props, exts);
+    result.tombstone_gc_options = get_tombstone_gc_options(props, exts);
+
+    return result;
 }
 
 }

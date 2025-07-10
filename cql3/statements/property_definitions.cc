@@ -219,6 +219,8 @@ std::expected<void, sstring> pdfs::validate_mapping_keywords(
 schema::extensions_map make_schema_extensions(const pdfs& props, const db::extensions& exts) {
     schema::extensions_map result{};
 
+    // Is this validated in any way?
+
     for (const auto& [name, func] : exts.schema_extensions()) {
         auto it = props.mapping_properties.find(name);
         if (it != props.mapping_properties.end()) {

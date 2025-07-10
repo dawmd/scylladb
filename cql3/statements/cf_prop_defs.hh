@@ -10,8 +10,10 @@
 
 #pragma once
 
+#include "cdc/cdc_options.hh"
 #include "cql3/statements/property_definitions.hh"
  
+#include "db/per_partition_rate_limit_options.hh"
 #include "schema/schema_builder.hh"
 #include "compaction/compaction_strategy.hh"
 #include "utils/UUID.hh"
@@ -112,6 +114,23 @@ public:
 
     void apply_to_builder(schema_builder& builder, schema::extensions_map schema_extensions, const data_dictionary::database& db, sstring ks_name) const;
     void validate_minimum_int(const sstring& field, int32_t minimum_value, int32_t default_value) const;
+};
+
+struct cf_pdfs {
+    std::optional<caching_options> caching_options;
+    std::optional<cdc::options> cdc_options;
+    std::optional<sstables::compaction_strategy_type> compaction_strategy_class;
+    std::optional<std::flat_map<sstring, sstring>> compaction_type_options;
+    std::optional<int32_t> default_ttl;
+    std::optional<int32_t> gc_grace_seconds;
+    std::optional<table_id> id;
+    std::optional<int32_t> paxos_grace_seconds;
+    std::optional<db::per_partition_rate_limit_options> per_partition_rate_limit_options;
+    std::optional<bool> synchronous_updates;
+    std::optional<db::tablet_options::map_type> tablet_options;
+    std::optional<tombstone_gc_options> tombstone_gc_options;
+
+    static cf_pdfs from_pdfs(const pdfs&, const schema::extensions_map&);
 };
 
 }
