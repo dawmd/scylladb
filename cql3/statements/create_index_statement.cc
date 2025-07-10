@@ -75,6 +75,37 @@ create_index_statement::validate(query_processor& qp, const service::client_stat
     _properties->validate();
 }
 
+template <int MAX>
+static void validate_unsigned_option(const sstring& value) {
+    int num_value;
+    size_t len;
+    try {
+        num_value = std::stoi(value, &len);
+    } catch (...) {
+        throw exceptions::invalid_request_exception(format("Numeric option {} is not a valid number", value));
+    }
+    if (len != value.size()) {
+        throw exceptions::invalid_request_exception(format("Numeric option {} is not a valid number", value));
+    }
+
+    if (num_value < 0 || num_value > MAX) {
+        throw exceptions::invalid_request_exception(format("Numeric option {} out of valid range [0 - {}]", value, MAX));
+    }
+}
+
+static void validate_similarity_function(const sstring& value) {
+    if (value != "COSINE" && value != "EUCLIDEAN" && value != "DOT_PRODUCT") {
+        throw exceptions::invalid_request_exception(format("Unsupported similarity function: {}", value));
+    }
+}
+
+const static std::unordered_map<sstring, std::function<void(const sstring&)>> supported_options = {
+        {"similarity_function", validate_similarity_function},
+        {"maximum_node_connections", validate_unsigned_option<512>},
+        {"construction_beam_width", validate_unsigned_option<4096>},
+        {"search_beam_width", validate_unsigned_option<4096>},
+    };
+
 std::vector<::shared_ptr<index_target>> create_index_statement::validate_while_executing(data_dictionary::database db) const {
     auto schema = validation::validate_column_family(db, keyspace(), column_family());
 
@@ -112,6 +143,14 @@ std::vector<::shared_ptr<index_target>> create_index_statement::validate_while_e
             throw exceptions::invalid_request_exception(format("Non-supported custom class \'{}\' provided", *(_properties->custom_class)));
         }
         (*validator)()->validate(*schema, *_properties, targets, db.features());
+
+        for (auto option: _properties->get_raw_options()) {
+            auto it = supported_options.find(option.first);
+            if (it == supported_options.end()) {
+                throw exceptions::invalid_request_exception(format("Unsupported option {} for vector index", option.first));
+            }
+            it->second(option.second);
+        }
     }
 
     if (targets.size() > 1) {
