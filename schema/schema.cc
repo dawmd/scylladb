@@ -1028,6 +1028,8 @@ managed_string schema::get_create_statement(const schema_describe_helper& helper
 
             
             os << " WITH ";
+            // TO BE IMPLEMENTED. Get to db via helper.
+            index_properties(helper, os);
             // auto view_schema = helper.get_view_for_index(id());
             // view_schema->schema_properties(helper, os);
             schema_properties(helper, os);
