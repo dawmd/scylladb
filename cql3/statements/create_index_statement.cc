@@ -12,6 +12,7 @@
 #include "create_index_statement.hh"
 #include "exceptions/exceptions.hh"
 #include "prepared_statement.hh"
+#include "replica/database.hh"
 #include "types/types.hh"
 #include "validation.hh"
 #include "service/storage_proxy.hh"
@@ -394,10 +395,20 @@ create_index_statement::prepare_schema_mutations(query_processor& qp, const quer
     auto res = build_index_schema(qp.db());
 
     ::shared_ptr<event::schema_change> ret;
-    std::vector<mutation> m;
+    std::vector<mutation> muts;
 
     if (res) {
-        m = co_await service::prepare_column_family_update_announcement(qp.proxy(), std::move(res->schema), {}, ts);
+        const replica::database& db = qp.proxy().local_db();
+        const auto& cf = db.find_column_family(keyspace(), column_family());
+
+        // Produce statements to update schema tables with index-specific information.
+        muts = co_await service::prepare_column_family_update_announcement(qp.proxy(), std::move(res->schema), {}, ts);
+
+        // Produce the underlying view for the index.
+        view_ptr view = cf.get_index_manager().create_view_for_index(res->index);
+        std::vector<mutation> view_muts = co_await service::prepare_new_view_announcement(qp.proxy(), std::move(view), ts);
+
+        muts.insert_range(muts.end(), std::move(view_muts));
 
         ret = ::make_shared<event::schema_change>(
                 event::schema_change::change_type::UPDATED,
@@ -406,7 +417,7 @@ create_index_statement::prepare_schema_mutations(query_processor& qp, const quer
                 column_family());
     }
 
-    co_return std::make_tuple(std::move(ret), std::move(m), std::vector<sstring>());
+    co_return std::make_tuple(std::move(ret), std::move(muts), std::vector<sstring>());
 }
 
 std::unique_ptr<cql3::statements::prepared_statement>
