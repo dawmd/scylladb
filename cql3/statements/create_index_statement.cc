@@ -572,7 +572,7 @@ create_index_statement::prepare_schema_mutations(query_processor& qp, const quer
         muts = co_await service::prepare_column_family_update_announcement(qp.proxy(), std::move(res->schema), {}, ts);
 
         // Produce the underlying view for the index.
-        view_ptr view = cf.get_index_manager().create_view_for_index(res->index);
+        view_ptr view = create_view_for_index(cf.schema(), res->index);
         std::vector<mutation> view_muts = co_await service::prepare_new_view_announcement(qp.proxy(), std::move(view), ts);
 
         muts.insert_range(muts.end(), std::move(view_muts));
