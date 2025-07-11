@@ -18,6 +18,7 @@ options {
 @parser::includes {
 #include "cql3/statements/raw/parsed_statement.hh"
 #include "cql3/statements/raw/select_statement.hh"
+#include "cql3/statements/alter_index_statement.hh"
 #include "cql3/statements/alter_keyspace_statement.hh"
 #include "cql3/statements/alter_table_statement.hh"
 #include "cql3/statements/alter_view_statement.hh"
@@ -386,6 +387,7 @@ cqlStatement returns [std::unique_ptr<raw::parsed_statement> stmt]
     | st48=pruneMaterializedViewStatement  { $stmt = std::move(st48); }
     | st49=describeStatement           { $stmt = std::move(st49); }
     | st50=listEffectiveServiceLevelStatement { $stmt = std::move(st50); }
+    | st51=alterIndexStatement          { $stmt = std::move(st51); }
     ;
 
 /*
@@ -1075,6 +1077,19 @@ alterViewStatement returns [std::unique_ptr<alter_view_statement> expr]
     : K_ALTER K_MATERIALIZED K_VIEW cf=columnFamilyName K_WITH properties[props]
     {
         $expr = std::make_unique<alter_view_statement>(std::move(cf), std::move(props));
+    }
+    ;
+
+/**
+ * ALTER INDEX <CF> WITH <property> = <value>;
+ */
+alterIndexStatement returns [std::unique_ptr<alter_index_statement> expr]
+    @init {
+        auto props = cql3::statements::cf_prop_defs();
+    }
+    : K_ALTER K_INDEX cf=columnFamilyName K_WITH properties[props]
+    {
+        $expr = std::make_unique<alter_index_statement>(std::move(cf), std::move(props));
     }
     ;
 
