@@ -1026,6 +1026,11 @@ managed_string schema::get_create_statement(const schema_describe_helper& helper
                 os << " USING '" << *custom_index_class << "'";
             }
 
+            
+            os << " WITH ";
+            // auto view_schema = helper.get_view_for_index(id());
+            // view_schema->schema_properties(helper, os);
+            schema_properties(helper, os);
             os << ";\n";
 
             return std::move(os).to_managed_string();

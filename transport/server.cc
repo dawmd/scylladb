@@ -608,7 +608,7 @@ future<foreign_ptr<std::unique_ptr<cql_server::response>>>
                 }
                 return utils::result_into_future<result_with_foreign_response_ptr>(make_error(stream, exceptions::exception_code::SERVER_ERROR, msg, trace_state));
             } else {
-                clogger.debug("{}: request resulted in unknown error, stream {}",
+                clogger.info("{}: request resulted in unknown error, stream {}",
                     _client_state.get_remote_address(), stream);
                 try { ++_server._stats.errors[exceptions::exception_code::SERVER_ERROR]; } catch(...) {}
                 return utils::result_into_future<result_with_foreign_response_ptr>(make_error(stream, exceptions::exception_code::SERVER_ERROR, "unknown error", trace_state));

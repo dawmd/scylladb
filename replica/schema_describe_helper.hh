@@ -36,6 +36,16 @@ public:
     virtual schema_ptr find_schema(const table_id& id) const override {
         return _db.find_schema(id);
     }
+
+    virtual schema_ptr get_view_for_index(table_id id) const override {
+        auto idx_schema = find_schema(id);
+        sstring view_name = secondary_index::index_table_name(idx_schema->cf_name());
+        std::optional<data_dictionary::table> maybe_table = _db.try_find_table(idx_schema->ks_name(), view_name);
+        if (!maybe_table) {
+            throw std::runtime_error(seastar::format("TODO 1: {}, {}, {}, {}", id.to_sstring(), idx_schema->ks_name(), idx_schema->cf_name(), std::string_view(view_name))); // TODO
+        }
+        return maybe_table->schema();
+    }
 };
 
 } // namespace data_dictionary
