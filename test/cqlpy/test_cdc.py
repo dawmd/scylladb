@@ -116,3 +116,25 @@ def test_cdc_taken_log_name(scylla_only, cql, test_keyspace):
             cql.execute(f"DROP TABLE {name}")
     finally:
         cql.execute(f"DROP TABLE {name}_scylla_cdc_log")
+
+@pytest.mark.parametrize("test_keyspace",
+                         [pytest.param("tablets", marks=[pytest.mark.xfail(reason="issue #16317")]), "vnodes"],
+                         indirect=True)
+def test_cdc_possible_data_loss_demo(cql, test_keyspace, scylla_only):
+    with new_test_table(cql, test_keyspace, "p int, v int, u int, PRIMARY KEY (p, v)", "WITH cdc = {'enabled': true}") as table:
+        log_table = f"{table}_scylla_cdc_log"
+
+        cql.execute(f"INSERT INTO {table} (p, v, u) VALUES (1, 2, 3)")
+
+        result = cql.execute(f"SELECT * FROM {table} WHERE v = 2 ALLOW FILTERING").all()
+        assert len(result) > 0
+        result = cql.execute(f"SELECT * FROM {log_table} WHERE v = 2 ALLOW FILTERING").all()
+        assert len(result) > 0
+
+        cql.execute(f"ALTER TABLE {table} RENAME v to v2")
+
+        result = cql.execute(f"SELECT * FROM {table} WHERE v2 = 2 ALLOW FILTERING").all()
+        assert len(result) > 0
+        result = cql.execute(f"SELECT * FROM {log_table} WHERE v2 = 2 ALLOW FILTERING").all()
+        # This fails! The row has a `null` there instead of `2`.
+        assert len(result) > 0
