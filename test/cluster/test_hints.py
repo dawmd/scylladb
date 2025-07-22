@@ -321,3 +321,17 @@ async def test_canceling_hint_draining(manager: ManagerClient):
     # Make sure draining finishes successfully.
     assert await_sync_point(s1, sync_point, 60)
     await s1_log.wait_for(f"Removed hint directory for {host_id2}")
+
+
+@pytest.mark.asyncio
+async def test_debug_hints(manager: ManagerClient):
+    s1, _, _ = await manager.servers_add(3, auto_rack_dc="dc1")
+    cql = manager.get_cql()
+
+    await cql.run_async(f"CREATE KEYSPACE ks WITH replication = {{'class': 'NetworkTopologyStrategy', 'dc1': 3}} AND tablets = {{'enabled': false}}")
+    await cql.run_async("CREATE TABLE ks.t (p int PRIMARY KEY, v int)")
+
+    tasks = [cql.run_async(f"INSERT INTO ks.t (p, v) VALUES ({i}, {i + 1})") for i in range(250_000)]
+    await asyncio.gather(*tasks)
+
+    await manager.server_stop_gracefully(s1.server_id)
