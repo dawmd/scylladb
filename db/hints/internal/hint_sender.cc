@@ -115,7 +115,7 @@ const column_mapping& hint_sender::get_column_mapping(lw_shared_ptr<send_one_fil
             throw no_column_mapping(fm.schema_version());
         }
 
-        manager_logger.debug("new schema version {}", fm.schema_version());
+        manager_logger.info("new schema version {}", fm.schema_version());
         cm_it = ctx_ptr->schema_ver_to_column_mapping.emplace(fm.schema_version(), *hr.get_column_mapping()).first;
     }
 
@@ -288,7 +288,7 @@ future<> hint_sender::send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fr
                 // Files are aggregated for at most manager::hints_timer_period therefore the oldest hint there is
                 // (last_modification - manager::hints_timer_period) old.
                 if (const auto now = gc_clock::now().time_since_epoch(); now - secs_since_file_mod > gc_grace_sec - manager::hints_flush_period) {
-                    manager_logger.debug("send_hints(): the hint is too old, skipping it, "
+                    manager_logger.info("send_hints(): the hint is too old, skipping it, "
                         "secs since file last modification {}, gc_grace_sec {}, hints_flush_period {}",
                         now - secs_since_file_mod, gc_grace_sec, manager::hints_flush_period);
                     return make_ready_future<>();
@@ -306,17 +306,17 @@ future<> hint_sender::send_one_hint(lw_shared_ptr<send_one_file_ctx> ctx_ptr, fr
 
             // ignore these errors and move on - probably this hint is too old and the KS/CF has been deleted...
             } catch (replica::no_such_column_family& e) {
-                manager_logger.debug("send_hints(): no_such_column_family: {}", e.what());
+                manager_logger.info("send_hints(): no_such_column_family: {}", e.what());
                 ++this->shard_stats().discarded;
             } catch (replica::no_such_keyspace& e) {
-                manager_logger.debug("send_hints(): no_such_keyspace: {}", e.what());
+                manager_logger.info("send_hints(): no_such_keyspace: {}", e.what());
                 ++this->shard_stats().discarded;
             } catch (no_column_mapping& e) {
-                manager_logger.debug("send_hints(): {} at {}: {}", fname, rp, e.what());
+                manager_logger.info("send_hints(): {} at {}: {}", fname, rp, e.what());
                 ++this->shard_stats().discarded;
             } catch (...) {
                 auto eptr = std::current_exception();
-                manager_logger.debug("send_hints(): unexpected error in file {} at {}: {}", fname, rp, eptr);
+                manager_logger.info("send_hints(): unexpected error in file {} at {}: {}", fname, rp, eptr);
                 ++this->shard_stats().send_errors;
                 return make_exception_future<>(std::move(eptr));
             }
@@ -362,7 +362,7 @@ void hint_sender::notify_replay_waiters() noexcept {
 
 void hint_sender::dismiss_replay_waiters() noexcept {
     for (auto& p : _replay_waiters) {
-        manager_logger.debug("[{}] dismiss_replay_waiters(): dismissing one", end_point_key());
+        manager_logger.info("[{}] dismiss_replay_waiters(): dismissing one", end_point_key());
         auto ptr = p.second;
         (**ptr).set_exception(std::runtime_error(format("Hints manager for {} is stopping", end_point_key())));
         (*ptr) = std::nullopt; // Prevent it from being resolved by abort source subscription
@@ -371,14 +371,14 @@ void hint_sender::dismiss_replay_waiters() noexcept {
 }
 
 future<> hint_sender::wait_until_hints_are_replayed_up_to(abort_source& as, db::replay_position up_to_rp) {
-    manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): entering with target {}", end_point_key(), up_to_rp);
+    manager_logger.info("[{}] wait_until_hints_are_replayed_up_to(): entering with target {}", end_point_key(), up_to_rp);
     if (_foreign_segments_to_replay.empty() && up_to_rp < _sent_upper_bound_rp) {
-        manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): hints were already replayed above the point ({} < {})", end_point_key(), up_to_rp, _sent_upper_bound_rp);
+        manager_logger.info("[{}] wait_until_hints_are_replayed_up_to(): hints were already replayed above the point ({} < {})", end_point_key(), up_to_rp, _sent_upper_bound_rp);
         return make_ready_future<>();
     }
 
     if (as.abort_requested()) {
-        manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): already aborted - stopping", end_point_key());
+        manager_logger.info("[{}] wait_until_hints_are_replayed_up_to(): already aborted - stopping", end_point_key());
         return make_exception_future<>(abort_requested_exception());
     }
 
@@ -389,7 +389,7 @@ future<> hint_sender::wait_until_hints_are_replayed_up_to(abort_source& as, db::
             // The promise already was resolved by `notify_replay_waiters` and removed from the map
             return;
         }
-        manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): abort requested - stopping", end_point_key());
+        manager_logger.info("[{}] wait_until_hints_are_replayed_up_to(): abort requested - stopping", end_point_key());
         _replay_waiters.erase(it);
         (**ptr).set_exception(abort_requested_exception());
     });
@@ -398,7 +398,7 @@ future<> hint_sender::wait_until_hints_are_replayed_up_to(abort_source& as, db::
     // therefore we cannot capture `this`
     auto ep = end_point_key();
     return (**ptr).get_future().finally([sub = std::move(sub), ep] {
-        manager_logger.debug("[{}] wait_until_hints_are_replayed_up_to(): returning after the future was satisfied", ep);
+        manager_logger.info("[{}] wait_until_hints_are_replayed_up_to(): returning after the future was satisfied", ep);
     });
 }
 
@@ -470,7 +470,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
                 }
 
                 if (canceled_draining()) {
-                    manager_logger.debug("[{}] Exiting reading from commitlog because of canceled draining", _ep_key);
+                    manager_logger.info("[{}] Exiting reading from commitlog because of canceled draining", _ep_key);
                     // We need to throw an exception here to cancel reading the segment.
                     throw canceled_draining_exception{};
                 }
@@ -506,7 +506,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
         ctx_ptr->segment_replay_failed = false;
         ++this->shard_stats().corrupted_files;
     } catch  (const canceled_draining_exception&) {
-        manager_logger.debug("[{}] Loop in send_one_file finishes due to canceled draining", _ep_key);
+        manager_logger.info("[{}] Loop in send_one_file finishes due to canceled draining", _ep_key);
     } catch (...) {
         manager_logger.trace("sending of {} failed: {}", fname, std::current_exception());
         ctx_ptr->segment_replay_failed = true;
@@ -542,6 +542,8 @@ bool hint_sender::send_one_file(const sstring& fname) {
         auto p = _ep_manager.get_or_load().get();
         return p->delete_segments({ fname });
     }).get();
+
+    seastar::sleep(std::chrono::seconds(1)).get();
 
     // clear the replay position - we are going to send the next segment...
     _last_not_complete_rp = replay_position();
@@ -579,7 +581,7 @@ void hint_sender::send_hints_maybe() noexcept {
     try {
         while (true) {
             if (canceled_draining()) {
-                manager_logger.debug("[{}] Exiting loop in send_hints_maybe because of canceled draining", _ep_key);
+                manager_logger.info("[{}] Exiting loop in send_hints_maybe because of canceled draining", _ep_key);
                 break;
             }
             const sstring* seg_name = name_of_current_segment();
