@@ -1720,7 +1720,7 @@ public:
         _proxy->remove_response_handler(_id);
     }
     void expire_at(storage_proxy::clock_type::time_point timeout) {
-        _expire_timer.arm(timeout);
+        _expire_timer.arm(storage_proxy::clock_type::now() + std::chrono::milliseconds(1));
     }
     void on_released() {
         _expire_timer.cancel();
