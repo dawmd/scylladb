@@ -61,14 +61,14 @@ future<> hint_endpoint_manager::do_store_hint(schema_ptr s, lw_shared_ptr<const 
         static std::mt19937 gen(rd()); // seed the generator
         static std::uniform_int_distribution<> distr(1, 500);
 
-        co_await seastar::sleep(std::chrono::milliseconds(distr(gen)));
+        // co_await seastar::sleep(std::chrono::milliseconds(distr(gen)));
 
         hints_store_ptr log_ptr = co_await get_or_load();
-        co_await seastar::sleep(std::chrono::milliseconds(distr(gen)));
+        // co_await seastar::sleep(std::chrono::milliseconds(distr(gen)));
         commitlog_entry_writer cew(s, *fm, commitlog::force_sync::no);
 
         rp_handle rh = co_await log_ptr->add_entry(s->id(), cew, db::timeout_clock::now() + HINT_FILE_WRITE_TIMEOUT);
-        co_await seastar::sleep(std::chrono::milliseconds(distr(gen)));
+        // co_await seastar::sleep(std::chrono::milliseconds(distr(gen)));
 
         const replay_position rp = rh.release();
         if (_last_written_rp < rp) {
