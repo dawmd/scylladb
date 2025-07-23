@@ -154,6 +154,10 @@ hint_sender::~hint_sender() {
 
 
 future<> hint_sender::stop(drain should_drain) noexcept {
+    if (stopping()) {
+        on_internal_error(manager_logger, "stop has been called twice");
+    }
+
     return seastar::async([this, should_drain] {
         set_stopping();
         _stop_as.request_abort();
@@ -543,11 +547,11 @@ bool hint_sender::send_one_file(const sstring& fname) {
         return p->delete_segments({ fname });
     }).get();
 
-    static std::random_device rd; // obtain a random number from hardware
-    static std::mt19937 gen(rd()); // seed the generator
-    static std::uniform_int_distribution<> distr(1, 1000);
+    // static std::random_device rd; // obtain a random number from hardware
+    // static std::mt19937 gen(rd()); // seed the generator
+    // static std::uniform_int_distribution<> distr(1, 100);
 
-    seastar::sleep(std::chrono::milliseconds(distr(gen))).get();
+    // seastar::sleep(std::chrono::milliseconds(distr(gen))).get();
 
     // clear the replay position - we are going to send the next segment...
     _last_not_complete_rp = replay_position();

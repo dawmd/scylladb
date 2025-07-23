@@ -3549,7 +3549,7 @@ void storage_proxy::register_cdc_operation_result_tracker(const storage_proxy::u
 void
 storage_proxy::hint_to_dead_endpoints(response_id_type id, db::consistency_level cl) {
     auto& h = *get_write_response_handler(id);
-    size_t hints = hint_to_dead_endpoints(h._mutation_holder, h.get_targets(), h._effective_replication_map_ptr,
+    size_t hints = hint_to_dead_endpoints(h._mutation_holder, h.get_dead_endpoints(), h._effective_replication_map_ptr,
             h._type, h.get_trace_state());
 
     if (cl == db::consistency_level::ANY) {

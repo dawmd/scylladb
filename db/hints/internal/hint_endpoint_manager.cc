@@ -57,10 +57,18 @@ future<> hint_endpoint_manager::do_store_hint(schema_ptr s, lw_shared_ptr<const 
     try {
         const auto shared_lock = co_await get_shared_lock(file_update_mutex());
 
+        static std::random_device rd; // obtain a random number from hardware
+        static std::mt19937 gen(rd()); // seed the generator
+        static std::uniform_int_distribution<> distr(1, 500);
+
+        co_await seastar::sleep(std::chrono::milliseconds(distr(gen)));
+
         hints_store_ptr log_ptr = co_await get_or_load();
+        co_await seastar::sleep(std::chrono::milliseconds(distr(gen)));
         commitlog_entry_writer cew(s, *fm, commitlog::force_sync::no);
 
         rp_handle rh = co_await log_ptr->add_entry(s->id(), cew, db::timeout_clock::now() + HINT_FILE_WRITE_TIMEOUT);
+        co_await seastar::sleep(std::chrono::milliseconds(distr(gen)));
 
         const replay_position rp = rh.release();
         if (_last_written_rp < rp) {
@@ -115,8 +123,8 @@ void hint_endpoint_manager::start() {
 }
 
 future<> hint_endpoint_manager::stop(drain should_drain) noexcept {
-    if(stopped()) {
-        return make_exception_future<>(std::logic_error(format("ep_manager[{}]: stop() is called twice", _key).c_str()));
+    if (stopping() || stopped()) {
+        on_internal_error(manager_logger, seastar::format("stop has been called twice for {}", _key));
     }
 
     return seastar::async([this, should_drain] {
