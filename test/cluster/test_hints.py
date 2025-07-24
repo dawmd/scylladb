@@ -325,13 +325,36 @@ async def test_canceling_hint_draining(manager: ManagerClient):
 
 @pytest.mark.asyncio
 async def test_debug_hints(manager: ManagerClient):
-    s1, _, _ = await manager.servers_add(3, auto_rack_dc="dc1")
+    cfg = {"hinted_handoff_enabled": True}
+    cmdline = [] # ["--logger-log-level", "hints_manager=trace"]
+    s1, s2 = await manager.servers_add(2, config=cfg, cmdline=cmdline, auto_rack_dc="dc1")
     cql = manager.get_cql()
 
-    await cql.run_async(f"CREATE KEYSPACE ks WITH replication = {{'class': 'NetworkTopologyStrategy', 'dc1': 3}} AND tablets = {{'enabled': false}}")
+    await cql.run_async(f"CREATE KEYSPACE ks WITH replication = {{'class': 'NetworkTopologyStrategy', 'dc1': 2}} AND tablets = {{'enabled': false}}")
     await cql.run_async("CREATE TABLE ks.t (p int PRIMARY KEY, v int)")
 
-    tasks = [cql.run_async(f"INSERT INTO ks.t (p, v) VALUES ({i}, {i + 1})") for i in range(250_000)]
+    await manager.server_stop_gracefully(s2.server_id)
+    cql, _ = await manager.get_ready_cql([s1])
+
+    stmt = cql.prepare(f"INSERT INTO ks.t (p, v) VALUES (?, ?)")
+    stmt.consistency_level = ConsistencyLevel.ANY
+
+    tasks = [cql.run_async(stmt, [i, 2 * i + 1]) for i in range(50_000)]
     await asyncio.gather(*tasks)
 
-    await manager.server_stop_gracefully(s1.server_id)
+    async with inject_error(manager.api, s1.ip_addr, "hinted_handoff_pause_hint_replay"):
+        await manager.server_start(s2.server_id)
+
+    shutdowns = [manager.server_stop(s1.server_id), manager.server_stop(s2.server_id)]
+    await asyncio.gather(*shutdowns)
+
+    log1 = await manager.server_open_log(s1.server_id)
+    log2 = await manager.server_open_log(s2.server_id)
+
+    pattern = re.compile(r"ERROR.*hints_manager")
+
+    errs1 = await log1.grep(pattern)
+    errs2 = await log2.grep(pattern)
+
+    assert len(errs1) == 0
+    assert len(errs2) == 0

@@ -73,7 +73,7 @@ future<> hint_endpoint_manager::do_store_hint(schema_ptr s, lw_shared_ptr<const 
         const replay_position rp = rh.release();
         if (_last_written_rp < rp) {
             _last_written_rp = rp;
-            manager_logger.info("[{}] Updated last written replay position to {}", end_point_key(), rp);
+            manager_logger.trace("[{}] Updated last written replay position to {}", end_point_key(), rp);
         }
 
         ++shard_stats().written;
