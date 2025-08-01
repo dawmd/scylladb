@@ -32,6 +32,7 @@
 #include "cql3/query_processor.hh"
 #include "service/storage_service.hh"
 #include "service/topology_state_machine.hh"
+#include "utils/error_injection.hh"
 #include "utils/sorting.hh"
 #include <seastar/core/reactor.hh>
 #include "utils/managed_string.hh"
@@ -304,6 +305,11 @@ future<> service_level_controller::update_service_levels_cache(qos::query_contex
 
 future<> service_level_controller::update_effective_service_levels_cache() {
     SCYLLA_ASSERT(this_shard_id() == global_controller);
+    // Part of a reproducer of scylladb/scylladb#24792.
+    // Step 1. of the plan described in the issue and in `main.cc`.
+    // https://github.com/scylladb/scylladb/issues/24792#issuecomment-3146021819
+    co_await utils::get_local_injector().inject("suspend_update_effective_service_levels_cache_at_beginning",
+            utils::wait_for_message(5min));
 
     // This is a place where it's okay to access `_auth_service` directly.
     // We're not using the underlying `auth::service` here.
@@ -312,6 +318,13 @@ future<> service_level_controller::update_effective_service_levels_cache() {
         // might be not initialized yet.
         co_return;
     }
+
+    // Part of a reproducer of scylladb/scylladb#24792.
+    // Steps 3. and 4. of the plan described in the issue and in `main.cc`.
+    // https://github.com/scylladb/scylladb/issues/24792#issuecomment-3146021819
+    utils::get_local_injector().receive_message("suspend_auth_service_stop");
+    co_await utils::get_local_injector().inject("suspend_update_effective_service_levels_cache_accessing_auth_service",
+            utils::wait_for_message(5min));
 
     std::optional<auth_service_getter> maybe_auth_service = co_await get_auth_service();
     if (!maybe_auth_service.has_value()) {
