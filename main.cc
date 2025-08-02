@@ -2322,6 +2322,8 @@ sharded<locator::shared_token_metadata> token_metadata;
                 if (utils::get_local_injector().enter("reload_sl_cache_after_stopping_auth_service")) {
                     // Prevent `service_level_controller::update_effective_service_levels_cache` from any progress.
                     utils::get_local_injector().enable("suspend_update_effective_service_levels_cache_accessing_auth_service");
+                    // Prevent `auth::service::stop` from progressing.
+                    utils::get_local_injector().enable("suspend_auth_service_stop");
 
                     // Step 1. Trigger cache reload.
                     future<> tmp = sl_controller.local().update_effective_service_levels_cache();

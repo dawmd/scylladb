@@ -314,13 +314,6 @@ future<> service_level_controller::update_effective_service_levels_cache() {
         co_return;
     }
 
-    // Part of a reproducer of scylladb/scylladb#24792.
-    // Steps 3. and 4. of the plan described in the issue and in `main.cc`.
-    // https://github.com/scylladb/scylladb/issues/24792#issuecomment-3146021819
-    utils::get_local_injector().receive_message("suspend_auth_service_stop");
-    co_await utils::get_local_injector().inject("suspend_update_effective_service_levels_cache_accessing_auth_service",
-            utils::wait_for_message(5min));
-
     std::optional<auth_service_getter> maybe_auth_service = co_await get_auth_service();
     if (!maybe_auth_service.has_value()) {
         // Do not update the cache: `auth::service` has been stopped, which means that
@@ -331,6 +324,13 @@ future<> service_level_controller::update_effective_service_levels_cache() {
     }
 
     auto& [auth_service, _] = *maybe_auth_service;
+
+    // Part of a reproducer of scylladb/scylladb#24792.
+    // Steps 3. and 4. of the plan described in the issue and in `main.cc`.
+    // https://github.com/scylladb/scylladb/issues/24792#issuecomment-3146021819
+    utils::get_local_injector().receive_message("suspend_auth_service_stop");
+    co_await utils::get_local_injector().inject("suspend_update_effective_service_levels_cache_accessing_auth_service",
+            utils::wait_for_message(5min));
 
     auto units = co_await get_units(_global_controller_db->notifications_serializer, 1);
 
@@ -1087,6 +1087,7 @@ get_service_level_distributed_data_accessor_for_current_version(
 }
 
 future<std::optional<service_level_controller::auth_service_getter>> service_level_controller::get_auth_service() {
+    co_return auth_service_getter{_auth_service.local(), seastar::gate::holder{}};
     SCYLLA_ASSERT(_auth_service.local_is_initialized());
     auto& auth_service = _auth_service.local();
 
