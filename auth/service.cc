@@ -265,7 +265,6 @@ future<> service::stop() {
     // Part of a reproducer of scylladb/scylladb#24792.
     // Step 2. of the plan described in the issue and in `main.cc`.
     // https://github.com/scylladb/scylladb/issues/24792#issuecomment-3146021819
-    utils::get_local_injector().receive_message("suspend_update_effective_service_levels_cache_at_beginning");
     co_await utils::get_local_injector().inject("suspend_auth_service_stop", utils::wait_for_message(5min));
 
     co_await _access_gate.close();

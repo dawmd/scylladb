@@ -2278,9 +2278,8 @@ sharded<locator::shared_token_metadata> token_metadata;
             // only triggers the injection `reload_sl_cache_after_stopping_auth_service`;
             // the other ones:
             //
-            // * `suspend_update_effective_service_levels_cache_at_beginning`,
-            // * `suspend_auth_service_stop`,
             // * `suspend_update_effective_service_levels_cache_accessing_auth_service`,
+            // * `suspend_auth_service_stop`,
             //
             // are called by the code.
             //
@@ -2302,8 +2301,7 @@ sharded<locator::shared_token_metadata> token_metadata;
             // ----------------------------------
             // Actual plan (what IS implemented):
             // ----------------------------------
-            // Step 1. Trigger effective service levels cache update. Get stuck at the very beginning
-            //         of it.
+            // Step 1. Trigger effective service levels cache update.
             // Step 2. Trigger `auth::service::stop`. Get stuck at the very beginning of it.
             // Step 3. Resume the pending effective service levels cache update. Get stuck again,
             //         but this time right after passing through a check that validates that
@@ -2323,7 +2321,7 @@ sharded<locator::shared_token_metadata> token_metadata;
             auto trigger_additional_effective_service_levels_cache_update = defer([&maybe_update_effective_service_levels_cache] {
                 if (utils::get_local_injector().enter("reload_sl_cache_after_stopping_auth_service")) {
                     // Prevent `service_level_controller::update_effective_service_levels_cache` from any progress.
-                    utils::get_local_injector().enable("suspend_update_effective_service_levels_cache_at_beginning");
+                    utils::get_local_injector().enable("suspend_update_effective_service_levels_cache_accessing_auth_service");
 
                     // Step 1. Trigger cache reload.
                     future<> tmp = sl_controller.local().update_effective_service_levels_cache();
