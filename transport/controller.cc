@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
+#include "service/qos/cache.hh"
 #include "utils/assert.hh"
 #include <grp.h>
 #include "transport/controller.hh"
@@ -29,7 +30,8 @@ static logging::logger logger("cql_server_controller");
 
 controller::controller(sharded<auth::service>& auth, sharded<service::migration_notifier>& mn,
         sharded<gms::gossiper>& gossiper, sharded<cql3::query_processor>& qp, sharded<service::memory_limiter>& ml,
-        sharded<qos::service_level_controller>& sl_controller, sharded<service::endpoint_lifecycle_notifier>& elc_notif,
+        sharded<qos::service_level_controller>& sl_controller, sharded<qos::effective_service_level_controller> esl_controller,
+        sharded<service::endpoint_lifecycle_notifier>& elc_notif,
         const db::config& cfg, scheduling_group_key cql_opcode_stats_key, maintenance_socket_enabled used_by_maintenance_socket,
         seastar::scheduling_group sg)
     : protocol_server(sg)
@@ -42,6 +44,7 @@ controller::controller(sharded<auth::service>& auth, sharded<service::migration_
     , _qp(qp)
     , _mem_limiter(ml)
     , _sl_controller(sl_controller)
+    , _esl_controller(esl_controller)
     , _config(cfg)
     , _cql_opcode_stats_key(cql_opcode_stats_key)
     , _used_by_maintenance_socket(used_by_maintenance_socket)
@@ -334,6 +337,7 @@ future<> controller::subscribe_server(sharded<cql_server>& server) {
         _lifecycle_notifier.local().register_subscriber(server.get_lifecycle_listener());
         if (!_used_by_maintenance_socket) {
             _sl_controller.local().register_subscriber(server.get_qos_configuration_listener());
+            _esl_controller.local().register_subscriber(server.get_qos_configuration_listener());
         }
         co_return;
     });

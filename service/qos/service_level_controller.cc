@@ -301,82 +301,6 @@ future<> service_level_controller::update_service_levels_cache(qos::query_contex
     });
 }
 
-future<> service_level_controller::update_effective_service_levels_cache() {
-    SCYLLA_ASSERT(this_shard_id() == global_controller);
-    
-    if (!_auth_service.local_is_initialized()) {
-        // Auth service might be not initialized yet.
-        co_return;
-    }
-    if (!_sl_data_accessor || !_sl_data_accessor->can_use_effective_service_level_cache()) {
-        // Don't populate the effective service level cache until auth is migrated to raft.
-        // Otherwise, executing the code that follows would read roles data
-        // from system_auth tables; that would be bad because reading from
-        // those tables is prone to timeouts, and `update_effective_service_levels_cache`
-        // is called from the group0 context - a timeout like that would render
-        // group0 non-functional on the node until restart.
-        //
-        // See scylladb/scylladb#24963 for more details.
-        co_return;
-    }
-    auto units = co_await get_units(_global_controller_db->notifications_serializer, 1);
-
-    auto& role_manager = _auth_service.local().underlying_role_manager();
-    const auto all_roles = co_await role_manager.query_all();
-    const auto hierarchy = co_await role_manager.query_all_directly_granted();
-    // includes only roles with attached service level
-    const auto attributes = co_await role_manager.query_attribute_for_all("service_level");
-
-    std::map<sstring, service_level_options> effective_sl_map;
-
-    auto sorted = co_await utils::topological_sort(all_roles, hierarchy);
-    // Roles are sorted from the top of the hierarchy to the bottom. 
-    /// `GRANT role1 TO role2` means role2 is higher in the hierarchy than role1, so role2 will be before
-    // role1 in `sorted` vector.
-    // That's why if we iterate over the vector in reversed order, we will visit the roles from the bottom
-    // and we can use already calculated effective service levels for all of the subroles.
-    for (auto& role: sorted | std::views::reverse) {
-        std::optional<service_level_options> sl_options;
-
-        if (auto sl_name_it = attributes.find(role); sl_name_it != attributes.end()) {
-            if (auto sl_it = _service_levels_db.find(sl_name_it->second); sl_it != _service_levels_db.end()) { 
-                sl_options = sl_it->second.slo;
-                sl_options->init_effective_names(sl_name_it->second);
-                sl_options->shares_name = sl_name_it->second;
-            } else if (_effectively_dropped_sls.contains(sl_name_it->second)) {
-                // service level might be effective dropped, then it's not present in `_service_levels_db`
-                sl_logger.warn("Service level {} is effectively dropped and its values are ignored.", sl_name_it->second);
-            } else {
-                sl_logger.error("Couldn't find service level {} in first level cache", sl_name_it->second);
-            }
-        }
-
-        auto [it, it_end] = hierarchy.equal_range(role);
-        while (it != it_end) {
-            auto& subrole = it->second;
-            if (auto sub_sl_it = effective_sl_map.find(subrole); sub_sl_it != effective_sl_map.end()) {
-                if (sl_options) {
-                    sl_options = sl_options->merge_with(sub_sl_it->second);
-                } else {
-                    sl_options = sub_sl_it->second;
-                }
-            }
-
-            ++it;
-        }
-
-        if (sl_options) {
-            effective_sl_map.insert({role, *sl_options});
-        }
-        co_await coroutine::maybe_yield();
-    }
-
-    co_await container().invoke_on_all([effective_sl_map] (service_level_controller& sl_controller) -> future<> {
-        sl_controller._effective_service_levels_db = std::move(effective_sl_map);
-        co_await sl_controller.notify_effective_service_levels_cache_reloaded();
-    });
-}
-
 future<> service_level_controller::update_cache(update_both_cache_levels update_both_cache_levels, qos::query_context ctx) {
     SCYLLA_ASSERT(this_shard_id() == global_controller);
     if (update_both_cache_levels) {
@@ -563,12 +487,6 @@ std::optional<sstring> service_level_controller::get_active_service_level() {
     } else {
         return std::nullopt;
     }
-}
-
-future<> service_level_controller::notify_effective_service_levels_cache_reloaded() {
-    co_await _subscribers.for_each([] (qos_configuration_change_subscriber* subscriber) -> future<> {
-        return subscriber->on_effective_service_levels_cache_reloaded();
-    });
 }
 
 void service_level_controller::maybe_start_legacy_update_from_distributed_data(std::function<steady_clock_type::duration()> interval_f, service::storage_service& storage_service, service::raft_group0_client& group0_client) {

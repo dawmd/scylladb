@@ -15,6 +15,7 @@
 
 #include "protocol_server.hh"
 #include "service/maintenance_mode.hh"
+#include "service/qos/cache.hh"
 
 using namespace seastar;
 
@@ -48,6 +49,7 @@ class controller : public protocol_server {
     sharded<cql3::query_processor>& _qp;
     sharded<service::memory_limiter>& _mem_limiter;
     sharded<qos::service_level_controller>& _sl_controller;
+    sharded<qos::effective_service_level_controller>& _esl_controller;
     const db::config& _config;
     scheduling_group_key _cql_opcode_stats_key;
 
@@ -67,7 +69,7 @@ class controller : public protocol_server {
 public:
     controller(sharded<auth::service>&, sharded<service::migration_notifier>&, sharded<gms::gossiper>&,
             sharded<cql3::query_processor>&, sharded<service::memory_limiter>&,
-            sharded<qos::service_level_controller>&, sharded<service::endpoint_lifecycle_notifier>&,
+            sharded<qos::service_level_controller>&, sharded<qos::effective_service_level_controller>, sharded<service::endpoint_lifecycle_notifier>&,
             const db::config& cfg, scheduling_group_key cql_opcode_stats_key, maintenance_socket_enabled used_by_maintenance_socket,
             seastar::scheduling_group sg);
     virtual sstring name() const override;
