@@ -64,6 +64,8 @@ struct service_level {
 
 using update_both_cache_levels = bool_class<class update_both_cache_levels_tag>;
 
+class effective_service_level_controller;
+
 /**
  *  The service_level_controller class is an implementation of the service level
  *  controller design.
@@ -123,6 +125,8 @@ public:
     using service_level_distributed_data_accessor_ptr = ::shared_ptr<service_level_distributed_data_accessor>;
 
 private:
+    friend class effective_service_level_controller;
+
     struct global_controller_data {
         service_levels_info  static_configurations{};
         std::deque<scheduling_group> deleted_scheduling_groups{};
