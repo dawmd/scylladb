@@ -985,7 +985,14 @@ void cql_server::connection::update_scheduling_group() {
     switch_tenant([this] (noncopyable_function<future<> ()> process_loop) -> future<> {
         auto shg = co_await _server._sl_controller.get_user_scheduling_group(_client_state.user());
         _current_scheduling_group = shg;
-        co_return co_await _server._sl_controller.with_user_service_level(_client_state.user(), std::move(process_loop));
+
+        sstring service_level_name = _server._sl_controller.default_service_level_name;
+        if (_client_state.user() && _client_state.user()->name) {
+            std::optional<qos::service_level_options> maybe_sl = co_await _server._sl_controller.find_effective_service_level(*_client_state.user()->name);
+            service_level_name = maybe_sl.and_then(&qos::service_level_options::shares_name).value_or(service_level_name);
+        }
+
+        co_return co_await _server._sl_controller.with_service_level(service_level_name, std::move(process_loop));
     });
 }
 

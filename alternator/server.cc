@@ -475,7 +475,14 @@ future<executor::request_return_type> server::handle_api_request(std::unique_ptr
                 co_return co_await callback(_executor, client_state, trace_state,
                     make_service_permit(std::move(units)), std::move(json_request), std::move(req));
     };
-    co_return co_await _sl_controller.with_user_service_level(user, std::ref(f));
+
+    sstring service_level_name = _sl_controller.default_service_level_name;
+    if (user && user->name) {
+        std::optional<qos::service_level_options> maybe_sl = co_await _sl_controller.find_effective_service_level(*user->name);
+        service_level_name = maybe_sl.and_then(&qos::service_level_options::shares_name).value_or(service_level_name);
+    }
+
+    co_return co_await _sl_controller.with_service_level(service_level_name, std::ref(f));
 }
 
 void server::set_routes(routes& r) {
