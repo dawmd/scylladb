@@ -285,6 +285,21 @@ std::map<sstring, sstring> get_default_tombstone_gc_mode(data_dictionary::databa
     return get_default_tombstone_gc_mode(ks.get_replication_strategy(), tm);
 }
 
+void validate_tombstone_gc_options(const tombstone_gc_options* options, const gms::feature_service& feature_service,
+        const locator::abstract_replication_strategy& rs, const locator::token_metadata& tm)
+{
+    if (!options) {
+        return;
+    }
+    if (!feature_service.tombstone_gc_options) {
+        throw exceptions::configuration_exception("tombstone_gc option not supported by the cluster");
+    }
+
+    if (options->mode() == tombstone_gc_mode::repair && !needs_repair_before_gc(rs, tm)) {
+        throw exceptions::configuration_exception("tombstone_gc option with mode = repair not supported for table with RF one or local replication strategy");
+    }
+}
+
 void validate_tombstone_gc_options(const tombstone_gc_options* options, data_dictionary::database db, sstring ks_name) {
     if (!options) {
         return;
@@ -299,7 +314,6 @@ void validate_tombstone_gc_options(const tombstone_gc_options* options, data_dic
     }
 
     const replica::keyspace& ks = db.real_database().find_keyspace(ks_name);
-    if (options->mode() == tombstone_gc_mode::repair && !needs_repair_before_gc(ks.get_replication_strategy(), real_db_ptr->get_token_metadata())) {
-        throw exceptions::configuration_exception("tombstone_gc option with mode = repair not supported for table with RF one or local replication strategy");
-    }
+    return validate_tombstone_gc_options(options, db.features(),
+            ks.get_replication_strategy(), real_db_ptr->get_token_metadata());
 }

@@ -159,4 +159,6 @@ public:
 std::map<sstring, sstring> get_default_tombstone_gc_mode(const locator::abstract_replication_strategy&, const locator::token_metadata&);
 std::map<sstring, sstring> get_default_tombstone_gc_mode(data_dictionary::database db, sstring ks_name);
 
+void validate_tombstone_gc_options(const tombstone_gc_options*, const gms::feature_service&,
+        const locator::abstract_replication_strategy&, const locator::token_metadata&);
 void validate_tombstone_gc_options(const tombstone_gc_options* options, data_dictionary::database db, sstring ks_name);
