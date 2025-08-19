@@ -506,6 +506,7 @@ bool hint_sender::send_one_file(const sstring& fname) {
     } catch (db::commitlog::segment_error& ex) {
         manager_logger.error("hint_sender[{}]:send_one_file: Segment error in {}: {}. Last not complete position={}",
                 _ep_key, fname, ex.what(), _last_not_complete_rp);
+        on_internal_error(manager_logger, "Crashing Scylla to recover faulty commitlog segment");
         ctx_ptr->segment_replay_failed = false;
         ++this->shard_stats().corrupted_files;
     } catch  (const canceled_draining_exception&) {
