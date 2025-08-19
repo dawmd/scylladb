@@ -3344,7 +3344,7 @@ db::commitlog::read_log_file(const replay_state& state, sstring filename, sstrin
             return eof || next == pos;
         }
         future<> skip_to_chunk(size_t seek_to_pos) {
-            clogger.debug("Skip to {} ({}, {})", seek_to_pos, pos, buffer.size_bytes());
+            clogger.info("Skip to {} ({}, {})", seek_to_pos, pos, buffer.size_bytes());
 
             if (seek_to_pos >= file_size) {
                 eof = true;
@@ -3448,11 +3448,11 @@ db::commitlog::read_log_file(const replay_state& state, sstring filename, sstrin
             auto buf_vec = std::move(buffer).release();
             auto block_boundry = align_up(pos - initial.size_bytes(), alignment);
 
-            clogger.debug("Read {} bytes of data ({}, {})", size, pos, rem);
+            clogger.info("Read {} bytes of data ({}, {})", size, pos, rem);
 
             while (rem < size) {
                 if (eof) {
-                    auto reason = fmt::format("unexpected EOF, rem={}, size={}", rem, size);
+                    auto reason = fmt::format("unexpected EOF, pos={}, rem={}, size={}", pos, rem, size);
                     throw segment_truncation(std::move(reason), block_boundry);
                 }
 
@@ -3464,7 +3464,8 @@ db::commitlog::read_log_file(const replay_state& state, sstring filename, sstrin
 
                 if (tmp.size_bytes() == 0) {
                     eof = true;
-                    auto reason = fmt::format("read 0 bytes, while tried to read {}", block_size);
+                    auto reason = fmt::format("read 0 bytes, while tried to read {}; pos={}, rem={}, size={}",
+                            block_size, pos, rem, size);
                     throw segment_truncation(std::move(reason), block_boundry);
                 }
 
@@ -3504,7 +3505,8 @@ db::commitlog::read_log_file(const replay_state& state, sstring filename, sstrin
                         throw segment_data_corruption_error(std::move(reason), alignment);
                     }
                     if (id != this->id) {
-                        auto reason = fmt::format("IDs do not match: {} vs. {}", id, this->id);
+                        auto reason = fmt::format("IDs do not match: {} vs. {}, pos={}, rem={}, size={}",
+                                id, this->id, pos, rem, size);
                         throw segment_truncation(std::move(reason), pos + rem);
                     }
                 }
@@ -3553,7 +3555,7 @@ db::commitlog::read_log_file(const replay_state& state, sstring filename, sstrin
         }
 
         future<> read_chunk() {
-            clogger.debug("read_chunk {}", pos);
+            clogger.info("read_chunk {}", pos);
             auto start = pos;
             auto buf = co_await read_data(segment::segment_overhead_size); 
             auto in = buf.get_istream();
@@ -3575,7 +3577,7 @@ db::commitlog::read_log_file(const replay_state& state, sstring filename, sstrin
             if (cs != checksum) {
                 // if a chunk header checksum is broken, we shall just assume that all
                 // remaining is as well. We cannot trust the "next" pointer, so...
-                clogger.debug("Checksum error in segment chunk at {}.", start);
+                clogger.info("Checksum error in segment chunk at {}.", start);
                 corrupt_size += (file_size - pos);
                 stop();
                 co_return;
@@ -3612,13 +3614,13 @@ db::commitlog::read_log_file(const replay_state& state, sstring filename, sstrin
         void advance_pos(size_t off) {
             auto old = pos;
             pos = next_pos(off);
-            clogger.trace("Pos {} -> {} ({})", old, pos, off);
+            clogger.info("Pos {} -> {} ({})", old, pos, off);
         }
 
         future<> read_entry() {
             static constexpr size_t entry_header_size = segment::entry_overhead_size;
 
-            clogger.debug("read_entry {}", pos);
+            clogger.info("read_entry {}", pos);
 
             /**
              * #598 - Must check that data left in chunk is enough to even read an entry.
@@ -3658,7 +3660,7 @@ db::commitlog::read_log_file(const replay_state& state, sstring filename, sstrin
                 if (actual_size < 2 * segment::entry_overhead_size || crc.checksum() != checksum) {
                     auto slack = next - pos;
                     if (size != 0) {
-                        clogger.debug("Segment entry at {} has broken header. Skipping to next chunk ({} bytes)", rp, slack);
+                        clogger.info("Segment entry at {} has broken header. Skipping to next chunk ({} bytes)", rp, slack);
                         corrupt_size += slack;
                     }
                     co_await skip_to_chunk(next);
@@ -3679,7 +3681,7 @@ db::commitlog::read_log_file(const replay_state& state, sstring filename, sstrin
                 auto actual_size = checksum;
                 auto end = next_pos(actual_size - entry_header_size);
 
-                clogger.debug("read_entry (fragmented) size = {}", actual_size);
+                clogger.info("read_entry (fragmented) size = {}", actual_size);
 
                 assert(end <= next);
 
@@ -3701,7 +3703,7 @@ db::commitlog::read_log_file(const replay_state& state, sstring filename, sstrin
                 if (crc.checksum() != checksum) {
                     auto slack = next - pos;
                     if (size != 0) {
-                        clogger.debug("Fractured segment entry at {} has broken header. Skipping to next chunk ({} bytes)", rp, slack);
+                        clogger.info("Fractured segment entry at {} has broken header. Skipping to next chunk ({} bytes)", rp, slack);
                         corrupt_size += slack;
                     }
                     co_await skip_to_chunk(next);
@@ -3717,7 +3719,7 @@ db::commitlog::read_log_file(const replay_state& state, sstring filename, sstrin
                 frag.end = off + buf.size_bytes();
                 frag.rpbuf = buffer_and_replay_position{std::move(buf), rp};
 
-                clogger.debug("fragment id={} off={}, end={}, rem={} ", id, off, frag.end, rem);
+                clogger.info("fragment id={} off={}, end={}, rem={} ", id, off, frag.end, rem);
 
                 auto& frag_states = state.fragment_state[id];
 
@@ -3758,7 +3760,7 @@ db::commitlog::read_log_file(const replay_state& state, sstring filename, sstrin
             if (size < 2 * sizeof(uint32_t) || checksum != crc.checksum()) {
                 auto slack = next - pos;
                 if (size != 0) {
-                    clogger.debug("Segment entry at {} has broken header. Skipping to next chunk ({} bytes)", rp, slack);
+                    clogger.info("Segment entry at {} has broken header. Skipping to next chunk ({} bytes)", rp, slack);
                     corrupt_size += slack;
                 }
                 // size == 0 -> special scylla case: zero padding due to dma blocks
