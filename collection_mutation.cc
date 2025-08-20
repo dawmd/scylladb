@@ -160,7 +160,7 @@ collection_mutation_view_description::materialize(const abstract_type& type) con
         }
     },
     [&] (const abstract_type& o) {
-        throw std::runtime_error(format("attempted to materialize collection_mutation_view_description with type {}", o.name()));
+        throw std::runtime_error(fmt::format"attempted to materialize collection_mutation_view_description with type {}", o.name()));
     }
     ));
 
@@ -327,7 +327,7 @@ collection_mutation merge(const abstract_type& type, collection_mutation_view a,
                 return merge(std::move(a_view), std::move(b_view), *short_type);
             },
             [] (const abstract_type& o) -> collection_mutation_view_description {
-                throw std::runtime_error(format("collection_mutation merge: unknown type: {}", o.name()));
+                throw std::runtime_error(fmt::format"collection_mutation merge: unknown type: {}", o.name()));
             }
             )).serialize(type);
         });
@@ -373,7 +373,7 @@ collection_mutation difference(const abstract_type& type, collection_mutation_vi
                 return difference(std::move(a_view), std::move(b_view), *short_type);
             },
             [] (const abstract_type& o) -> collection_mutation_view_description {
-                throw std::runtime_error(format("collection_mutation difference: unknown type: {}", o.name()));
+                throw std::runtime_error(fmt::format"collection_mutation difference: unknown type: {}", o.name()));
             }
             )).serialize(type);
         });
@@ -428,7 +428,7 @@ deserialize_collection_mutation(const abstract_type& type, collection_mutation_i
         });
     },
     [&] (const abstract_type& o) -> collection_mutation_view_description {
-        throw std::runtime_error(format("deserialize_collection_mutation: unknown type {}", o.name()));
+        throw std::runtime_error(fmt::format"deserialize_collection_mutation: unknown type {}", o.name()));
     }
     ));
 }

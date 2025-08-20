@@ -56,7 +56,7 @@ private:
         }
         llog.debug("send_meta_data: finished reading source from node={}", _node);
         if (_error_from_peer) {
-            throw std::runtime_error(format("send_meta_data: got error code={} from node={}", status, _node));
+            throw std::runtime_error(fmt::format"send_meta_data: got error code={} from node={}", status, _node));
         }
         co_return;
     }
@@ -75,7 +75,7 @@ public:
     }
     future<> send(const frozen_mutation_fragment& fmf, bool is_partition_start) {
         if (_error_from_peer) {
-            throw std::runtime_error(format("send_meta_data: got error from peer node={}", _node));
+            throw std::runtime_error(fmt::format"send_meta_data: got error from peer node={}", _node));
         }
         auto size = fmf.representation().size();
         if (is_partition_start) {
@@ -772,7 +772,7 @@ future<tasks::task_id> sstables_loader::download_new_sstables(sstring ks_name, s
             sstring prefix, std::vector<sstring> sstables,
             sstring endpoint, sstring bucket, stream_scope scope) {
     if (!_storage_manager.is_known_endpoint(endpoint)) {
-        throw std::invalid_argument(format("endpoint {} not found", endpoint));
+        throw std::invalid_argument(fmt::format"endpoint {} not found", endpoint));
     }
     llog.info("Restore sstables from {}({}) to {}", endpoint, prefix, ks_name);
 

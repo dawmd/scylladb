@@ -358,7 +358,7 @@ server::listen(socket_address addr, std::shared_ptr<seastar::tls::credentials_bu
             ? seastar::tls::listen(_credentials, addr, lo)
             : seastar::listen(addr, lo);
     } catch (...) {
-        throw std::runtime_error(format("{} error while listening on {} -> {}", _server_name, addr, std::current_exception()));
+        throw std::runtime_error(fmt::format"{} error while listening on {} -> {}", _server_name, addr, std::current_exception()));
     }
     _listeners.emplace_back(std::move(ss));
     _listeners_stopped = when_all(std::move(_listeners_stopped), do_accepts(_listeners.size() - 1, keepalive, addr)).discard_result();

@@ -82,7 +82,7 @@ converting_mutation_partition_applier::accept_cell(row& dst, column_kind kind, c
             }
         },
         [&] (const abstract_type& o) {
-            throw std::runtime_error(format("not a multi-cell type: {}", o.name()));
+            throw std::runtime_error(fmt::format"not a multi-cell type: {}", o.name()));
         }
     ));
 

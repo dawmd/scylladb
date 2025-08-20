@@ -1250,7 +1250,7 @@ future<> reader_concurrency_semaphore::evict_inactive_reads_for_table(table_id i
 }
 
 std::runtime_error reader_concurrency_semaphore::stopped_exception() {
-    return std::runtime_error(format("{} was stopped", _name));
+    return std::runtime_error(fmt::format"{} was stopped", _name));
 }
 
 future<> reader_concurrency_semaphore::stop() noexcept {

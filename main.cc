@@ -584,12 +584,12 @@ static locator::host_id initialize_local_info_thread(sharded<db::system_keyspace
     if (linfo.dc.empty()) {
         linfo.dc = location.dc;
     } else if (linfo.dc != location.dc) {
-        throw std::runtime_error(format("Saved DC name \"{}\" is not equal to the DC name \"{}\" specified by the snitch", linfo.dc, location.dc));
+        throw std::runtime_error(fmt::format"Saved DC name \"{}\" is not equal to the DC name \"{}\" specified by the snitch", linfo.dc, location.dc));
     }
     if (linfo.rack.empty()) {
         linfo.rack = location.rack;
     } else if (linfo.rack != location.rack) {
-        throw std::runtime_error(format("Saved rack name \"{}\" is not equal to the rack name \"{}\" specified by the snitch", linfo.rack, location.rack));
+        throw std::runtime_error(fmt::format"Saved rack name \"{}\" is not equal to the rack name \"{}\" specified by the snitch", linfo.rack, location.rack));
     }
     if (!linfo.host_id) {
         linfo.host_id = locator::host_id::create_random_id();
