@@ -1013,7 +1013,7 @@ void reader_concurrency_semaphore::consume(reader_permit::impl& permit, resource
             ++_stats.total_reads_killed_due_to_kill_limit;
         }
         maybe_dump_reader_permit_diagnostics(*this, "kill limit triggered", &permit);
-        throw utils::memory_limit_reached(format("kill limit triggered on semaphore {} by permit {}", _name, permit.description()));
+        throw utils::memory_limit_reached(seastar::format"kill limit triggered on semaphore {} by permit {}", _name, permit.description()));
     }
     _resources -= r;
 }
@@ -1043,8 +1043,8 @@ reader_concurrency_semaphore::reader_concurrency_semaphore(
     , _serialize_limit_multiplier(std::move(serialize_limit_multiplier))
     , _kill_limit_multiplier(std::move(kill_limit_multiplier))
     , _cpu_concurrency(cpu_concurrency)
-    , _close_readers_gate(format("[reader_concurrency_semaphore {}] close_readers", _name))
-    , _permit_gate(format("[reader_concurrency_semaphore {}] permit", _name))
+    , _close_readers_gate(seastar::format"[reader_concurrency_semaphore {}] close_readers", _name))
+    , _permit_gate(seastar::format"[reader_concurrency_semaphore {}] permit", _name))
 {
     if (metrics == register_metrics::yes) {
         _metrics.emplace();

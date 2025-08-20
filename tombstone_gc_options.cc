@@ -26,20 +26,20 @@ tombstone_gc_options::tombstone_gc_options(const std::map<seastar::sstring, seas
             } else if (x.second == "immediate") {
                 _mode = tombstone_gc_mode::immediate;
             } else  {
-                throw exceptions::configuration_exception(format("Invalid value for tombstone_gc option mode: {}", x.second));
+                throw exceptions::configuration_exception(seastar::format"Invalid value for tombstone_gc option mode: {}", x.second));
             }
         } else if (x.first == "propagation_delay_in_seconds") {
             try {
                 auto seconds = boost::lexical_cast<int64_t>(x.second);
                 if (seconds < 0) {
-                    throw exceptions::configuration_exception(format("Invalid value for tombstone_gc option propagation_delay_in_seconds: {}", x.second));
+                    throw exceptions::configuration_exception(seastar::format"Invalid value for tombstone_gc option propagation_delay_in_seconds: {}", x.second));
                 }
                 _propagation_delay_in_seconds = std::chrono::seconds(seconds);
             } catch (...) {
-                throw exceptions::configuration_exception(format("Invalid value for tombstone_gc option propagation_delay_in_seconds: {}", x.second));
+                throw exceptions::configuration_exception(seastar::format"Invalid value for tombstone_gc option propagation_delay_in_seconds: {}", x.second));
             }
         } else {
-            throw exceptions::configuration_exception(format("Invalid tombstone_gc option: {}", x.first));
+            throw exceptions::configuration_exception(seastar::format"Invalid tombstone_gc option: {}", x.first));
         }
     }
 }
