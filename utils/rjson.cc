@@ -546,7 +546,7 @@ static inline bool needs_escaping(const sstring& s) {
 
 sstring quote_json_string(const sstring& value) {
     if (!needs_escaping(value)) {
-        return format("\"{}\"", value);
+        return seastar::format("\"{}\"", value);
     }
     std::ostringstream oss;
     oss << std::hex << std::uppercase << std::setfill('0');

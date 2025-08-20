@@ -29,7 +29,7 @@ std::optional<sstring> is_cql_key_invalid(const schema& schema, partition_key_vi
     // check that key can be handled by FBUtilities.writeShortByteArray
     auto b = key.representation();
     if (b.size() > max_key_size) {
-        return format("Key length of {:d} is longer than maximum of {:d}", b.size(), max_key_size);
+        return seastar::format("Key length of {:d} is longer than maximum of {:d}", b.size(), max_key_size);
     }
 
     try {

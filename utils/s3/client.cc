@@ -278,23 +278,23 @@ client::group_client& client::find_or_create_client() {
         default:
             error_code = EIO;
         }
-        throw storage_io_error{error_code, format("S3 request failed. Code: {}. Reason: {}", e.error().get_error_type(), e.what())};
+        throw storage_io_error{error_code, seastar::format("S3 request failed. Code: {}. Reason: {}", e.error().get_error_type(), e.what())};
     } catch (const httpd::unexpected_status_error& e) {
         auto status = e.status();
 
         if (http::reply::classify_status(status) == http::reply::status_class::redirection || status == http::reply::status_type::not_found) {
-            throw storage_io_error {ENOENT, format("S3 object doesn't exist ({})", status)};
+            throw storage_io_error {ENOENT, seastar::format("S3 object doesn't exist ({})", status)};
         }
         if (status == http::reply::status_type::forbidden || status == http::reply::status_type::unauthorized) {
-            throw storage_io_error {EACCES, format("S3 access denied ({})", status)};
+            throw storage_io_error {EACCES, seastar::format("S3 access denied ({})", status)};
         }
 
-        throw storage_io_error {EIO, format("S3 request failed with ({})", status)};
+        throw storage_io_error {EIO, seastar::format("S3 request failed with ({})", status)};
     } catch (const filler_exception&) {
         throw;
     } catch (...) {
         auto e = std::current_exception();
-        throw storage_io_error {EIO, format("S3 error ({})", e)};
+        throw storage_io_error {EIO, seastar::format("S3 error ({})", e)};
     }
 }
 
@@ -653,7 +653,7 @@ private:
         _part_etags.emplace_back();
         auto req = http::request::make("PUT", _client->_host, _object_name);
         req._headers["x-amz-copy-source"] = _source_object;
-        auto range = format("bytes={}-{}", offset, offset + part_size - 1);
+        auto range = seastar::format("bytes={}-{}", offset, offset + part_size - 1);
         s3l.trace("PUT part {}, Upload range: {}, Upload ID:", part_number, range, _upload_id);
 
         req._headers["x-amz-copy-source-range"] = range;
@@ -757,7 +757,7 @@ unsigned prepare_multipart_upload_parts(const utils::chunked_vector<sstring>& et
             return 0;
         }
         // length of the format string - four braces + length of the etag + length of the number
-        ret += multipart_upload_complete_entry.size() - 4 + etag.size() + format("{}", nr).size();
+        ret += multipart_upload_complete_entry.size() - 4 + etag.size() + seastar::format("{}", nr).size();
         nr++;
     }
     ret += multipart_upload_complete_trailer.size();
@@ -992,7 +992,7 @@ future<> client::multipart_upload::upload_part(std::unique_ptr<upload_sink> piec
     _part_etags.emplace_back();
     s3l.trace("PUT part {} from {} (upload id {})", part_number, piece._object_name, _upload_id);
     auto req = http::request::make("PUT", _client->_host, _object_name);
-    req.query_parameters["partNumber"] = format("{}", part_number + 1);
+    req.query_parameters["partNumber"] = seastar::format("{}", part_number + 1);
     req.query_parameters["uploadId"] = _upload_id;
     req._headers["x-amz-copy-source"] = piece._object_name;
 
@@ -1040,7 +1040,7 @@ class client::upload_jumbo_sink final : public upload_sink_base {
 
     future<> maybe_flush() {
         if (_current->parts_count() >= _maximum_parts_in_piece) {
-            auto next = std::make_unique<upload_sink>(_client, format("{}_{}", _object_name, parts_count() + 1), piece_tag);
+            auto next = std::make_unique<upload_sink>(_client, seastar::format("{}_{}", _object_name, parts_count() + 1), piece_tag);
             co_await upload_part(std::exchange(_current, std::move(next)));
             s3l.trace("Initiated {} piece (upload_id {})", parts_count(), _upload_id);
         }
@@ -1050,7 +1050,7 @@ public:
     upload_jumbo_sink(shared_ptr<client> cln, sstring object_name, std::optional<unsigned> max_parts_per_piece, seastar::abort_source* as)
         : upload_sink_base(std::move(cln), std::move(object_name), std::nullopt, as)
         , _maximum_parts_in_piece(max_parts_per_piece.value_or(aws_maximum_parts_in_piece))
-        , _current(std::make_unique<upload_sink>(_client, format("{}_{}", _object_name, parts_count()), piece_tag))
+        , _current(std::make_unique<upload_sink>(_client, seastar::format("{}_{}", _object_name, parts_count()), piece_tag))
     {}
 
     virtual future<> put(temporary_buffer<char> buf) override {
@@ -1800,7 +1800,7 @@ future<> client::bucket_lister::start_listing() {
     sstring continuation_token;
     do {
         s3l.trace("GET /?list-type=2 (prefix={})", _prefix);
-        auto req = http::request::make("GET", _client->_host, format("/{}", _bucket));
+        auto req = http::request::make("GET", _client->_host, seastar::format("/{}", _bucket));
         req.query_parameters.emplace("list-type", "2");
         req.query_parameters.emplace("max-keys", _max_keys);
         if (!continuation_token.empty()) {

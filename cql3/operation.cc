@@ -33,7 +33,7 @@ operation::fill_prepare_context(prepare_context& ctx) {
 
 sstring
 operation::set_element::to_string(const column_definition& receiver) const {
-    return format("{}[{}] = {}", receiver.name_as_text(), _selector, _value);
+    return seastar::format("{}[{}] = {}", receiver.name_as_text(), _selector, _value);
 }
 
 shared_ptr<operation>

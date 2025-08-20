@@ -118,11 +118,11 @@ class cql3_type::raw_collection : public raw {
         sstring start = is_frozen() ? "frozen<" : "";
         sstring end = is_frozen() ? ">" : "";
         if (_kind == abstract_type::kind::list) {
-            return format("{}list<{}>{}", start, _values, end);
+            return seastar::format("{}list<{}>{}", start, _values, end);
         } else if (_kind == abstract_type::kind::set) {
-            return format("{}set<{}>{}", start, _values, end);
+            return seastar::format("{}set<{}>{}", start, _values, end);
         } else if (_kind == abstract_type::kind::map) {
-            return format("{}map<{}, {}>{}", start, _keys, _values, end);
+            return seastar::format("{}map<{}, {}>{}", start, _keys, _values, end);
         }
         abort();
     }
@@ -160,12 +160,12 @@ public:
 
         if (!is_frozen() && _values->supports_freezing() && !_values->is_frozen()) {
             throw exceptions::invalid_request_exception(
-                    format("Non-frozen user types or collections are not allowed inside collections: {}", *this));
+                    seastar::format("Non-frozen user types or collections are not allowed inside collections: {}", *this));
         }
         if (_keys) {
             if (!is_frozen() && _keys->supports_freezing() && !_keys->is_frozen()) {
                 throw exceptions::invalid_request_exception(
-                        format("Non-frozen user types or collections are not allowed inside collections: {}", *this));
+                        seastar::format("Non-frozen user types or collections are not allowed inside collections: {}", *this));
             }
         }
 
@@ -192,7 +192,7 @@ private:
         } else if (_kind == abstract_type::kind::map) {
             SCYLLA_ASSERT(_keys); // "Got null keys type for a collection";
             if (_keys->is_duration()) {
-                throw exceptions::invalid_request_exception(format("Durations are not allowed as map keys: {}", *this));
+                throw exceptions::invalid_request_exception(seastar::format("Durations are not allowed as map keys: {}", *this));
             }
             return cql3_type(map_type_impl::get_instance(_keys->prepare_internal(keyspace, user_types).get_type(),
                                                          _values->prepare_internal(keyspace, user_types).get_type(),
@@ -207,7 +207,7 @@ class cql3_type::raw_ut : public raw {
 
     virtual sstring to_string() const override {
         if (is_frozen()) {
-            return format("frozen<{}>", _name.to_cql_string());
+            return seastar::format("frozen<{}>", _name.to_cql_string());
         }
 
         return _name.to_cql_string();
@@ -344,7 +344,7 @@ public:
 
         if (_dimension > MAX_VECTOR_DIMENSION) {
             throw exceptions::invalid_request_exception(
-                    format("Vectors must have a dimension less than or equal to {}", MAX_VECTOR_DIMENSION));
+                    seastar::format("Vectors must have a dimension less than or equal to {}", MAX_VECTOR_DIMENSION));
         }
 
         return vector_type_impl::get_instance(_type->prepare_internal(keyspace, user_types).get_type(), _dimension)->as_cql3_type();
@@ -382,7 +382,7 @@ cql3_type::raw::keyspace() const {
 
 void
 cql3_type::raw::freeze() {
-    sstring message = format("frozen<> is only allowed on collections, tuples, and user-defined types (got {})", to_string());
+    sstring message = seastar::format("frozen<> is only allowed on collections, tuples, and user-defined types (got {})", to_string());
     throw exceptions::invalid_request_exception(message);
 }
 

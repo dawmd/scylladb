@@ -745,7 +745,7 @@ future<> generation_service::maybe_rewrite_streams_descriptions() {
 
 static void assert_shard_zero(const sstring& where) {
     if (this_shard_id() != 0) {
-        on_internal_error(cdc_log, format("`{}`: must be run on shard 0", where));
+        on_internal_error(cdc_log, seastar::format("`{}`: must be run on shard 0", where));
     }
 }
 
@@ -915,18 +915,18 @@ future<> generation_service::check_and_repair_cdc_streams() {
         } catch (exceptions::request_timeout_exception& e) {
             cdc_log.error("{}: \"{}\". {}.", timeout_msg, e.what(), exception_translating_msg);
             throw exceptions::request_execution_exception(exceptions::exception_code::READ_TIMEOUT,
-                    format("{}. {}.", timeout_msg, topology_read_error_note));
+                    seastar::format("{}. {}.", timeout_msg, topology_read_error_note));
         } catch (exceptions::unavailable_exception& e) {
             static const auto unavailable_msg = "Node(s) unavailable while fetching CDC topology description";
             cdc_log.error("{}: \"{}\". {}.", unavailable_msg, e.what(), exception_translating_msg);
             throw exceptions::request_execution_exception(exceptions::exception_code::UNAVAILABLE,
-                    format("{}. {}.", unavailable_msg, topology_read_error_note));
+                    seastar::format("{}. {}.", unavailable_msg, topology_read_error_note));
         } catch (...) {
             const auto ep = std::current_exception();
             if (is_timeout_exception(ep)) {
                 cdc_log.error("{}: \"{}\". {}.", timeout_msg, ep, exception_translating_msg);
                 throw exceptions::request_execution_exception(exceptions::exception_code::READ_TIMEOUT,
-                        format("{}. {}.", timeout_msg, topology_read_error_note));
+                        seastar::format("{}. {}.", timeout_msg, topology_read_error_note));
             }
             // On exotic errors proceed with regeneration
             cdc_log.error("Exception while reading CDC topology description: \"{}\". Regenerating streams anyway.", ep);

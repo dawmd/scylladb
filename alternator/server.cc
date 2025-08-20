@@ -192,7 +192,7 @@ protected:
     virtual future<std::unique_ptr<reply>> do_handle(const sstring& path, std::unique_ptr<request> req, std::unique_ptr<reply> rep) override {
         handle_CORS(*req, *rep, false);
         rep->set_status(reply::status_type::ok);
-        rep->write_body("txt", format("healthy: {}", req->get_header("Host")));
+        rep->write_body("txt", seastar::format("healthy: {}", req->get_header("Host")));
         return make_ready_future<std::unique_ptr<reply>>(std::move(rep));
     }
 };

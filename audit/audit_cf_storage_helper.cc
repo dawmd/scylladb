@@ -80,7 +80,7 @@ future<> audit_cf_storage_helper::migrate_audit_table(service::group0_guard grou
             try {
                 co_await _mm.announce(
                         service::prepare_keyspace_update_announcement(db.real_database(), new_ks_metadata, ts),
-                        std::move(group0_guard), format("audit: Alter {} keyspace", KEYSPACE_NAME));
+                        std::move(group0_guard), seastar::format("audit: Alter {} keyspace", KEYSPACE_NAME));
                 break;
             } catch (::service::group0_concurrent_modification &) {
                 logger.info("Concurrent operation is detected while altering {} keyspace, retrying.", KEYSPACE_NAME);

@@ -159,7 +159,7 @@ std::string_view to_string(compaction_type type) {
     case compaction_type::Reshape: return "Reshape";
     case compaction_type::Split: return "Split";
     }
-    on_internal_error_noexcept(clogger, format("Invalid compaction type {}", int(type)));
+    on_internal_error_noexcept(clogger, seastar::format("Invalid compaction type {}", int(type)));
     return "(invalid)";
 }
 
@@ -174,7 +174,7 @@ std::string_view to_string(compaction_type_options::scrub::mode scrub_mode) {
         case compaction_type_options::scrub::mode::validate:
             return "validate";
     }
-    on_internal_error_noexcept(clogger, format("Invalid scrub mode {}", int(scrub_mode)));
+    on_internal_error_noexcept(clogger, seastar::format("Invalid scrub mode {}", int(scrub_mode)));
     return "(invalid)";
 }
 
@@ -187,7 +187,7 @@ std::string_view to_string(compaction_type_options::scrub::quarantine_mode quara
         case compaction_type_options::scrub::quarantine_mode::only:
             return "only";
     }
-    on_internal_error_noexcept(clogger, format("Invalid scrub quarantine mode {}", int(quarantine_mode)));
+    on_internal_error_noexcept(clogger, seastar::format("Invalid scrub quarantine mode {}", int(quarantine_mode)));
     return "(invalid)";
 }
 
@@ -254,7 +254,7 @@ static max_purgeable get_max_purgeable_timestamp(const compaction_group_view& ta
                 min_timestamp = it->second;
             } else {
                 // Do not throw an exception in production, just use the legacy min_timestamp set above
-                on_internal_error_noexcept(clogger, format("Missing extended timestamp statstics: stat={} is_shadowable={}", int(stat), bool(is_shadowable)));
+                on_internal_error_noexcept(clogger, seastar::format("Missing extended timestamp statstics: stat={} is_shadowable={}", int(stat), bool(is_shadowable)));
             }
         }
         if (clogger.is_enabled(log_level::trace)) {
@@ -1708,7 +1708,7 @@ private:
                     throw compaction_aborted_exception(
                             _schema->ks_name(),
                             _schema->cf_name(),
-                            format("scrub compaction failed due to unrecoverable error: {}", std::current_exception()));
+                            seastar::format("scrub compaction failed due to unrecoverable error: {}", std::current_exception()));
                 }
             });
         }

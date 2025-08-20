@@ -1057,14 +1057,14 @@ static sstring cql3_type_name_impl(const abstract_type& t) {
         sstring operator()(const inet_addr_type_impl&) { return "inet"; }
         sstring operator()(const int32_type_impl&) { return "int"; }
         sstring operator()(const list_type_impl& l) {
-            return format("list<{}>", l.get_elements_type()->as_cql3_type());
+            return seastar::format("list<{}>", l.get_elements_type()->as_cql3_type());
         }
         sstring operator()(const long_type_impl&) { return "bigint"; }
         sstring operator()(const map_type_impl& m) {
-            return format("map<{}, {}>", m.get_keys_type()->as_cql3_type(), m.get_values_type()->as_cql3_type());
+            return seastar::format("map<{}, {}>", m.get_keys_type()->as_cql3_type(), m.get_values_type()->as_cql3_type());
         }
         sstring operator()(const reversed_type_impl& r) { return cql3_type_name_impl(*r.underlying_type()); }
-        sstring operator()(const set_type_impl& s) { return format("set<{}>", s.get_elements_type()->as_cql3_type()); }
+        sstring operator()(const set_type_impl& s) { return seastar::format("set<{}>", s.get_elements_type()->as_cql3_type()); }
         sstring operator()(const short_type_impl&) { return "smallint"; }
         sstring operator()(const simple_date_type_impl&) { return "date"; }
         sstring operator()(const time_type_impl&) { return "time"; }
@@ -1077,7 +1077,7 @@ static sstring cql3_type_name_impl(const abstract_type& t) {
         sstring operator()(const utf8_type_impl&) { return "text"; }
         sstring operator()(const uuid_type_impl&) { return "uuid"; }
         sstring operator()(const varint_type_impl&) { return "varint"; }
-        sstring operator()(const vector_type_impl& v) { return format("vector<{}, {}>", v.get_elements_type()->as_cql3_type(), v.get_dimension()); }
+        sstring operator()(const vector_type_impl& v) { return seastar::format("vector<{}, {}>", v.get_elements_type()->as_cql3_type(), v.get_dimension()); }
     };
     return visit(t, visitor{});
 }
@@ -3001,7 +3001,7 @@ struct from_string_visitor {
         std::vector<std::string_view> field_strings = split_field_strings(s);
         if (field_strings.size() > t.size()) {
             throw marshal_exception(
-                    format("Invalid tuple literal: too many elements. Type {} expects {:d} but got {:d}",
+                    seastar::format("Invalid tuple literal: too many elements. Type {} expects {:d} but got {:d}",
                             t.as_cql3_type(), t.size(), field_strings.size()));
         }
         std::vector<bytes> fields(field_strings.size());

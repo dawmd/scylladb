@@ -402,7 +402,7 @@ future<sstables::sstable_set> compaction_task_executor::sstable_set_for_tombston
     co_await compound_set->for_each_sstable_gently([&] (const sstables::shared_sstable& sst) {
         auto inserted = new_set.insert(sst);
         if (!inserted) {
-            on_internal_error(cmlog, format("Unable to insert SSTable {} into set used for tombstone GC", sst->get_filename()));
+            on_internal_error(cmlog, seastar::format("Unable to insert SSTable {} into set used for tombstone GC", sst->get_filename()));
         }
     });
     co_return std::move(new_set);
@@ -927,7 +927,7 @@ compaction_task_executor::state compaction_task_executor::switch_state(state new
 
 void sstables_task_executor::set_sstables(std::vector<sstables::shared_sstable> new_sstables) {
     if (!_sstables.empty()) {
-        on_internal_error(cmlog, format("sstables were already set"));
+        on_internal_error(cmlog, seastar::format("sstables were already set"));
     }
     _sstables = std::move(new_sstables);
     cmlog.debug("{}: set_sstables: {} sstable{}", *this, _sstables.size(), _sstables.size() > 1 ? "s" : "");
@@ -936,12 +936,12 @@ void sstables_task_executor::set_sstables(std::vector<sstables::shared_sstable> 
 
 sstables::shared_sstable sstables_task_executor::consume_sstable() {
     if (_sstables.empty()) {
-        on_internal_error(cmlog, format("no more sstables"));
+        on_internal_error(cmlog, seastar::format("no more sstables"));
     }
     auto sst = _sstables.back();
     _sstables.pop_back();
     --_cm._stats.pending_tasks; // from this point on, switch_state(pending|active) works the same way as any other task
-    cmlog.debug("{}", format("consumed {}", sst->get_filename()));
+    cmlog.debug("{}", seastar::format("consumed {}", sst->get_filename()));
     return sst;
 }
 
@@ -1251,7 +1251,7 @@ future<> compaction_manager::really_do_stop() noexcept {
     _metrics.clear();
     co_await stop_ongoing_compactions("shutdown");
     if (!_tasks.empty()) {
-        on_fatal_internal_error(cmlog, format("{} tasks still exist after being stopped", _tasks.size()));
+        on_fatal_internal_error(cmlog, seastar::format("{} tasks still exist after being stopped", _tasks.size()));
     }
     co_await coroutine::parallel_for_each(_compaction_state | std::views::values, [] (compaction_state& cs) -> future<> {
         if (!cs.gate.is_closed()) {
@@ -2312,7 +2312,7 @@ compaction::compaction_state::compaction_state(compaction_group_view& t)
 void compaction_manager::add(compaction_group_view& t) {
     auto [_, inserted] = _compaction_state.try_emplace(&t, t);
     if (!inserted) {
-        on_internal_error(cmlog, format("compaction_state for table {} [{}] already exists", t, fmt::ptr(&t)));
+        on_internal_error(cmlog, seastar::format("compaction_state for table {} [{}] already exists", t, fmt::ptr(&t)));
     }
 }
 
@@ -2349,7 +2349,7 @@ future<> compaction_manager::remove(compaction_group_view& t, sstring reason) no
             if (!msg.empty()) {
                 msg += "\n";
             }
-            msg += format("Found {} after remove", task);
+            msg += seastar::format("Found {} after remove", task);
             found = true;
         }
     }

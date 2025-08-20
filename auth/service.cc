@@ -913,7 +913,7 @@ future<> migrate_to_auth_v2(db::system_keyspace& sys_ks, ::service::raft_group0_
                         std::move(values));
                 if (muts.size() != 1) {
                     on_internal_error(log,
-                            format("expecting single insert mutation, got {}", muts.size()));
+                            seastar::format("expecting single insert mutation, got {}", muts.size()));
                 }
                 co_yield std::move(muts[0]);
             }

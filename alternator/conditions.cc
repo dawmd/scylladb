@@ -64,7 +64,7 @@ class exact_size : public size_check {
   public:
     explicit exact_size(rapidjson::SizeType expected) : _expected(expected) {}
     bool operator()(rapidjson::SizeType size) const override { return size == _expected; }
-    sstring what() const override { return format("of size {}", _expected); }
+    sstring what() const override { return seastar::format("of size {}", _expected); }
 };
 
 struct empty : public size_check {

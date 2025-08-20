@@ -46,8 +46,8 @@ tombstone_gc_options::tombstone_gc_options(const std::map<seastar::sstring, seas
 
 std::map<seastar::sstring, seastar::sstring> tombstone_gc_options::to_map() const {
     std::map<seastar::sstring, seastar::sstring> res = {
-        {"mode", format("{}", _mode)},
-        {"propagation_delay_in_seconds", format("{}", _propagation_delay_in_seconds.count())},
+        {"mode", seastar::format("{}", _mode)},
+        {"propagation_delay_in_seconds", seastar::format("{}", _propagation_delay_in_seconds.count())},
     };
     return res;
 }

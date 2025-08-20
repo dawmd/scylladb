@@ -275,7 +275,7 @@ public:
         }
 
         if (_resources.non_zero()) {
-            on_internal_error_noexcept(rcslog, format("reader_permit::impl::~impl(): permit {} detected a leak of {{count={}, memory={}}} resources",
+            on_internal_error_noexcept(rcslog, seastar::format("reader_permit::impl::~impl(): permit {} detected a leak of {{count={}, memory={}}} resources",
                         description(),
                         _resources.count,
                         _resources.memory));
@@ -1119,7 +1119,7 @@ reader_concurrency_semaphore::~reader_concurrency_semaphore() {
         return;
     }
     if (!_stopped) {
-        on_internal_error_noexcept(rcslog, format("~reader_concurrency_semaphore(): semaphore {} not stopped before destruction", _name));
+        on_internal_error_noexcept(rcslog, seastar::format("~reader_concurrency_semaphore(): semaphore {} not stopped before destruction", _name));
         // With the below conditions, we can get away with the semaphore being
         // unstopped. In this case don't force an abort.
         SCYLLA_ASSERT(_inactive_reads.empty() && !_close_readers_gate.get_count() && !_permit_gate.get_count() && !_execution_loop_future);
@@ -1554,7 +1554,7 @@ void reader_concurrency_semaphore::dequeue_permit(reader_permit::impl& permit) {
         case reader_permit::state::active:
         case reader_permit::state::active_need_cpu:
         case reader_permit::state::active_await:
-            on_internal_error_noexcept(rcslog, format("reader_concurrency_semaphore::dequeue_permit(): unrecognized queued state: {}", permit.get_state()));
+            on_internal_error_noexcept(rcslog, seastar::format("reader_concurrency_semaphore::dequeue_permit(): unrecognized queued state: {}", permit.get_state()));
     }
     permit.unlink();
     _permit_list.push_back(permit);

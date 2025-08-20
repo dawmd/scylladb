@@ -135,10 +135,10 @@ future<conn_ptr> ldap_role_manager::connect() {
     try {
         ldap_msg_ptr response = co_await conn->simple_bind(_bind_name.c_str(), _bind_password.c_str());
         if (!response || ldap_msgtype(response.get()) != LDAP_RES_BIND) {
-            error = format("simple_bind error: {}", conn->get_error());
+            error = seastar::format("simple_bind error: {}", conn->get_error());
         }
     } catch (...) {
-        error = format("connect error: {}", std::current_exception());
+        error = seastar::format("connect error: {}", std::current_exception());
     }
     if (!error.empty()) {
         co_await conn->close();

@@ -93,7 +93,7 @@ static future<> create_legacy_metadata_table_if_missing_impl(
         auto ts = group0_guard.write_timestamp();
         try {
             co_return co_await mm.announce(co_await ::service::prepare_new_column_family_announcement(qp.proxy(), table, ts),
-                    std::move(group0_guard), format("auth: create {} metadata table", table->cf_name()));
+                    std::move(group0_guard), seastar::format("auth: create {} metadata table", table->cf_name()));
         } catch (exceptions::already_exists_exception&) {}
     }
 }
@@ -218,7 +218,7 @@ future<> collect_mutations(
             internal_distributed_query_state(),
             collector.write_timestamp(),
             std::move(values));
-    collector.add_mutations(std::move(muts), format("auth internal statement: {}", query_string));
+    collector.add_mutations(std::move(muts), seastar::format("auth internal statement: {}", query_string));
 }
 
 }

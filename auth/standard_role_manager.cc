@@ -565,7 +565,7 @@ standard_role_manager::modify_membership(
                 meta::role_members_table::name);
         break;
     default:
-        on_internal_error(log, format("unknown membership_change value: {}", int(ch)));
+        on_internal_error(log, seastar::format("unknown membership_change value: {}", int(ch)));
     }
     co_await collect_mutations(_qp, mc, modify_role_members,
             {sstring(role_name), sstring(grantee_name)});

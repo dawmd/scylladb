@@ -774,7 +774,7 @@ static future<bool> scan_table(
                 db.real_database().find_keyspace(s->ks_name()).get_static_effective_replication_map();
         auto* erm = ermp->maybe_as_vnode_effective_replication_map();
         if (!erm) {
-            on_internal_error(tlogger, format("Keyspace {} is local", s->ks_name()));
+            on_internal_error(tlogger, seastar::format("Keyspace {} is local", s->ks_name()));
         }
         auto my_host_id = erm->get_topology().my_host_id();
         token_ranges_owned_by_this_shard my_ranges(s, co_await ranges_holder_primary::make(erm, my_host_id));

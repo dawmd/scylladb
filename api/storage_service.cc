@@ -257,7 +257,7 @@ future<scrub_info> parse_scrub_options(const http_context& ctx, sharded<db::snap
     }
 
     if (!req_param<bool>(*req, "disable_snapshot", false) && !info.column_families.empty()) {
-        auto tag = format("pre-scrub-{:d}", db_clock::now().time_since_epoch().count());
+        auto tag = seastar::format("pre-scrub-{:d}", db_clock::now().time_since_epoch().count());
         co_await snap_ctl.local().take_column_family_snapshot(info.keyspace, info.column_families, tag, db::snapshot_ctl::skip_flush::no);
     }
 
@@ -972,7 +972,7 @@ rest_get_drain_progress(http_context& ctx, std::unique_ptr<http::request> req) {
         return ctx.db.map_reduce(adder<replica::database::drain_progress>(), [] (auto& db) {
             return db.get_drain_progress();
         }).then([] (auto&& progress) {
-            auto progress_str = format("Drained {}/{} ColumnFamilies", progress.remaining_cfs, progress.total_cfs);
+            auto progress_str = seastar::format("Drained {}/{} ColumnFamilies", progress.remaining_cfs, progress.total_cfs);
             return make_ready_future<json::json_return_type>(std::move(progress_str));
         });
 }

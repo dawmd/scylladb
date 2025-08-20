@@ -383,7 +383,7 @@ void default_authorizer::revoke_all_keyspace_resources(const resource& ks_resour
                     {r.get_as<sstring>(ROLE_NAME), name});
             if (muts.size() != 1) {
                 on_internal_error(alogger,
-                    format("expecting single delete mutation, got {}", muts.size()));
+                    seastar::format("expecting single delete mutation, got {}", muts.size()));
             }
             co_yield std::move(muts[0]);
         }

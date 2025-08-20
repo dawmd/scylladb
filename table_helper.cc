@@ -65,7 +65,7 @@ future<> table_helper::setup_table(cql3::query_processor& qp, service::migration
     // be lost in a process but that's ok).
     try {
         co_return co_await mm.announce(co_await service::prepare_new_column_family_announcement(qp.proxy(), schema, ts),
-                std::move(group0_guard), format("table_helper: create {} table", schema->cf_name()));
+                std::move(group0_guard), seastar::format("table_helper: create {} table", schema->cf_name()));
     } catch (...) {}
 }
 

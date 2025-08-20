@@ -33,7 +33,7 @@ future<> instance_profile_credentials_provider::update_credentials() {
     retryable_http_client http_client(std::move(factory), 1, retryable_http_client::ignore_exception, http::experimental::client::retry_requests::yes, retry_strategy);
 
     auto req = http::request::make("PUT", ec2_metadata_ip, "/latest/api/token");
-    req._headers["x-aws-ec2-metadata-token-ttl-seconds"] = format("{}", session_duration);
+    req._headers["x-aws-ec2-metadata-token-ttl-seconds"] = seastar::format("{}", session_duration);
 
     std::string token;
     co_await http_client.make_request(

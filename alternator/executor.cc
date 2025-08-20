@@ -1416,7 +1416,7 @@ extract_from_attrs_column_computation::extract_from_attrs_column_computation(con
             }
         }
     }
-    on_internal_error(elogger, format("Improperly formatted alternator::extract_from_attrs_column_computation computed column definition: {}", v));
+    on_internal_error(elogger, seastar::format("Improperly formatted alternator::extract_from_attrs_column_computation computed column definition: {}", v));
 }
 
 regular_column_transformation::result extract_from_attrs_column_computation::compute_value(
@@ -2016,7 +2016,7 @@ future<executor::request_return_type> executor::update_table(client_state& clien
                 std::tie(m, group0_guard) = co_await std::move(mc).extract();
             }
             try {
-                co_await mm.announce(std::move(m), std::move(group0_guard), format("alternator-executor: update {} table", tab->cf_name()));
+                co_await mm.announce(std::move(m), std::move(group0_guard), seastar::format("alternator-executor: update {} table", tab->cf_name()));
                 break;
             } catch (const service::group0_concurrent_modification& ex) {
                 elogger.info("Failed to execute UpdateTable {} due to concurrent schema modifications. {}.",
