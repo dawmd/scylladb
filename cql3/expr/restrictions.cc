@@ -35,7 +35,7 @@ void validate_single_column_relation(const column_value& lhs, oper_t oper, const
 
     if (schema.is_dense() && lhs.col->is_regular()) {
         throw exceptions::invalid_request_exception(
-            format("Predicates on the non-primary-key column ({}) of a COMPACT table are not yet supported",
+            seastar::format"Predicates on the non-primary-key column ({}) of a COMPACT table are not yet supported",
                    lhs.col->name_as_text()));
     }
 
@@ -69,7 +69,7 @@ std::vector<const column_definition*> to_column_definitions(const std::vector<ex
         if (auto col_val = as_if<column_value>(&col)) {
             result.push_back(col_val->col);
         } else {
-            on_internal_error(expr_logger, format("to_column_definitions bad expression: {}", col));
+            on_internal_error(expr_logger, seastar::format"to_column_definitions bad expression: {}", col));
         }
     }
 
@@ -145,7 +145,7 @@ void preliminary_binop_vaidation_checks(const binary_operator& binop) {
         if (auto rhs_tup = as_if<tuple_constructor>(&binop.rhs)) {
             if (lhs_tup->elements.size() != rhs_tup->elements.size()) {
                 throw exceptions::invalid_request_exception(
-                    format("Expected {} elements in value tuple, but got {}: {}",
+                    seastar::format"Expected {} elements in value tuple, but got {}: {}",
                                   lhs_tup->elements.size(), rhs_tup->elements.size(), *rhs_tup));
             }
         }
@@ -224,7 +224,7 @@ binary_operator validate_and_prepare_new_restriction(const binary_operator& rest
     } else {
         // Anything else
         throw exceptions::invalid_request_exception(
-            format("expr::validate_and_prepare_new_restriction unhandled restriction: {}", prepared_binop));
+            seastar::format"expr::validate_and_prepare_new_restriction unhandled restriction: {}", prepared_binop));
     }
 
     // Convert single element IN relation to an EQ relation

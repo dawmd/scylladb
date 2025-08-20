@@ -189,10 +189,10 @@ public:
         SCYLLA_ASSERT(_partition_column_count_dist.a() > 0);
     }
     virtual sstring table_name(std::mt19937& engine) override {
-        return format("table{}", generate_unique_id(engine, _used_table_ids));
+        return seastar::format"table{}", generate_unique_id(engine, _used_table_ids));
     }
     virtual sstring udt_name(std::mt19937& engine) override {
-        return format("udt{}", generate_unique_id(engine, _used_udt_ids));
+        return seastar::format"udt{}", generate_unique_id(engine, _used_udt_ids));
     }
     virtual std::vector<data_type> partition_key_columns(std::mt19937& engine) override {
         return generate_types(engine, _partition_column_count_dist, type_generator::is_multi_cell::no, false);

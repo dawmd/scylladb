@@ -79,24 +79,24 @@ operation::set_element::is_compatible_with(const std::unique_ptr<raw_update>& ot
 
 sstring
 operation::set_field::to_string(const column_definition& receiver) const {
-    return format("{}.{} = {}", receiver.name_as_text(), *_field, _value);
+    return seastar::format"{}.{} = {}", receiver.name_as_text(), *_field, _value);
 }
 
 shared_ptr<operation>
 operation::set_field::prepare(data_dictionary::database db, const sstring& keyspace, const column_definition& receiver) const {
     if (!receiver.type->is_user_type()) {
         throw exceptions::invalid_request_exception(
-                format("Invalid operation ({}) for non-UDT column {}", to_string(receiver), receiver.name_as_text()));
+                seastar::format"Invalid operation ({}) for non-UDT column {}", to_string(receiver), receiver.name_as_text()));
     } else if (!receiver.type->is_multi_cell()) {
         throw exceptions::invalid_request_exception(
-                format("Invalid operation ({}) for frozen UDT column {}", to_string(receiver), receiver.name_as_text()));
+                seastar::format"Invalid operation ({}) for frozen UDT column {}", to_string(receiver), receiver.name_as_text()));
     }
 
     auto& type = static_cast<const user_type_impl&>(*receiver.type);
     auto idx = type.idx_of_field(_field->name());
     if (!idx) {
         throw exceptions::invalid_request_exception(
-                format("UDT column {} does not have a field named {}", receiver.name_as_text(), *_field));
+                seastar::format"UDT column {} does not have a field named {}", receiver.name_as_text(), *_field));
     }
 
     auto val = prepare_expression(_value, db, keyspace, nullptr, user_types::field_spec_of(*receiver.column_specification, *idx));
@@ -123,17 +123,17 @@ shared_ptr<operation>
 operation::field_deletion::prepare(data_dictionary::database db, const sstring& keyspace, const column_definition& receiver) const {
     if (!receiver.type->is_user_type()) {
         throw exceptions::invalid_request_exception(
-                format("Invalid deletion operation for non-UDT column {}", receiver.name_as_text()));
+                seastar::format"Invalid deletion operation for non-UDT column {}", receiver.name_as_text()));
     } else if (!receiver.type->is_multi_cell()) {
         throw exceptions::invalid_request_exception(
-                format("Frozen UDT column {} does not support field deletions", receiver.name_as_text()));
+                seastar::format"Frozen UDT column {} does not support field deletions", receiver.name_as_text()));
     }
 
     auto type = static_cast<const user_type_impl*>(receiver.type.get());
     auto idx = type->idx_of_field(_field->name());
     if (!idx) {
         throw exceptions::invalid_request_exception(
-                format("UDT column {} does not have a field named {}", receiver.name_as_text(), *_field));
+                seastar::format"UDT column {} does not have a field named {}", receiver.name_as_text(), *_field));
     }
 
     return make_shared<user_types::deleter_by_field>(receiver, *idx);
@@ -141,7 +141,7 @@ operation::field_deletion::prepare(data_dictionary::database db, const sstring& 
 
 sstring
 operation::addition::to_string(const column_definition& receiver) const {
-    return format("{} = {} + {}", receiver.name_as_text(), receiver.name_as_text(), _value);
+    return seastar::format"{} = {} + {}", receiver.name_as_text(), receiver.name_as_text(), _value);
 }
 
 shared_ptr<operation>
@@ -177,7 +177,7 @@ operation::addition::is_compatible_with(const std::unique_ptr<raw_update>& other
 
 sstring
 operation::subtraction::to_string(const column_definition& receiver) const {
-    return format("{} = {} - {}", receiver.name_as_text(), receiver.name_as_text(), _value);
+    return seastar::format"{} = {} - {}", receiver.name_as_text(), receiver.name_as_text(), _value);
 }
 
 shared_ptr<operation>
@@ -193,7 +193,7 @@ operation::subtraction::prepare(data_dictionary::database db, const sstring& key
     }
     if (!ctype->is_multi_cell()) {
         throw exceptions::invalid_request_exception(
-                format("Invalid operation ({}) for frozen collection column {}", to_string(receiver), receiver.name_as_text()));
+                seastar::format"Invalid operation ({}) for frozen collection column {}", to_string(receiver), receiver.name_as_text()));
     }
 
     if (ctype->get_kind() == abstract_type::kind::list) {
@@ -226,7 +226,7 @@ operation::subtraction::is_compatible_with(const std::unique_ptr<raw_update>& ot
 
 sstring
 operation::prepend::to_string(const column_definition& receiver) const {
-    return format("{} = {} + {}", receiver.name_as_text(), _value, receiver.name_as_text());
+    return seastar::format"{} = {} + {}", receiver.name_as_text(), _value, receiver.name_as_text());
 }
 
 shared_ptr<operation>
@@ -324,7 +324,7 @@ operation::set_counter_value_from_tuple_list::prepare(data_dictionary::database 
 
                 if (id <= last) {
                     throw marshal_exception(
-                                    format("invalid counter id order, {} <= {}",
+                                    seastar::format"invalid counter id order, {} <= {}",
                                                     id.uuid(),
                                                     last.uuid()));
                 }

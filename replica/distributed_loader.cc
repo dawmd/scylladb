@@ -449,7 +449,7 @@ future<> distributed_loader::populate_keyspace(distributed<replica::database>& d
         } catch (...) {
             std::exception_ptr eptr = std::current_exception();
             std::string msg =
-                format("Exception while populating keyspace '{}' with column family '{}' from '{}': {}",
+                seastar::format"Exception while populating keyspace '{}' with column family '{}' from '{}': {}",
                         ks_name, cfname, cf.get_storage_options(), eptr);
             dblog.error("{}", msg);
             try {

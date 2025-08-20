@@ -156,7 +156,7 @@ public:
 
     virtual ~dataset() = default;
 
-    // create_table_statement_pattern should be a format() pattern with {} in place of the table name
+    // create_table_statement_pattern should be a seastar::format) pattern with {} in place of the table name
     dataset(const std::string& name, const std::string& message, const char* create_table_statement_pattern)
             : _name(name)
             , _message(message)
@@ -1383,7 +1383,7 @@ void test_large_partition_single_key_slice(app_template &app, replica::column_fa
     };
     auto test = [&](int_range range) {
         auto r = test_slicing_using_restrictions(cf, ds, range);
-        r.set_params(to_sstrings(new_test_case ? "->": 0, format("{}", range)));
+        r.set_params(to_sstrings(new_test_case ? "->": 0, seastar::format"{}", range)));
         check_fragment_count(r, cardinality(intersection(range, live_range)));
         return r;
     };

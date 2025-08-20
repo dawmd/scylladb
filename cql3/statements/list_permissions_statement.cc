@@ -63,7 +63,7 @@ future<> cql3::statements::list_permissions_statement::check_access(query_proces
             if (!has_role) {
                 return make_exception_future<>(
                         exceptions::unauthorized_exception(
-                                format("You are not authorized to view {}'s permissions", *_role_name)));
+                                seastar::format"You are not authorized to view {}'s permissions", *_role_name)));
             }
 
             return make_ready_future<>();

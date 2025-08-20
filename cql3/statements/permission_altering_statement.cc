@@ -22,7 +22,7 @@ static auth::permission_set filter_applicable_permissions(const auth::permission
 
     if (!filtered_permissions) {
         throw exceptions::syntax_exception(
-                format("Resource {} does not support any of the requested permissions.", r));
+                seastar::format"Resource {} does not support any of the requested permissions.", r));
     }
 
     return filtered_permissions;

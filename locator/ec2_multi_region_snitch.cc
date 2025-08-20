@@ -43,7 +43,7 @@ future<> ec2_multi_region_snitch::start() {
                 if (i != std::string::npos && ++i != macs.size()) {
                     logger().warn("Ec2MultiRegionSnitch (ipv6): more than one MAC address listed ({}). Will use first.", macs);
                 }
-                auto ipv6 = co_await aws_api_call(AWS_QUERY_SERVER_ADDR, AWS_QUERY_SERVER_PORT, format(PUBLIC_IPV6_QUERY_REQ, mac), token);
+                auto ipv6 = co_await aws_api_call(AWS_QUERY_SERVER_ADDR, AWS_QUERY_SERVER_PORT, seastar::formatPUBLIC_IPV6_QUERY_REQ, mac), token);
                 _local_public_address = inet_address(ipv6);
                 _local_private_address = ipv6;
             } else {

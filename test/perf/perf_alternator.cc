@@ -235,7 +235,7 @@ static constexpr auto update_item_suffix = R"(
 )";
 
 static future<> update_item(const test_config& _, http::experimental::client& cli, uint64_t seq) {
-    auto prefix = format(R"({{
+    auto prefix = seastar::formatR"({{
             "TableName": "workloads_test",
             "Key": {{
                 "p": {{
@@ -250,7 +250,7 @@ static future<> update_item(const test_config& _, http::experimental::client& cl
 }
 
 static future<> update_item_gsi(const test_config& _, http::experimental::client& cli, uint64_t seq) {
-    auto prefix = format(R"({{
+    auto prefix = seastar::formatR"({{
             "TableName": "workloads_test",
             "Key": {{
                 "p": {{
@@ -284,7 +284,7 @@ static future<> update_item_gsi(const test_config& _, http::experimental::client
 }
 
 static future<> update_item_rmw(const test_config& _, http::experimental::client& cli, uint64_t seq) {
-    auto prefix = format(R"({{
+    auto prefix = seastar::formatR"({{
             "TableName": "workloads_test",
             "Key": {{
                 "p": {{
@@ -308,11 +308,11 @@ static future<> update_item_rmw(const test_config& _, http::experimental::client
         },
     )";
     return make_request(cli, "UpdateItem", prefix + condition_exp +
-                        format(update_item_suffix, condition_attribute_values));
+                        seastar::formatupdate_item_suffix, condition_attribute_values));
 }
 
 static future<> get_item(const test_config& _, http::experimental::client& cli, uint64_t seq) {
-    auto body = format(R"({{
+    auto body = seastar::formatR"({{
         "TableName": "workloads_test",
         "Key": {{
             "p": {{
@@ -331,7 +331,7 @@ static future<> get_item(const test_config& _, http::experimental::client& cli, 
 
 static future<> scan(const test_config& c, http::experimental::client& cli, uint64_t seq) {
     // This uses "parallel scan" feature, see https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Scan.html#Scan.ParallelScan
-    auto body = format(R"({{
+    auto body = seastar::formatR"({{
         "TableName": "workloads_test",
         "Select": "ALL_ATTRIBUTES",
         "Segment": {},

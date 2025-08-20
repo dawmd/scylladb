@@ -38,7 +38,7 @@ struct maybe_column_definition {
 template<>
 struct fmt::formatter<maybe_column_definition> : fmt::formatter<string_view> {
     template <typename FormatContext>
-    auto format(const maybe_column_definition& cd, FormatContext& ctx) const {
+    auto seastar::formatconst maybe_column_definition& cd, FormatContext& ctx) const {
         if (cd.value != nullptr) {
             return fmt::format_to(ctx.out(), "{}", *cd.value);
         } else {
@@ -748,7 +748,7 @@ const column_value& get_the_only_column(const expression& e) {
 
     if (!result.has_value()) {
         on_internal_error(expr_logger,
-            format("get_the_only_column - bad expression: {}", e));
+            seastar::format"get_the_only_column - bad expression: {}", e));
     }
 
     return *result;
@@ -785,13 +785,13 @@ bytes_opt value_for(const column_definition& cdef, const expression& e, const qu
             }
 
             if (val_list.size() != 1) {
-                on_internal_error(expr_logger, format("expr::value_for - multiple possible values for column: {}", e));
+                on_internal_error(expr_logger, seastar::format"expr::value_for - multiple possible values for column: {}", e));
             }
 
             return to_bytes(val_list.front());
         },
         [&](const interval<managed_bytes>&) -> bytes_opt {
-            on_internal_error(expr_logger, format("expr::value_for - possible values are a range: {}", e));
+            on_internal_error(expr_logger, seastar::format"expr::value_for - possible values are a range: {}", e));
         }
     }, possible_vals);
 }
@@ -1109,7 +1109,7 @@ statement_restrictions::statement_restrictions(data_dictionary::database db,
         const expr::binary_operator* relation_binop = expr::as_if<expr::binary_operator>(&relation_expr);
 
         if (relation_binop == nullptr) {
-            on_internal_error(rlogger, format("statement_restrictions: where clause has non-binop element: {}", relation_expr));
+            on_internal_error(rlogger, seastar::format"statement_restrictions: where clause has non-binop element: {}", relation_expr));
         }
 
         expr::binary_operator prepared_restriction = expr::validate_and_prepare_new_restriction(*relation_binop, db, schema, ctx);
@@ -1621,7 +1621,7 @@ void statement_restrictions::add_multi_column_clustering_key_restriction(const e
         if (other_slice->order != restr.order) {
             static auto order2str = [](auto o) { return o == expr::comparison_order::cql ? "plain" : "SCYLLA_CLUSTERING_BOUND"; };
             throw exceptions::invalid_request_exception(
-                    format("Invalid combination of restrictions ({} / {})",
+                    seastar::format"Invalid combination of restrictions ({} / {})",
                     order2str(other_slice->order), order2str(restr.order)));
         }
 
@@ -1725,7 +1725,7 @@ const column_definition& statement_restrictions::unrestricted_column(column_kind
             return _schema->column_at(kind, i);
         }
     }
-    on_internal_error(rlogger, format(
+    on_internal_error(rlogger, seastar::format
             "no missing columns with kind {} found in expression {}",
             to_sstring(kind), restrictions));
 };
@@ -1770,13 +1770,13 @@ bool statement_restrictions::multi_column_clustering_restrictions_are_supported_
     const expr::binary_operator* single_binop =
         expr::as_if<expr::binary_operator>(&_clustering_columns_restrictions);
     if (single_binop == nullptr) {
-        on_internal_error(rlogger, format(
+        on_internal_error(rlogger, seastar::format
             "multi_column_clustering_restrictions_are_supported_by more than one non-slice restriction: {}",
             _clustering_columns_restrictions));
     }
 
     if (single_binop->op != expr::oper_t::IN && single_binop->op != expr::oper_t::EQ) {
-        on_internal_error(rlogger, format("Disallowed multi column restriction: {}", *single_binop));
+        on_internal_error(rlogger, seastar::format"Disallowed multi column restriction: {}", *single_binop));
     }
 
     const expr::column_value* supported_column =
@@ -1955,7 +1955,7 @@ dht::partition_range_vector statement_restrictions::get_partition_key_ranges(con
         if (_partition_range_restrictions.size() != 1) {
             on_internal_error(
                     rlogger,
-                    format("Unexpected size of token restrictions: {}", _partition_range_restrictions.size()));
+                    seastar::format"Unexpected size of token restrictions: {}", _partition_range_restrictions.size()));
         }
         return partition_ranges_from_token(_partition_range_restrictions[0], options, *_schema);
     } else if (_partition_range_is_simple) {
@@ -2156,7 +2156,7 @@ struct multi_column_range_accumulator {
             }   
             process_in_values(std::move(tuple_elems));
         } else {
-            on_internal_error(rlogger, format("multi_column_range_accumulator: unexpected atom {}", binop));
+            on_internal_error(rlogger, seastar::format"multi_column_range_accumulator: unexpected atom {}", binop));
         }
     }
 
@@ -2566,7 +2566,7 @@ query::clustering_range range_from_raw_bounds(
         if (auto b = find_clustering_order(e)) {
             cql3::raw_value tup_val = expr::evaluate(b->rhs, options);
             if (tup_val.is_null()) {
-                on_internal_error(rlogger, format("range_from_raw_bounds: unexpected atom {}", *b));
+                on_internal_error(rlogger, seastar::format"range_from_raw_bounds: unexpected atom {}", *b));
             }
 
             const auto r = to_range(

@@ -101,7 +101,7 @@ void mapreduce_aggregates::merge(query::mapreduce_result &result, query::mapredu
     if (result.query_results.size() != other.query_results.size() || result.query_results.size() != _aggrs.size()) {
         on_internal_error(
             flogger,
-            format("mapreduce_aggregates::merge(): operation cannot be completed due to invalid argument sizes. "
+            seastar::format"mapreduce_aggregates::merge(): operation cannot be completed due to invalid argument sizes. "
                     "this.aggrs.size(): {} "
                     "result.query_result.size(): {} "
                     "other.query_results.size(): {} ",
@@ -130,7 +130,7 @@ void mapreduce_aggregates::finalize(query::mapreduce_result &result) {
     if (result.query_results.size() != _aggrs.size()) {
         on_internal_error(
             flogger,
-            format("mapreduce_aggregates::finalize(): operation cannot be completed due to invalid argument sizes. "
+            seastar::format"mapreduce_aggregates::finalize(): operation cannot be completed due to invalid argument sizes. "
                     "this.aggrs.size(): {} "
                     "result.query_result.size(): {} ",
                     _aggrs.size(), result.query_results.size())

@@ -371,7 +371,7 @@ public:
 };
 
 template <> struct fmt::formatter<test_data> : fmt::formatter<string_view> {
-    auto format(test_data d, fmt::format_context& ctx) const {
+    auto seastar::formattest_data d, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "{}", static_cast<unsigned long>(d));
     }
 };

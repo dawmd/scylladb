@@ -674,7 +674,7 @@ SEASTAR_TEST_CASE(test_base_non_pk_columns_in_view_partition_key_are_non_emtpy) 
         e.execute_cql("insert into cf (p1, p2, c, v) values (1, '', '', '')").get();
 
         size_t id = 0;
-        auto make_view_name = [&id] { return format("vcf_{:d}", id++); };
+        auto make_view_name = [&id] { return seastar::format"vcf_{:d}", id++); };
 
         auto views_matching = {
             "create materialized view {} as select * from cf "

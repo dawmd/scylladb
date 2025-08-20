@@ -27,7 +27,7 @@ static logging::logger logger("version_generator");
 version_type get_next_version() noexcept
 {
     if (this_shard_id() != 0) [[unlikely]] {
-        on_fatal_internal_error(logger, format(
+        on_fatal_internal_error(logger, seastar::format
                 "{} can only be called on shard 0, but it was called on shard {}",
                 __FUNCTION__, this_shard_id()));
     }

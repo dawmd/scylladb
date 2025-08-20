@@ -57,7 +57,7 @@ thread_local int non_final_composite_test_object::construction_count = 0;
 thread_local int final_composite_test_object::construction_count = 0;
 
 template <> struct fmt::formatter<simple_compound> : fmt::formatter<string_view> {
-    auto format(const simple_compound& sc, fmt::format_context& ctx) const {
+    auto seastar::formatconst simple_compound& sc, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), " {{ foo: {}, bar: {} }}", sc.foo, sc.bar);
     }
 };

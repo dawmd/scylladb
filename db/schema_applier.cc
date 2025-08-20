@@ -97,7 +97,7 @@ void table_selector::add(sstring name) {
 
 template <> struct fmt::formatter<db::schema_tables::table_kind> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(db::schema_tables::table_kind k, fmt::format_context& ctx) const {
+    auto seastar::formatdb::schema_tables::table_kind k, fmt::format_context& ctx) const {
         switch (k) {
         using enum db::schema_tables::table_kind;
         case table:
@@ -1099,7 +1099,7 @@ static future<> execute_do_merge_schema(distributed<service::storage_proxy>& pro
     } catch (...) {
         // We have no good way to recover from partial commit and continuing
         // would mean that schema is in inconsistent state.
-        on_fatal_internal_error(slogger, format("schema commit failed: {}", std::current_exception()));
+        on_fatal_internal_error(slogger, seastar::format"schema commit failed: {}", std::current_exception()));
     }
     co_await ap.post_commit();
 }

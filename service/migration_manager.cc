@@ -341,7 +341,7 @@ future<> migration_manager::disable_schema_pulls() {
 future<> migration_manager::submit_migration_task(locator::host_id id, bool can_ignore_down_node)
 {
     if (!_gossiper.is_alive(id)) {
-        auto msg = format("Can't send migration request: node {} is down.", id);
+        auto msg = seastar::format"Can't send migration request: node {} is down.", id);
         mlogger.warn("{}", msg);
         return can_ignore_down_node ? make_ready_future<>() : make_exception_future<>(std::runtime_error(msg));
     }
@@ -362,7 +362,7 @@ future<> migration_manager::do_merge_schema_from(locator::host_id id)
     auto frozen_and_canonical_mutations = co_await ser::migration_manager_rpc_verbs::send_migration_request(&_messaging, id, as, netw::schema_pull_options{});
     auto&& [_, canonical_mutations] = frozen_and_canonical_mutations;
     if (!canonical_mutations) {
-        on_internal_error(mlogger, format(
+        on_internal_error(mlogger, seastar::format
             "do_merge_schema_from: {} returned frozen_mutations instead of canonical_mutations", id));
     }
 

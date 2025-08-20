@@ -69,7 +69,7 @@ write_replica_set_selector get_selector_for_writes(tablet_transition_stage stage
         case tablet_transition_stage::end_migration:
             return write_replica_set_selector::next;
     }
-    on_internal_error(tablet_logger, format("Invalid tablet transition stage: {}", static_cast<int>(stage)));
+    on_internal_error(tablet_logger, seastar::format"Invalid tablet transition stage: {}", static_cast<int>(stage)));
 }
 
 static
@@ -100,7 +100,7 @@ read_replica_set_selector get_selector_for_reads(tablet_transition_stage stage) 
         case tablet_transition_stage::end_migration:
             return read_replica_set_selector::next;
     }
-    on_internal_error(tablet_logger, format("Invalid tablet transition stage: {}", static_cast<int>(stage)));
+    on_internal_error(tablet_logger, seastar::format"Invalid tablet transition stage: {}", static_cast<int>(stage)));
 }
 
 tablet_transition_info::tablet_transition_info(tablet_transition_stage stage,
@@ -169,7 +169,7 @@ tablet_migration_streaming_info get_migration_streaming_info(const locator::topo
             result.written_to = std::move(s);
             return result;
     }
-    on_internal_error(tablet_logger, format("Invalid tablet transition kind: {}", static_cast<int>(trinfo.transition)));
+    on_internal_error(tablet_logger, seastar::format"Invalid tablet transition kind: {}", static_cast<int>(trinfo.transition)));
 }
 
 bool tablet_has_excluded_node(const locator::topology& topo, const tablet_info& tinfo) {
@@ -356,7 +356,7 @@ future<> tablet_metadata::set_colocated_table(table_id id, table_id base_id) {
         // This shouldn't be used normally except for unit tests.
         tablet_logger.warn("Changing base table {} to be a co-located table of another base table {}. This should be used only in tests.", id, base_id);
         if (it->second.size() > 1) {
-            on_internal_error(tablet_logger, format("Table {} is already a base table for {} and cannot be set as a co-located table of another base table.", id, it->second));
+            on_internal_error(tablet_logger, seastar::format"Table {} is already a base table for {} and cannot be set as a co-located table of another base table.", id, it->second));
         }
         _table_groups.erase(it);
     }
@@ -366,12 +366,12 @@ future<> tablet_metadata::set_colocated_table(table_id id, table_id base_id) {
         _table_groups[base_id].push_back(id);
 
         if (!_tablets.contains(base_id)) {
-            on_internal_error(tablet_logger, format("Base table {} of co-located table {} does not have a tablet map", base_id, id));
+            on_internal_error(tablet_logger, seastar::format"Base table {} of co-located table {} does not have a tablet map", base_id, id));
         }
         auto map_ptr = co_await _tablets.at(base_id).copy();
         _tablets[id] = std::move(map_ptr);
     } else if (it->second != base_id) {
-        on_internal_error(tablet_logger, format("Cannot set base table {} for table {} because it already has base table {}", base_id, id, it->second));
+        on_internal_error(tablet_logger, seastar::format"Cannot set base table {} for table {} because it already has base table {}", base_id, id, it->second));
     }
 }
 
@@ -436,7 +436,7 @@ bool tablet_metadata::operator==(const tablet_metadata& o) const {
 tablet_map::tablet_map(size_t tablet_count)
         : _log2_tablets(log2ceil(tablet_count)) {
     if (tablet_count != 1ul << _log2_tablets) {
-        on_internal_error(tablet_logger, format("Tablet count not a power of 2: {}", tablet_count));
+        on_internal_error(tablet_logger, seastar::format"Tablet count not a power of 2: {}", tablet_count));
     }
     _tablets.resize(tablet_count);
 }
@@ -669,7 +669,7 @@ tablet_transition_kind choose_rebuild_transition_kind(const gms::feature_service
 sstring tablet_transition_stage_to_string(tablet_transition_stage stage) {
     auto i = tablet_transition_stage_to_name.find(stage);
     if (i == tablet_transition_stage_to_name.end()) {
-        on_internal_error(tablet_logger, format("Invalid tablet transition stage: {}", static_cast<int>(stage)));
+        on_internal_error(tablet_logger, seastar::format"Invalid tablet transition stage: {}", static_cast<int>(stage)));
     }
     return i->second;
 }
@@ -698,7 +698,7 @@ static const std::unordered_map<sstring, tablet_transition_kind> tablet_transiti
 sstring tablet_transition_kind_to_string(tablet_transition_kind kind) {
     auto i = tablet_transition_kind_to_name.find(kind);
     if (i == tablet_transition_kind_to_name.end()) {
-        on_internal_error(tablet_logger, format("Invalid tablet transition kind: {}", static_cast<int>(kind)));
+        on_internal_error(tablet_logger, seastar::format"Invalid tablet transition kind: {}", static_cast<int>(kind)));
     }
     return i->second;
 }
@@ -729,7 +729,7 @@ static const std::unordered_map<sstring, tablet_task_type> tablet_task_type_from
 sstring tablet_task_type_to_string(tablet_task_type kind) {
     auto i = tablet_task_type_to_name.find(kind);
     if (i == tablet_task_type_to_name.end()) {
-        on_internal_error(tablet_logger, format("Invalid tablet task type: {}", static_cast<int>(kind)));
+        on_internal_error(tablet_logger, seastar::format"Invalid tablet task type: {}", static_cast<int>(kind)));
     }
     return i->second;
 }
@@ -957,7 +957,7 @@ private:
                     return info->next;
                 }
             }
-            on_internal_error(tablet_logger, format("Invalid replica selector", static_cast<int>(info->writes)));
+            on_internal_error(tablet_logger, seastar::format"Invalid replica selector", static_cast<int>(info->writes)));
         });
         tablet_logger.trace("get_replicas_for_write({}): table={}, tablet={}, replicas={}", search_token, _table, tablet, replicas);
         return replicas;
@@ -984,7 +984,7 @@ private:
             case write_replica_set_selector::next:
                 return {};
         }
-        on_internal_error(tablet_logger, format("Invalid replica selector", static_cast<int>(info->writes)));
+        on_internal_error(tablet_logger, seastar::format"Invalid replica selector", static_cast<int>(info->writes)));
     }
 
     host_id_vector_replica_set get_for_reading_helper(const token& search_token) const {
@@ -1002,7 +1002,7 @@ private:
                     return info->next;
                 }
             }
-            on_internal_error(tablet_logger, format("Invalid replica selector", static_cast<int>(info->reads)));
+            on_internal_error(tablet_logger, seastar::format"Invalid replica selector", static_cast<int>(info->reads)));
         });
         tablet_logger.trace("get_endpoints_for_reading({}): table={}, tablet={}, replicas={}", search_token, _table, tablet, replicas);
         return to_host_set(replicas);

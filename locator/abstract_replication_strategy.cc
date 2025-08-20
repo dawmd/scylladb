@@ -158,7 +158,7 @@ long abstract_replication_strategy::parse_replication_factor(sstring rf)
 {
     if (rf.empty() || std::any_of(rf.begin(), rf.end(), [] (char c) {return !isdigit(c);})) {
         throw exceptions::configuration_exception(
-                format("Replication factor must be numeric and non-negative, found '{}'", rf));
+                seastar::format"Replication factor must be numeric and non-negative, found '{}'", rf));
     }
     try {
         return std::stol(rf);
@@ -477,7 +477,7 @@ host_id_vector_replica_set vnode_effective_replication_map::do_get_replicas(cons
         : default_replication_map_key;
     const auto it = _replication_map.find(key_token);
     if (it == _replication_map.end()) {
-        on_internal_error(rslogger, format("Token {} not found in replication map: natural_endpoints_depend_on_token={} token={} vnode_token={}",
+        on_internal_error(rslogger, seastar::format"Token {} not found in replication map: natural_endpoints_depend_on_token={} token={} vnode_token={}",
                 key_token, _rs->natural_endpoints_depend_on_token(), tok, _tmptr->first_token(tok)));
     }
     return it->second;
@@ -665,7 +665,7 @@ future<> global_static_effective_replication_map::get_keyspace_erms(sharded<repl
                 auto erm = ks.get_static_effective_replication_map();
                 auto local_ring_version = erm->get_token_metadata().get_ring_version();
                 if (local_ring_version != ring_version) {
-                    on_internal_error(rslogger, format("Inconsistent effective_replication_map ring_verion {}, expected {}", local_ring_version, ring_version));
+                    on_internal_error(rslogger, seastar::format"Inconsistent effective_replication_map ring_verion {}, expected {}", local_ring_version, ring_version));
                 }
                 return make_foreign(std::move(erm));
             });

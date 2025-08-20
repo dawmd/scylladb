@@ -335,7 +335,7 @@ mutation_reader repair_reader::make_reader(
         }
         default:
             on_internal_error(rlogger,
-                format("make_reader: unexpected read_strategy {}", static_cast<int>(strategy)));
+                seastar::format"make_reader: unexpected read_strategy {}", static_cast<int>(strategy)));
     }
 }
 
@@ -587,7 +587,7 @@ future<> repair_writer::do_write(lw_shared_ptr<const decorated_key_with_hash> dk
     if (_current_dk_written_to_sstable) {
         const auto cmp_res = _current_dk_written_to_sstable->dk.tri_compare(*_schema, dk->dk);
         if (cmp_res > 0) {
-            on_internal_error(rlogger, format("repair_writer::do_write(): received out-of-order partition, current: {}, next: {}", _current_dk_written_to_sstable->dk, dk->dk));
+            on_internal_error(rlogger, seastar::format"repair_writer::do_write(): received out-of-order partition, current: {}, next: {}", _current_dk_written_to_sstable->dk, dk->dk));
         } else if (cmp_res == 0) {
             return _mq->push(std::move(mf));
         } else {
@@ -1157,7 +1157,7 @@ private:
         auto id = tmap.get_tablet_id(last_token);
         auto range = tmap.get_token_range(id);
         if (range != _range) {
-            on_internal_error(rlogger, format("Repair range={} does not match tablet range={}", _range, range));
+            on_internal_error(rlogger, seastar::format"Repair range={} does not match tablet range={}", _range, range));
         }
         auto& tinfo = tmap.get_tablet_info(id);
         auto sstables_repaired_at = tinfo.sstables_repaired_at;
@@ -3549,7 +3549,7 @@ future<> repair_service::stop() {
     _stopped = true;
     rlogger.info("Stopped repair_service");
   } catch (...) {
-    on_fatal_internal_error(rlogger, format("Failed stopping repair_service: {}", std::current_exception()));
+    on_fatal_internal_error(rlogger, seastar::format"Failed stopping repair_service: {}", std::current_exception()));
   }
 }
 

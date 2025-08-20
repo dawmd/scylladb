@@ -87,7 +87,7 @@ void prepare_context::add_pk_function_call(expr::function_call& fn) {
     constexpr auto fn_limit = std::numeric_limits<uint8_t>::max();
     if (_pk_function_calls_cache_ids.size() == fn_limit) {
         throw exceptions::invalid_request_exception(
-            format("Too many function calls within one statement. Max supported number is {}", fn_limit));
+            seastar::format"Too many function calls within one statement. Max supported number is {}", fn_limit));
     }
 
     fn.lwt_cache_id = ::make_shared<std::optional<uint8_t>>(_pk_function_calls_cache_ids.size());

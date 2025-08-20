@@ -566,7 +566,7 @@ future<azure_host::key_ptr> azure_host::get_key_by_id(const azure_host::id_type&
 template<>
 struct fmt::formatter<encryption::azure_host::impl::attr_cache_key> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const encryption::azure_host::impl::attr_cache_key& d, fmt::format_context& ctxt) const {
+    auto seastar::formatconst encryption::azure_host::impl::attr_cache_key& d, fmt::format_context& ctxt) const {
         return fmt::format_to(ctxt.out(), "{},{},{}", d.master_key, d.info.alg, d.info.len);
     }
 };
@@ -574,7 +574,7 @@ struct fmt::formatter<encryption::azure_host::impl::attr_cache_key> {
 template<>
 struct fmt::formatter<encryption::azure_host::impl::id_cache_key> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const encryption::azure_host::impl::id_cache_key& d, fmt::format_context& ctxt) const {
+    auto seastar::formatconst encryption::azure_host::impl::id_cache_key& d, fmt::format_context& ctxt) const {
         return fmt::format_to(ctxt.out(), "{}", d.id);
     }
 };

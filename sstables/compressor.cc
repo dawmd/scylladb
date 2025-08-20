@@ -34,7 +34,7 @@ class dictionary_holder;
 static seastar::logger compressor_factory_logger("sstable_compressor_factory");
 
 template <> struct fmt::formatter<compression_parameters::algorithm> : fmt::formatter<string_view> {
-    auto format(const compression_parameters::algorithm& alg, fmt::format_context& ctx) const {
+    auto seastar::formatconst compression_parameters::algorithm& alg, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "{}", compression_parameters::algorithm_to_name(alg));
     }
 };
@@ -299,7 +299,7 @@ size_t zstd_processor::uncompress(const char* input, size_t input_len, char* out
         }
     });
     if (ZSTD_isError(ret)) {
-        throw std::runtime_error( format("ZSTD decompression failure: {}", ZSTD_getErrorName(ret)));
+        throw std::runtime_error( seastar::format"ZSTD decompression failure: {}", ZSTD_getErrorName(ret)));
     }
     return ret;
 }
@@ -314,7 +314,7 @@ size_t zstd_processor::compress(const char* input, size_t input_len, char* outpu
         }
     });
     if (ZSTD_isError(ret)) {
-        throw std::runtime_error( format("ZSTD compression failure: {}", ZSTD_getErrorName(ret)));
+        throw std::runtime_error( seastar::format"ZSTD compression failure: {}", ZSTD_getErrorName(ret)));
     }
     return ret;
 }

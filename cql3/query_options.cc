@@ -147,7 +147,7 @@ void query_options::prepare(const std::vector<lw_shared_ptr<column_specification
         // This means that the user forgot to include a bound value with such name.
         if (!found_value_for_name) {
             throw exceptions::invalid_request_exception(
-                format("Missing value for bind marker with name: {}", spec_name));
+                seastar::format"Missing value for bind marker with name: {}", spec_name));
         }
     }
     _value_views = std::move(ordered_values);

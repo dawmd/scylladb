@@ -161,7 +161,7 @@ topology::transition_state transition_state_from_string(const sstring& s) {
             return e.first;
         }
     }
-    on_internal_error(tsmlogger, format("cannot map name {} to transition_state", s));
+    on_internal_error(tsmlogger, seastar::format"cannot map name {} to transition_state", s));
 }
 
 static std::unordered_map<node_state, sstring> node_state_to_name_map = {
@@ -181,7 +181,7 @@ node_state node_state_from_string(const sstring& s) {
             return e.first;
         }
     }
-    on_internal_error(tsmlogger, format("cannot map name {} to node_state", s));
+    on_internal_error(tsmlogger, seastar::format"cannot map name {} to node_state", s));
 }
 
 static std::unordered_map<topology_request, sstring> topology_request_to_name_map = {
@@ -223,7 +223,7 @@ global_topology_request global_topology_request_from_string(const sstring& s) {
         }
     }
 
-    on_internal_error(tsmlogger, format("cannot map name {} to global_topology_request", s));
+    on_internal_error(tsmlogger, seastar::format"cannot map name {} to global_topology_request", s));
 }
 
 static std::unordered_map<cleanup_status, sstring> cleanup_status_to_name_map = {
@@ -253,7 +253,7 @@ topology::upgrade_state_type upgrade_state_from_string(const sstring& s) {
             return e.first;
         }
     }
-    on_internal_error(tsmlogger, format("cannot map name {} to upgrade_state", s));
+    on_internal_error(tsmlogger, seastar::format"cannot map name {} to upgrade_state", s));
 }
 
 future<> topology_state_machine::await_not_busy() {

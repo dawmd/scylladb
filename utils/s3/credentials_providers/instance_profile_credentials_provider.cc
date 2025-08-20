@@ -74,7 +74,7 @@ s3::aws_credentials instance_profile_credentials_provider::parse_creds(const sst
 
     if (document.HasParseError()) {
         throw std::runtime_error(
-            format("Failed to parse EC2 Metadata credentials. Reason: {} (offset: {})", GetParseError_En(document.GetParseError()), document.GetErrorOffset()));
+            seastar::format"Failed to parse EC2 Metadata credentials. Reason: {} (offset: {})", GetParseError_En(document.GetParseError()), document.GetErrorOffset()));
     }
 
     // Retrieve credentials

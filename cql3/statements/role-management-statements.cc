@@ -369,7 +369,7 @@ future<> list_roles_statement::check_access(query_processor& qp, const service::
 
         if (_grantee && !user_has_grantee()) {
             throw exceptions::unauthorized_exception(
-                    format("You are not authorized to view the roles granted to role '{}'.", *_grantee));
+                    seastar::format"You are not authorized to view the roles granted to role '{}'.", *_grantee));
         }
     });
 }

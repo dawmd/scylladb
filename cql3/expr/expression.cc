@@ -114,7 +114,7 @@ extract_column_value(const column_definition* cdef, const evaluation_inputs& inp
             int32_t index = inputs.selection->index_of(*cdef);
             if (index == -1) {
                 throw std::runtime_error(
-                        format("Column definition {} does not match any column in the query selection",
+                        seastar::format"Column definition {} does not match any column in the query selection",
                         cdef->name_as_text()));
             }
             return managed_bytes_opt(inputs.static_and_regular_columns[index]);
@@ -460,7 +460,7 @@ bool_or_null like(const expression& lhs, const expression& rhs, const evaluation
     data_type lhs_type = type_of(lhs)->underlying_type();
     if (!lhs_type->is_string()) {
         throw exceptions::invalid_request_exception(
-                format("LIKE is allowed only on string types, which {:user} is not", lhs));
+                seastar::format"LIKE is allowed only on string types, which {:user} is not", lhs));
     }
     std::pair<managed_bytes_opt, managed_bytes_opt> sides_bytes =
         evaluate_binop_sides(lhs, rhs, oper_t::LIKE, inputs);
@@ -2156,7 +2156,7 @@ bool is_partition_token_for_schema(const function_call& fun_call, const schema& 
             // A sanity check that we didn't call the function on an unprepared expression.
             if (is<unresolved_identifier>(cur_argument)) {
                 on_internal_error(expr_logger,
-                                  format("called is_partition_token with unprepared expression: {}", fun_call));
+                                  seastar::format"called is_partition_token with unprepared expression: {}", fun_call));
             }
 
             return false;

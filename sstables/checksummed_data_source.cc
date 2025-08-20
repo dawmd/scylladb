@@ -60,7 +60,7 @@ public:
         // chunk-aligned position of the file input stream.
         uint64_t chunk_size = checksum.chunk_size;
         if (chunk_size == 0 || (chunk_size & (chunk_size - 1)) != 0) {
-            on_internal_error(sstlog, format("Invalid chunk size: {}", chunk_size));
+            on_internal_error(sstlog, seastar::format"Invalid chunk size: {}", chunk_size));
         }
         _chunk_size_trailing_zeros = count_trailing_zeros(chunk_size);
         if (_pos > _file_len) {
@@ -168,7 +168,7 @@ public:
         }
         uint64_t chunk_size = _checksum.chunk_size;
         if (_pos + n > _end_pos) {
-            on_internal_error(sstlog, format("Skipping over the end position is disallowed: current pos={}, end pos={}, skip len={}", _pos, _end_pos, n));
+            on_internal_error(sstlog, seastar::format"Skipping over the end position is disallowed: current pos={}, end pos={}, skip len={}", _pos, _end_pos, n));
         }
         _pos += n;
         if (_pos == _end_pos) {

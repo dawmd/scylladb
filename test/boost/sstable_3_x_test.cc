@@ -2941,7 +2941,7 @@ SEASTAR_TEST_CASE(test_uncompressed_collections_read) {
                     auto cmp2 = compare_unsigned(utf8_type->decompose(val[idx].second), entry.second.value().linearize());
                     if (cmp1 != 0 || cmp2 != 0) {
                         BOOST_FAIL(
-                            format("Expected row with column {} having value ({}, {}), but it has value ({}, {})",
+                            seastar::format"Expected row with column {} having value ({}, {}), but it has value ({}, {})",
                                    def.id,
                                    int32_type->decompose(int32_t(val[idx].first)),
                                    utf8_type->decompose(val[idx].second),
@@ -3004,7 +3004,7 @@ static mutation_reader compacted_sstable_reader(test_env& env, schema_ptr s,
     auto generations = generations_from_values(gen_values);
     lw_shared_ptr<replica::memtable> mt = make_lw_shared<replica::memtable>(s);
 
-    auto sstables = open_sstables(env, s, format("test/resource/sstables/3.x/uncompressed/{}", table_name), generations);
+    auto sstables = open_sstables(env, s, seastar::format"test/resource/sstables/3.x/uncompressed/{}", table_name), generations);
     sstables::shared_sstable compacted_sst;
 
     auto desc = sstables::compaction_descriptor(std::move(sstables));
@@ -3161,7 +3161,7 @@ SEASTAR_TEST_CASE(compact_deleted_cell) {
 }
 
 static sstring get_write_test_path(sstring table_name) {
-    return format("test/resource/sstables/3.x/uncompressed/write_{}", table_name);
+    return seastar::format"test/resource/sstables/3.x/uncompressed/write_{}", table_name);
 }
 
 // This method should not be called for compressed sstables because compression is not deterministic
@@ -4525,7 +4525,7 @@ SEASTAR_TEST_CASE(test_write_overlapped_range_tombstones) {
 }
 
 static sstring get_read_index_test_path(sstring table_name) {
-    return format("test/resource/sstables/3.x/uncompressed/read_{}", table_name);
+    return seastar::format"test/resource/sstables/3.x/uncompressed/read_{}", table_name);
 }
 
 static std::unique_ptr<abstract_index_reader> get_index_reader(shared_sstable sst, reader_permit permit) {
@@ -5177,7 +5177,7 @@ static void test_sstable_write_large_cell_f(schema_ptr s, reader_permit permit, 
     auto f = [&i, &expected, &pk, &threshold](const schema& s, const sstables::key& partition_key,
                      const clustering_key_prefix* clustering_key, uint64_t row_size, uint64_t range_tombstones, uint64_t dead_rows,
                      const column_definition* cdef, uint64_t cell_size, uint64_t collection_elements) {
-        BOOST_TEST_MESSAGE(format("i={} ck={} cell_size={} threshold={}", i, clustering_key ? format("{}", *clustering_key) : "null", cell_size, threshold));
+        BOOST_TEST_MESSAGE(format("i={} ck={} cell_size={} threshold={}", i, clustering_key ? seastar::format"{}", *clustering_key) : "null", cell_size, threshold));
         BOOST_REQUIRE(std::ranges::equal(pk.components(s), partition_key.to_partition_key(s).components(s)));
         BOOST_REQUIRE_LT(i, expected.size());
         BOOST_REQUIRE_GT(cell_size, threshold);

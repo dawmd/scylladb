@@ -95,7 +95,7 @@ auto repeat_until(milliseconds timeout, std::function<future<bool>()> func) -> f
 }
 
 auto print_addr(const inet_address& addr) -> sstring {
-    return format("{}", addr);
+    return seastar::format"{}", addr);
 }
 
 

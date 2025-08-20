@@ -80,7 +80,7 @@ public:
         sstlog.trace("mp_row_consumer_m {}: consume_range_tombstone_start(ck={}, k={}, t={})", fmt::ptr(this), ck, k, t);
         if (_mf_filter->current_tombstone()) {
             throw sstables::malformed_sstable_exception(
-                    format("Range tombstones have to be disjoint: current opened range tombstone {}, new tombstone {}",
+                    seastar::format"Range tombstones have to be disjoint: current opened range tombstone {}, new tombstone {}",
                            _mf_filter->current_tombstone(), t));
         }
         auto pos = position_in_partition(position_in_partition::range_tag_t(), k, std::move(ck));
@@ -91,12 +91,12 @@ public:
         sstlog.trace("mp_row_consumer_m {}: consume_range_tombstone_end(ck={}, k={}, t={})", fmt::ptr(this), ck, k, t);
         if (!_mf_filter->current_tombstone()) {
             throw sstables::malformed_sstable_exception(
-                    format("Closing range tombstone that wasn't opened: clustering {}, kind {}, tombstone {}",
+                    seastar::format"Closing range tombstone that wasn't opened: clustering {}, kind {}, tombstone {}",
                            ck, k, t));
         }
         if (_mf_filter->current_tombstone() != t) {
             throw sstables::malformed_sstable_exception(
-                    format("Range tombstone with ck {} and two different tombstones at ends: {}, {}",
+                    seastar::format"Range tombstone with ck {} and two different tombstones at ends: {}, {}",
                            ck, _mf_filter->current_tombstone(), t));
         }
         auto pos = position_in_partition(position_in_partition::range_tag_t(), k, std::move(ck));
@@ -107,11 +107,11 @@ public:
         sstlog.trace("mp_row_consumer_m {}: consume_range_tombstone_boundary(pos={}, left={}, right={})", fmt::ptr(this), pos, left, right);
         if (!_mf_filter->current_tombstone()) {
             throw sstables::malformed_sstable_exception(
-                    format("Closing range tombstone that wasn't opened: pos {}, tombstone {}", pos, left));
+                    seastar::format"Closing range tombstone that wasn't opened: pos {}, tombstone {}", pos, left));
         }
         if (_mf_filter->current_tombstone() != left) {
             throw sstables::malformed_sstable_exception(
-                    format("Range tombstone at {} and two different tombstones at ends: {}, {}",
+                    seastar::format"Range tombstone at {} and two different tombstones at ends: {}, {}",
                            pos, _mf_filter->current_tombstone(), left));
         }
         return on_range_tombstone_change(std::move(pos), right);
@@ -167,7 +167,7 @@ public:
     void check_schema_mismatch(const column_translation::column_info& column_info, const column_definition& column_def) const {
         if (column_info.schema_mismatch) {
             throw malformed_sstable_exception(
-                    format("{} definition in serialization header does not match schema. Expected {} but got {}",
+                    seastar::format"{} definition in serialization header does not match schema. Expected {} but got {}",
                         column_def.name_as_text(),
                         column_def.type->name(),
                         column_info.type->name()));
@@ -1156,7 +1156,7 @@ private:
             if (!is_boundary_between_adjacent_intervals(_range_tombstone_kind)) {
                 if (!is_bound_kind(_range_tombstone_kind)) {
                     throw sstables::malformed_sstable_exception(
-                        format("Corrupted range tombstone: invalid boundary type {}", _range_tombstone_kind));
+                        seastar::format"Corrupted range tombstone: invalid boundary type {}", _range_tombstone_kind));
                 }
                 _sst->get_stats().on_range_tombstone_read();
                 _state = state::FLAGS;
@@ -1306,7 +1306,7 @@ public:
         sstlog.trace("mx_sstable_mutation_reader {}: init with _pr={}", fmt::ptr(this), _pr.get());
         if (reversed()) {
             if (!_single_partition_read) {
-                on_internal_error(sstlog, format(
+                on_internal_error(sstlog, seastar::format
                         // Not only in the reader, they are disabled in CQL.
                         "mx reader: multi-partition reversed queries are not supported yet;"
                         " partition range: {}", pr));

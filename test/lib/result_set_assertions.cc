@@ -56,9 +56,9 @@ row_assertion::describe(schema_ptr schema) const {
             BOOST_FAIL(format("Schema is missing column definition for '{}'", name));
         }
         if (value.is_null()) {
-            return format("{}=null", to_sstring(name));
+            return seastar::format"{}=null", to_sstring(name));
         } else {
-            return format("{}=\"{}\"", to_sstring(name), def->type->to_string(def->type->decompose(value)));
+            return seastar::format"{}=\"{}\"", to_sstring(name), def->type->to_string(def->type->decompose(value)));
         }
     }), ", "));
 }

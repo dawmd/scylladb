@@ -119,7 +119,7 @@ sstring add_keyspace(cql_test_env& e, std::unordered_map<sstring, int> dc_rf, in
     auto ks_name = fmt::format("keyspace{}", ks_id.fetch_add(1));
     sstring rf_options;
     for (auto& [dc, rf] : dc_rf) {
-        rf_options += format(", '{}': {}", dc, rf);
+        rf_options += seastar::format", '{}': {}", dc, rf);
     }
     e.execute_cql(fmt::format("create keyspace {} with replication = {{'class': 'NetworkTopologyStrategy'{}}}"
                               " and tablets = {{'enabled': true, 'initial': {}}}",
@@ -4156,7 +4156,7 @@ future<> test_create_keyspace(sstring ks_name, std::optional<bool> tablets_opt, 
         if (tablets_opt) {
             if (*tablets_opt) {
                 if (initial_tablets) {
-                    extra = format(" and tablets = {{ 'initial' : {} }}", initial_tablets);
+                    extra = seastar::format" and tablets = {{ 'initial' : {} }}", initial_tablets);
                 } else {
                     extra = " and tablets = { 'enabled' : true }";
                 }
@@ -4164,7 +4164,7 @@ future<> test_create_keyspace(sstring ks_name, std::optional<bool> tablets_opt, 
                 extra = " and tablets = { 'enabled' : false }";
             }
         }
-        auto q = format("create keyspace {} with replication = {{ 'class' : '{}', 'replication_factor' : 1 }}{};", ks_name, replication_strategy, extra);
+        auto q = seastar::format"create keyspace {} with replication = {{ 'class' : '{}', 'replication_factor' : 1 }}{};", ks_name, replication_strategy, extra);
         testlog.debug("{}", q);
         e.execute_cql(q).get();
         BOOST_REQUIRE(e.local_db().has_keyspace(ks_name));

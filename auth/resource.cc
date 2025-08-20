@@ -389,7 +389,7 @@ resource_set expand_resource_family(const resource& rr) {
 
 template <> struct fmt::formatter<auth::role_resource_view> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const auth::role_resource_view& v, fmt::format_context& ctx) const {
+    auto seastar::formatconst auth::role_resource_view& v, fmt::format_context& ctx) const {
         const auto role = v.role();
         if (role) {
             return fmt::format_to(ctx.out(), "<role {}>", *role);
@@ -401,14 +401,14 @@ template <> struct fmt::formatter<auth::role_resource_view> {
 
 template <> struct fmt::formatter<auth::service_level_resource_view> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const auth::service_level_resource_view& v, fmt::format_context& ctx) const {
+    auto seastar::formatconst auth::service_level_resource_view& v, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "<all service levels>");
     }
 };
 
 template <> struct fmt::formatter<auth::functions_resource_view> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const auth::functions_resource_view& v, fmt::format_context& ctx) const {
+    auto seastar::formatconst auth::functions_resource_view& v, fmt::format_context& ctx) const {
         const auto keyspace = v.keyspace();
         if (!keyspace) {
             return fmt::format_to(ctx.out(), "<all functions>");

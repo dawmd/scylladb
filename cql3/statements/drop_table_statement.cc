@@ -39,7 +39,7 @@ future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, cql3::cql_w
         // we should really throw invalid_request_exception but for legacy reasons
         // with throw unauthorized_exception here
         co_return coroutine::exception(std::make_exception_ptr(exceptions::unauthorized_exception(
-                   format("Cannot DROP cdc log table {}", column_family()))));
+                   seastar::format"Cannot DROP cdc log table {}", column_family()))));
     }
 
     try {

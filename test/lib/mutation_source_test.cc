@@ -2540,14 +2540,14 @@ void for_each_schema_change(std::function<void(schema_ptr, const utils::chunked_
     auto s = tests::data_model::table_description({ { "pk1", int32_type }, { "pk2", int32_type }, { "pk3", int32_type }, },
                                                   { { "ck1", utf8_type }, { "ck2", utf8_type }, { "ck3", utf8_type }, });
     for (auto& sc : static_columns) {
-        auto name = format("s{}", sc.id);
+        auto name = seastar::format"s{}", sc.id);
         s.add_static_column(name, sc.type);
         if (sc.old_type != empty_type) {
             s.add_old_static_column(name, sc.old_type);
         }
     }
     for (auto& rc : regular_columns) {
-        auto name = format("r{}", rc.id);
+        auto name = seastar::format"r{}", rc.id);
         s.add_regular_column(name, rc.type);
         if (rc.old_type != empty_type) {
             s.add_old_regular_column(name, rc.old_type);
@@ -2567,7 +2567,7 @@ void for_each_schema_change(std::function<void(schema_ptr, const utils::chunked_
 
     // Single column in a static row, nothing else
     for (auto& [id, type, alter_to, data_generators, old_type] : static_columns) {
-        auto name = format("s{}", id);
+        auto name = seastar::format"s{}", id);
         for (auto& dg : data_generators) {
             auto m = tests::data_model::mutation_description(random_partition_key());
             m.add_static_cell(name, dg());
@@ -2578,7 +2578,7 @@ void for_each_schema_change(std::function<void(schema_ptr, const utils::chunked_
     // Partition with rows each having a single column
     auto m = tests::data_model::mutation_description(random_partition_key());
     for (auto& [id, type, alter_to, data_generators, old_type] : regular_columns) {
-        auto name = format("r{}", id);
+        auto name = seastar::format"r{}", id);
         for (auto& dg : data_generators) {
             m.add_clustered_cell(random_clustering_key(), name, dg());
         }
@@ -2589,11 +2589,11 @@ void for_each_schema_change(std::function<void(schema_ptr, const utils::chunked_
     for (auto i = 0u; i < max_generator_count; i++) {
         auto m = tests::data_model::mutation_description(random_partition_key());
         for (auto& [id, type, alter_to, data_generators, old_type] : static_columns) {
-            auto name = format("s{}", id);
+            auto name = seastar::format"s{}", id);
             m.add_static_cell(name, data_generators[std::min<size_t>(i, data_generators.size() - 1)]());
         }
         for (auto& [id, type, alter_to, data_generators, old_type] : regular_columns) {
-            auto name = format("r{}", id);
+            auto name = seastar::format"r{}", id);
             m.add_clustered_cell(random_clustering_key(), name, data_generators[std::min<size_t>(i, data_generators.size() - 1)]());
         }
 
@@ -2714,7 +2714,7 @@ void for_each_schema_change(std::function<void(schema_ptr, const utils::chunked_
     s = original_s;
     // Rename clustering key
     for (auto i = 1; i <= 3; i++) {
-        s.rename_clustering_column(format("ck{}", i), format("ck{}", 100 - i));
+        s.rename_clustering_column(format("ck{}", i), seastar::format"ck{}", 100 - i));
         schemas.emplace_back(s.build());
     }
     test_mutated_schemas();
@@ -2722,7 +2722,7 @@ void for_each_schema_change(std::function<void(schema_ptr, const utils::chunked_
     s = original_s;
     // Rename partition key
     for (auto i = 1; i <= 3; i++) {
-        s.rename_partition_column(format("pk{}", i), format("pk{}", 100 - i));
+        s.rename_partition_column(format("pk{}", i), seastar::format"pk{}", 100 - i));
         schemas.emplace_back(s.build());
     }
     test_mutated_schemas();

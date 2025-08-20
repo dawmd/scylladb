@@ -110,7 +110,7 @@ schema_ptr drop_index_statement::lookup_indexed_table(query_processor& qp) const
         return nullptr;
     }
     throw exceptions::invalid_request_exception(
-            format("Index '{}' could not be found in any of the tables of keyspace '{}'", _index_name, keyspace()));
+            seastar::format"Index '{}' could not be found in any of the tables of keyspace '{}'", _index_name, keyspace()));
 }
 
 }

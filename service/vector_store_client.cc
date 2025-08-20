@@ -525,7 +525,7 @@ void vector_store_client::start_background_tasks() {
     (void)try_with_gate(_impl->tasks_gate, [this] {
         return _impl->refresh_addr_task();
     }).handle_exception([](std::exception_ptr eptr) {
-        on_internal_error_noexcept(vslogger, format("The Vector Store Client refresh task failed: {}", eptr));
+        on_internal_error_noexcept(vslogger, seastar::format"The Vector Store Client refresh task failed: {}", eptr));
     });
 }
 
@@ -554,7 +554,7 @@ auto vector_store_client::ann(keyspace_name keyspace, index_name name, schema_pt
         co_return std::unexpected{disabled{}};
     }
 
-    auto path = format("/api/v1/indexes/{}/{}/ann", keyspace, name);
+    auto path = seastar::format"/api/v1/indexes/{}/{}/ann", keyspace, name);
     auto content = write_ann_json(std::move(embedding), limit);
 
     auto resp = co_await _impl->make_request(operation_type::POST, std::move(path), std::move(content), as);

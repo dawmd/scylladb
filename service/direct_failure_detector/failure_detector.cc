@@ -302,7 +302,7 @@ void failure_detector::impl::create_worker(pinger::endpoint_id ep) {
         // Since `add_endpoint` and `remove_endpoint` give strong exception guarantees, there must be no worker.
         // If there is, there's a bug.
         guards.back().cancel();
-        on_internal_error(logger, format("attempted to create worker for endpoint {} when one already exists", ep));
+        on_internal_error(logger, seastar::format"attempted to create worker for endpoint {} when one already exists", ep));
     }
 
     for (auto& [_, l]: _listeners_liveness) {
@@ -312,7 +312,7 @@ void failure_detector::impl::create_worker(pinger::endpoint_id ep) {
             // `endpoint_liveness` entries in the `liveness` maps are created and destroyed together with `endpoint_workers`,
             // so the logic from comment above applies as well.
             guards.back().cancel();
-            on_internal_error(logger, format("liveness info for endpoint {} already exists when trying to create a worker", ep));
+            on_internal_error(logger, seastar::format"liveness info for endpoint {} already exists when trying to create a worker", ep));
         }
     }
 
@@ -330,7 +330,7 @@ future<> failure_detector::impl::destroy_worker(pinger::endpoint_id ep) {
     if (it == _shard_workers.end()) {
         // If `destroy_worker` was invoked it means that `_workers` contained `ep`.
         // Since `add_endpoint` and `remove_endpoint` give strong exception guarantees, the worker must be present. If not, there's a bug.
-        on_internal_error(logger, format("attempted to destroy worker for endpoint {} but no such worker exists", ep));
+        on_internal_error(logger, seastar::format"attempted to destroy worker for endpoint {} but no such worker exists", ep));
     }
     return destroy_worker(it);
 }

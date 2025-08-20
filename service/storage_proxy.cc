@@ -213,7 +213,7 @@ enum class storage_proxy_remote_read_verb {
 }
 
 template <> struct fmt::formatter<service::storage_proxy_remote_read_verb> : fmt::formatter<string_view> {
-    auto format(service::storage_proxy_remote_read_verb verb, fmt::format_context& ctx) const {
+    auto seastar::formatservice::storage_proxy_remote_read_verb verb, fmt::format_context& ctx) const {
         std::string_view name;
         using enum service::storage_proxy_remote_read_verb;
         switch (verb) {
@@ -1174,7 +1174,7 @@ static unsigned get_cas_shard(const schema& s, dht::token token, const locator::
         return tablet_map.get_primary_replica(tablet_id).shard % smp::count;
     } else {
         on_internal_error(paxos::paxos_state::logger,
-            format("failed to detect shard for reads for non-tablet-based rs {}, table {}.{}", 
+            seastar::format"failed to detect shard for reads for non-tablet-based rs {}, table {}.{}", 
                 rs.get_type(), s.ks_name(), s.cf_name()));
     }
 }
@@ -2176,7 +2176,7 @@ template<class T> struct dependent_false : std::false_type {};
 
 void paxos_response_handler::append_peer_error(sstring& target, locator::host_id peer, std::exception_ptr error) {
     if (!target.ends_with("...")) {
-        auto new_target = format("{}host_id {} -> {};", target, peer, error);
+        auto new_target = seastar::format"{}host_id {} -> {};", target, peer, error);
         target = new_target.size() > 1000 ? target + "..." : std::move(new_target);
     }
 }
@@ -2241,7 +2241,7 @@ future<paxos::prepare_summary> paxos_response_handler::prepare_ballot(utils::UUI
                         append_peer_error(request_tracker.errors_message, peer, ex);
                         if (_required_participants + request_tracker.errors > _live_endpoints.size()) {
                             auto e = std::make_exception_ptr(mutation_write_failure_exception(
-                                format("Failed to prepare ballot {} for {}.{}. Replica errors: {}",
+                                seastar::format"Failed to prepare ballot {} for {}.{}. Replica errors: {}",
                                     ballot, _schema->ks_name(), _schema->cf_name(), request_tracker.errors_message),
                                 _cl_for_paxos, summary.committed_ballots_by_replica.size(),
                                 request_tracker.errors, _required_participants, db::write_type::CAS));
@@ -2443,7 +2443,7 @@ future<bool> paxos_response_handler::accept_proposal(lw_shared_ptr<paxos::propos
                 // timeout_if_partially_accepted or not because failing is always safe - a client cannot
                 // assume that the value was not committed.
                 auto e = std::make_exception_ptr(mutation_write_failure_exception(
-                            format("Failed to accept {} for {}.{}. Replica errors: {}",
+                            seastar::format"Failed to accept {} for {}.{}. Replica errors: {}",
                                 *proposal, _schema->ks_name(), _schema->cf_name(),
                                 request_tracker.errors_message),
                             _cl_for_paxos, request_tracker.non_error_replies(),
@@ -2473,7 +2473,7 @@ future<bool> paxos_response_handler::accept_proposal(lw_shared_ptr<paxos::propos
                     // which uses write_timeout_exception to signal any "unknown" state.
                     // To be changed in scope of work on https://issues.apache.org/jira/browse/CASSANDRA-15350
                     auto e = std::make_exception_ptr(mutation_write_timeout_exception(
-                        format("Failed to accept {} for {}.{}: write timeout due to uncertainty. Replica errors: {}",
+                        seastar::format"Failed to accept {} for {}.{}: write timeout due to uncertainty. Replica errors: {}",
                             *proposal, _schema->ks_name(), _schema->cf_name(), request_tracker.errors_message),
                         _cl_for_paxos, request_tracker.accepts, _required_participants, db::write_type::CAS));
                     request_tracker.set_exception(std::move(e));
@@ -2491,7 +2491,7 @@ future<bool> paxos_response_handler::accept_proposal(lw_shared_ptr<paxos::propos
 // debug output in mutate_internal needs this
 template <>
 struct fmt::formatter<service::paxos_response_handler> : fmt::formatter<string_view> {
-    auto format(const service::paxos_response_handler& h, fmt::format_context& ctx) const {
+    auto seastar::formatconst service::paxos_response_handler& h, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "paxos_response_handler{{{}}}", h.id());
     }
 };
@@ -2698,7 +2698,7 @@ db::view::update_backlog storage_proxy::get_view_update_backlog() {
 
 future<std::optional<db::view::update_backlog>> storage_proxy::get_view_update_backlog_if_changed() {
     if (this_shard_id() != 0) {
-        on_internal_error(slogger, format("getting view update backlog for gossip on a non-gossip shard {}", this_shard_id()));
+        on_internal_error(slogger, seastar::format"getting view update backlog for gossip on a non-gossip shard {}", this_shard_id()));
     }
     return _max_view_update_backlog.fetch_if_changed();
 }
@@ -3135,20 +3135,20 @@ struct read_repair_mutation {
 }
 
 template <> struct fmt::formatter<service::hint_wrapper> : fmt::formatter<string_view> {
-    auto format(const service::hint_wrapper& h, fmt::format_context& ctx) const {
+    auto seastar::formatconst service::hint_wrapper& h, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "hint_wrapper{{{}}}", h.mut);
     }
 };
 
 template <> struct fmt::formatter<service::batchlog_replay_mutation> : fmt::formatter<string_view> {
-    auto format(const service::batchlog_replay_mutation& h, fmt::format_context& ctx) const {
+    auto seastar::formatconst service::batchlog_replay_mutation& h, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "batchlog_replay_mutation{{{}}}", h.mut);
     }
 };
 
 template <>
 struct fmt::formatter<service::read_repair_mutation> : fmt::formatter<string_view> {
-    auto format(const service::read_repair_mutation& m, fmt::format_context& ctx) const {
+    auto seastar::formatconst service::read_repair_mutation& m, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "{}", m.value);
     }
 };
@@ -6573,7 +6573,7 @@ future<bool> storage_proxy::cas(schema_ptr schema, cas_shard cas_shard, shared_p
     auto& table = local_db().find_column_family(schema->id());
     if (table.uses_tablets()) {
         if (!_features.lwt_with_tablets) {
-            auto msg = format("Cannot use LightWeight Transactions for table {}.{}: LWT is not yet supported with tablets", schema->ks_name(), schema->cf_name());
+            auto msg = seastar::format"Cannot use LightWeight Transactions for table {}.{}: LWT is not yet supported with tablets", schema->ks_name(), schema->cf_name());
             co_await coroutine::return_exception(exceptions::invalid_request_exception(msg));
         }
         co_await remote().paxos_store().ensure_initialized(*schema, write_timeout);

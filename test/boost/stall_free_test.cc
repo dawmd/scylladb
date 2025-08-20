@@ -490,7 +490,7 @@ SEASTAR_THREAD_TEST_CASE(test_clear_gently_unordered_map) {
     constexpr int count = 100;
 
     for (int i = 0; i < count; i++) {
-        c.insert(std::pair<int, sstring>(i, format("{}", i)));
+        c.insert(std::pair<int, sstring>(i, seastar::format"{}", i)));
     }
 
     utils::clear_gently(c).get();

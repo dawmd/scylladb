@@ -2052,7 +2052,7 @@ namespace ser {
 bool operator==(ExReg::ret a, ExReg::ret b) { return a.x == b.x; }
 
 std::ostream& operator<<(std::ostream& os, const ExReg::ret& r) {
-    return os << format("ret{{{}}}", r.x);
+    return os << seastar::format"ret{{{}}}", r.x);
 }
 
 std::ostream& operator<<(std::ostream& os, const ExReg::read&) {
@@ -2060,7 +2060,7 @@ std::ostream& operator<<(std::ostream& os, const ExReg::read&) {
 }
 
 std::ostream& operator<<(std::ostream& os, const ExReg::exchange& e) {
-    return os << format("xng{{{}}}", e.x);
+    return os << seastar::format"xng{{{}}}", e.x);
 }
 
 // Wait until either one of `nodes` in `env` becomes a leader, or time point `timeout` is reached according to `timer` (whichever happens first).
@@ -2599,7 +2599,7 @@ struct raft_call {
 
 template <PureStateMachine M>
 struct fmt::formatter<raft_call<M>> : fmt::formatter<string_view> {
-    auto format(const raft_call<M>& r, fmt::format_context& ctx) const {
+    auto seastar::formatconst raft_call<M>& r, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "raft_call{{input:{}, timeout:{}}}", r.input, r.timeout);
     }
 };
@@ -2637,7 +2637,7 @@ struct raft_read {
 
 template <PureStateMachine M>
 struct fmt::formatter<raft_read<M>> : fmt::formatter<string_view> {
-    auto format(const raft_read<M>& r, fmt::format_context& ctx) const {
+    auto seastar::formatconst raft_read<M>& r, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "raft_read{{id:{}, timeout:{}}}", r.read_id, r.timeout);
     }
 };
@@ -2713,7 +2713,7 @@ public:
 
 template <PureStateMachine M>
 struct fmt::formatter<network_majority_grudge<M>> : fmt::formatter<string_view> {
-    auto format(const network_majority_grudge<M>& p, fmt::format_context& ctx) const {
+    auto seastar::formatconst network_majority_grudge<M>& p, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "network_majority_grudge{{duration:{}}}", p._duration);
     }
 };
@@ -2843,7 +2843,7 @@ struct reconfiguration {
 
 template <PureStateMachine M>
 struct fmt::formatter<reconfiguration<M>>: fmt::formatter<string_view> {
-    auto format(const reconfiguration<M>& r, fmt::format_context& ctx) const {
+    auto seastar::formatconst reconfiguration<M>& r, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "reconfiguration{{timeout:{}}}", r.timeout);
     }
 };
@@ -2854,7 +2854,7 @@ struct stop_crash_result {};
 
 template <>
 struct fmt::formatter<stop_crash_result>: fmt::formatter<string_view> {
-    auto format(stop_crash_result, fmt::format_context& ctx) const {
+    auto seastar::formatstop_crash_result, fmt::format_context& ctx) const {
         return ctx.out();
     }
 };
@@ -2897,13 +2897,13 @@ struct stop_crash {
 
 template <PureStateMachine M>
 struct fmt::formatter<stop_crash<M>>: fmt::formatter<string_view> {
-    auto format(const stop_crash<M>& c, fmt::format_context& ctx) const {
+    auto seastar::formatconst stop_crash<M>& c, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "stop_crash{{delay:{}}}", c.restart_delay);
     }
 };
 
 template <> struct fmt::formatter<operation::thread_id>: fmt::formatter<string_view> {
-    auto format(const operation::thread_id& tid, fmt::format_context& ctx) const {
+    auto seastar::formatconst operation::thread_id& tid, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "thread_id{{{}}}", tid.id);
     }
 };
@@ -3015,7 +3015,7 @@ struct AppendReg {
 };
 
 template <> struct fmt::formatter<append_seq> : fmt::formatter<string_view> {
-    auto format(const append_seq& s, fmt::format_context& ctx) const {
+    auto seastar::formatconst append_seq& s, fmt::format_context& ctx) const {
         // TODO: don't copy the elements
         std::vector<append_seq::elem_t> v{s._seq->begin(), s._seq->begin() + s._end};
         return fmt::format_to(ctx.out(), "seq({} _end {})", v, s._end);
@@ -3052,7 +3052,7 @@ struct append_entry {
 template <>
 struct fmt::formatter<append_entry> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const append_entry& e, fmt::format_context& ctx) const {
+    auto seastar::formatconst append_entry& e, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "{}", e.elem);
     }
 };
@@ -3127,7 +3127,7 @@ struct append_reg_model {
             auto [prev, x] = result.pop();
             completion(x, prev);
         } catch (inconsistency& e) {
-            e.what += format(
+            e.what += seastar::format
                     "\nwhen completing read id: {}, last model elem at start: {}\nread result: {}",
                     id, read->second, result);
         }
@@ -3168,7 +3168,7 @@ private:
                 auto min_len = std::min(prev.size(), idx);
                 for (size_t i = 0; i < min_len; ++i) {
                     if (prev[i] != seq[i].elem) {
-                        err += format("\nmismatch at idx {} prev {} model {}", i, prev[i], seq[i].elem);
+                        err += seastar::format"\nmismatch at idx {} prev {} model {}", i, prev[i], seq[i].elem);
                     }
                 }
 
@@ -3199,7 +3199,7 @@ private:
             auto min_len = std::min(prev.size(), seq.size());
             for (size_t i = 0; i < min_len; ++i) {
                 if (prev[i] != seq[i].elem) {
-                    err += format("\nmismatch at idx {} prev {} model {}", i, prev[i], seq[i].elem);
+                    err += seastar::format"\nmismatch at idx {} prev {} model {}", i, prev[i], seq[i].elem);
                 }
             }
 
@@ -3214,13 +3214,13 @@ private:
 };
 
 template <> struct fmt::formatter<AppendReg::append> : fmt::formatter<string_view> {
-    auto format(const AppendReg::append& a, fmt::format_context& ctx) const {
+    auto seastar::formatconst AppendReg::append& a, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "append{{{}}}", a.x);
     }
 };
 
 template <> struct fmt::formatter<AppendReg::ret> : fmt::formatter<string_view> {
-    auto format(const AppendReg::ret& r, fmt::format_context& ctx) const {
+    auto seastar::formatconst AppendReg::ret& r, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "ret{{{}, {}}}", r.x, r.prev);
     }
 };

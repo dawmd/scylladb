@@ -17,7 +17,7 @@
 namespace exceptions {
 
 truncate_exception::truncate_exception(std::exception_ptr ep)
-    : request_execution_exception(exceptions::exception_code::TRUNCATE_ERROR, format("Error during truncate: {}", ep))
+    : request_execution_exception(exceptions::exception_code::TRUNCATE_ERROR, seastar::format"Error during truncate: {}", ep))
 {}
 
 const std::unordered_map<exception_code, sstring>& exception_map() {
@@ -95,16 +95,16 @@ prepared_query_not_found_exception::prepared_query_not_found_exception(bytes id)
     { }
 
 already_exists_exception::already_exists_exception(sstring ks_name_, sstring cf_name_)
-    : already_exists_exception{std::move(ks_name_), std::move(cf_name_), format("Cannot add already existing table \"{}\" to keyspace \"{}\"", cf_name_, ks_name_)}
+    : already_exists_exception{std::move(ks_name_), std::move(cf_name_), seastar::format"Cannot add already existing table \"{}\" to keyspace \"{}\"", cf_name_, ks_name_)}
     { }
 
 already_exists_exception::already_exists_exception(sstring ks_name_)
-    : already_exists_exception{std::move(ks_name_), "", format("Cannot add existing keyspace \"{}\"", ks_name_)}
+    : already_exists_exception{std::move(ks_name_), "", seastar::format"Cannot add existing keyspace \"{}\"", ks_name_)}
     { }
 
 function_execution_exception::function_execution_exception(sstring func_name_, sstring detail, sstring ks_name_, std::vector<sstring> args_) noexcept
     : cassandra_exception{exception_code::FUNCTION_FAILURE,
-        format("execution of {} failed: {}", func_name_, detail)}
+        seastar::format"execution of {} failed: {}", func_name_, detail)}
     , ks_name(std::move(ks_name_))
     , func_name(std::move(func_name_))
     , args(std::move(args_))

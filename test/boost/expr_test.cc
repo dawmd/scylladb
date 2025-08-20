@@ -108,7 +108,7 @@ BOOST_AUTO_TEST_CASE(expr_visit_visitor_rvalue) {
 }
 
 static sstring expr_print(const expression& e) {
-    return format("{:user}", e);
+    return seastar::format"{:user}", e);
 }
 
 static sstring value_print(const cql3::raw_value& v, const expression& e) {

@@ -191,11 +191,11 @@ SEASTAR_TEST_CASE(test_invalid_user_type_statements) {
 
         // cannot have too many fields inside UDTs
         REQUIRE_INVALID(e, seastar::format("create type ut4 ({})", fmt::join(
-                std::views::iota(0, 1 << 15) | std::views::transform([] (int i) { return format("a{} int", i); }), ", ")),
-                format("A user type cannot have more than {} fields", (1 << 15) - 1));
+                std::views::iota(0, 1 << 15) | std::views::transform([] (int i) { return seastar::format"a{} int", i); }), ", ")),
+                seastar::format"A user type cannot have more than {} fields", (1 << 15) - 1));
 
         e.execute_cql(seastar::format("create type ut4 ({})", fmt::join(
-                std::views::iota(1, 1 << 15) | std::views::transform([] (int i) { return format("a{} int", i); }), ", "))).discard_result().get();
+                std::views::iota(1, 1 << 15) | std::views::transform([] (int i) { return seastar::format"a{} int", i); }), ", "))).discard_result().get();
         REQUIRE_INVALID(e, "alter type ut4 add b int",
                 "Cannot add new field to type ks.ut4: maximum number of fields reached");
 

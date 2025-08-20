@@ -511,7 +511,7 @@ std::optional<sstring> check_restricted_table_properties(
                       "are forbidden. You may override this restriction by setting restrict_twcs_without_default_ttl "
                       "configuration option to false.");
               case db::tri_mode_restriction_t::mode::WARN:
-                  return format("TimeWindowCompactionStrategy tables without a default_time_to_live "
+                  return seastar::format"TimeWindowCompactionStrategy tables without a default_time_to_live "
                       "may potentially introduce too many windows. Ensure that insert statements specify a "
                       "TTL (via USING TTL), when inserting data to this table. The restrict_twcs_without_default_ttl "
                       "configuration option can be changed to silence this warning or make it into an error");

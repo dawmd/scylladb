@@ -272,11 +272,11 @@ public:
     void set_version(token_metadata::version_t version) {
         if (version <= 0) {
             on_internal_error(tlogger,
-                format("token_metadata_impl::set_version: invalid new version {}", version));
+                seastar::format"token_metadata_impl::set_version: invalid new version {}", version));
         }
         if (version < _version) {
             on_internal_error(tlogger,
-                format("token_metadata_impl::set_version: new version can't be smaller than the previous one, "
+                seastar::format"token_metadata_impl::set_version: new version can't be smaller than the previous one, "
                        "new version {}, previous version {}", version, _version));
         }
         _version = version;
@@ -416,7 +416,7 @@ future<> token_metadata_impl::update_normal_tokens(std::unordered_set<token> tok
     }
 
     if (!_topology.has_node(endpoint)) {
-        on_internal_error(tlogger, format("token_metadata_impl: {} must be a member of topology to update normal tokens", endpoint));
+        on_internal_error(tlogger, seastar::format"token_metadata_impl: {} must be a member of topology to update normal tokens", endpoint));
     }
 
     bool should_sort_tokens = false;
@@ -469,7 +469,7 @@ future<> token_metadata_impl::update_normal_tokens(std::unordered_set<token> tok
 
 size_t token_metadata_impl::first_token_index(const token& start) const {
     if (_sorted_tokens.empty()) {
-        auto msg = format("sorted_tokens is empty in first_token_index!");
+        auto msg = seastar::format"sorted_tokens is empty in first_token_index!");
         tlogger.error("{}", msg);
         throw std::runtime_error(msg);
     }
@@ -534,13 +534,13 @@ void token_metadata_impl::add_bootstrap_tokens(std::unordered_set<token> tokens,
     for (auto t : tokens) {
         auto old_endpoint = _bootstrap_tokens.find(t);
         if (old_endpoint != _bootstrap_tokens.end() && (*old_endpoint).second != endpoint) {
-            auto msg = format("Bootstrap Token collision between {} and {} (token {}", (*old_endpoint).second, endpoint, t);
+            auto msg = seastar::format"Bootstrap Token collision between {} and {} (token {}", (*old_endpoint).second, endpoint, t);
             throw std::runtime_error(msg);
         }
 
         auto old_endpoint2 = _token_to_endpoint_map.find(t);
         if (old_endpoint2 != _token_to_endpoint_map.end() && (*old_endpoint2).second != endpoint) {
-            auto msg = format("Bootstrap Token collision between {} and {} (token {}", (*old_endpoint2).second, endpoint, t);
+            auto msg = seastar::format"Bootstrap Token collision between {} and {} (token {}", (*old_endpoint2).second, endpoint, t);
             throw std::runtime_error(msg);
         }
     }
@@ -588,7 +588,7 @@ token token_metadata_impl::get_predecessor(token t) const {
     auto& tokens = sorted_tokens();
     auto it = std::lower_bound(tokens.begin(), tokens.end(), t);
     if (it == tokens.end() || *it != t) {
-        auto msg = format("token error in get_predecessor!");
+        auto msg = seastar::format"token error in get_predecessor!");
         tlogger.error("{}", msg);
         throw std::runtime_error(msg);
     }
@@ -1196,11 +1196,11 @@ void shared_token_metadata::clear_and_dispose(std::unique_ptr<token_metadata_imp
 
 void shared_token_metadata::set(mutable_token_metadata_ptr tmptr) noexcept {
     if (_shared->get_ring_version() >= tmptr->get_ring_version()) {
-        on_internal_error(tlogger, format("shared_token_metadata: must not set non-increasing ring_version: {} -> {}", _shared->get_ring_version(), tmptr->get_ring_version()));
+        on_internal_error(tlogger, seastar::format"shared_token_metadata: must not set non-increasing ring_version: {} -> {}", _shared->get_ring_version(), tmptr->get_ring_version()));
     }
 
     if (_shared->get_version() > tmptr->get_version()) {
-        on_internal_error(tlogger, format("shared_token_metadata: must not set decreasing version: {} -> {}", _shared->get_version(), tmptr->get_version()));
+        on_internal_error(tlogger, seastar::format"shared_token_metadata: must not set decreasing version: {} -> {}", _shared->get_version(), tmptr->get_version()));
     } else if (_shared->get_version() < tmptr->get_version()) {
         _stale_versions_in_use = _versions_barrier.advance_and_await();
     }
@@ -1225,7 +1225,7 @@ void shared_token_metadata::update_fence_version(token_metadata::version_t versi
         // this condition must hold, that is why we treat its violation
         // as an internal error.
         on_internal_error(tlogger,
-            format("shared_token_metadata: invalid new fence version, can't be greater than the current version, "
+            seastar::format"shared_token_metadata: invalid new fence version, can't be greater than the current version, "
                    "current version {}, new fence version {}", current_version, version));
     }
     if (version < _fence_version) {
@@ -1234,7 +1234,7 @@ void shared_token_metadata::update_fence_version(token_metadata::version_t versi
         // while we are handling raft_topology_cmd::command::fence,
         // so we just throw an error in this case.
         throw std::runtime_error(
-            format("shared_token_metadata: can't set decreasing fence version: {} -> {}",
+            seastar::format"shared_token_metadata: can't set decreasing fence version: {} -> {}",
                 _fence_version, version));
     }
     _fence_version = version;

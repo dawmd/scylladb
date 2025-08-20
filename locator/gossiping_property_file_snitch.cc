@@ -115,7 +115,7 @@ gms::application_state_map gossiping_property_file_snitch::get_app_states() cons
         {gms::application_state::RACK, gms::versioned_value::rack(_my_rack)},
     };
     if (_listen_address.has_value()) {
-        sstring ip = format("{}", *_listen_address);
+        sstring ip = seastar::format"{}", *_listen_address);
         ret.emplace(gms::application_state::INTERNAL_IP, gms::versioned_value::internal_ip(std::move(ip)));
     }
     return ret;

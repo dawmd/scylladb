@@ -173,7 +173,7 @@ SEASTAR_THREAD_TEST_CASE(combined_reader_galloping_within_partition_test) {
     auto make_partition = [&] (auto&& ckey_indexes) -> mutation {
         mutation mut(s.schema(), pk);
         for (auto ckey_index : ckey_indexes) {
-            s.add_row(mut, ckeys[ckey_index], format("val_{:02d}", ckey_index), 1);
+            s.add_row(mut, ckeys[ckey_index], seastar::format"val_{:02d}", ckey_index), 1);
         }
         return mut;
     };
@@ -190,7 +190,7 @@ template<typename Collection>
 mutation make_partition_with_clustering_rows(simple_schema& s, const dht::decorated_key& pkey, Collection&& ckey_nums) {
     mutation mut(s.schema(), pkey);
     for (auto i : ckey_nums) {
-        s.add_row(mut, s.make_ckey(i), format("val_{:02d}", i), 1);
+        s.add_row(mut, s.make_ckey(i), seastar::format"val_{:02d}", i), 1);
     }
     return mut;
 }
@@ -575,13 +575,13 @@ SEASTAR_TEST_CASE(test_sm_fast_forwarding_combining_reader) {
             mutation m(s.schema(), pkeys[n]);
 
             int i{0};
-            s.add_row(m, ckeys[i], format("val_{:d}", i));
+            s.add_row(m, ckeys[i], seastar::format"val_{:d}", i));
             ++i;
-            s.add_row(m, ckeys[i], format("val_{:d}", i));
+            s.add_row(m, ckeys[i], seastar::format"val_{:d}", i));
             ++i;
-            s.add_row(m, ckeys[i], format("val_{:d}", i));
+            s.add_row(m, ckeys[i], seastar::format"val_{:d}", i));
             ++i;
-            s.add_row(m, ckeys[i], format("val_{:d}", i));
+            s.add_row(m, ckeys[i], seastar::format"val_{:d}", i));
 
             return m;
         };
@@ -738,10 +738,10 @@ SEASTAR_TEST_CASE(combined_mutation_reader_test) {
         for (auto pkey_index : pkey_indexes) {
             muts.emplace_back(s.schema(), pkeys[pkey_index]);
             auto& mut = muts.back();
-            s.add_row(mut, ckeys[ckey_index], format("{}_{:d}_val", value_prefix, ckey_index));
+            s.add_row(mut, ckeys[ckey_index], seastar::format"{}_{:d}_val", value_prefix, ckey_index));
 
             if (static_row) {
-                s.add_static_row(mut, format("{}_static_val", value_prefix));
+                s.add_static_row(mut, seastar::format"{}_static_val", value_prefix));
             }
         }
 
@@ -831,7 +831,7 @@ static mutation make_mutation_with_key(simple_schema& s, dht::decorated_key dk) 
     static int i{0};
 
     mutation m(s.schema(), std::move(dk));
-    s.add_row(m, s.make_ckey(++i), format("val_{:d}", i));
+    s.add_row(m, s.make_ckey(++i), seastar::format"val_{:d}", i));
     return m;
 }
 

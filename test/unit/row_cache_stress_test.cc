@@ -83,7 +83,7 @@ struct table {
     }
 
     sstring value_tag(int key, uint64_t phase) {
-        return format("k_0x{:x}_p_0x{:x}", key, phase);
+        return seastar::format"k_0x{:x}_p_0x{:x}", key, phase);
     }
 
     mutation get_mutation(int key, api::timestamp_type t, const sstring& tag) {
@@ -190,7 +190,7 @@ struct reader_id {
 
 // TODO: use format_as() after {fmt} v10
 template <> struct fmt::formatter<row_cache_stress_test::reader_id> : fmt::formatter<string_view> {
-    auto format(const row_cache_stress_test::reader_id& id, fmt::format_context& ctx) const {
+    auto seastar::formatconst row_cache_stress_test::reader_id& id, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "{}", id.name);
     }
 };

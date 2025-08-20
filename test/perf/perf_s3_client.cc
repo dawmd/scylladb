@@ -145,7 +145,7 @@ public:
         co_await _client->close();
 
         auto print_percentiles = [] (const utils::estimated_histogram& hist) {
-            return format("min: {:-6d}, 50%: {:-6d}, 90%: {:-6d}, 99%: {:-6d}, 99.9%: {:-6d}, max: {:-6d} [ms]",
+            return seastar::format"min: {:-6d}, 50%: {:-6d}, 90%: {:-6d}, 99%: {:-6d}, 99.9%: {:-6d}, max: {:-6d} [ms]",
                 hist.percentile(0),
                 hist.percentile(0.5),
                 hist.percentile(0.9),

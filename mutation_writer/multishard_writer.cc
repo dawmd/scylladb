@@ -136,7 +136,7 @@ future<stop_iteration> multishard_writer::handle_mutation_fragment(mutation_frag
         auto shards = shard_for_mf(mf);
         if (shards.empty()) [[unlikely]] {
             return make_exception_future<stop_iteration>(std::runtime_error(
-                    format("multishard_writer: No shards for token {} of {}.{}",
+                    seastar::format"multishard_writer: No shards for token {} of {}.{}",
                            mf.as_partition_start().key().token(), _s->ks_name(), _s->cf_name())));
         }
         if (shards != _current_shards) {

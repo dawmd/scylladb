@@ -735,7 +735,7 @@ void write_simple(managed_bytes_mutable_view& out, std::type_identity_t<T> val) 
     } else if (out.size_bytes() >= sizeof(T)) {
         write_fragmented(out, std::string_view(reinterpret_cast<const char*>(&val), sizeof(T)));
     } else {
-        on_internal_error(tlogger, format("write_simple: attempted write of size {} to buffer of size {}", sizeof(T), out.size_bytes()));
+        on_internal_error(tlogger, seastar::format"write_simple: attempted write of size {} to buffer of size {}", sizeof(T), out.size_bytes()));
     }
 }
 

@@ -351,7 +351,7 @@ future<rjson::value> encryption::kms_host::impl::post(std::string_view target, s
         case httpclient::reply_status::network_connect_timeout: case httpclient::reply_status::network_read_timeout:
             return "RequestTimeout";
         default:
-            return format("{}", res.result());
+            return seastar::format"{}", res.result());
         }
     };
 

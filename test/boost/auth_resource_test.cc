@@ -165,7 +165,7 @@ BOOST_AUTO_TEST_CASE(output) {
     BOOST_REQUIRE_EQUAL(format("{}", auth::make_data_resource("my_keyspace")), "<keyspace my_keyspace>");
 
     BOOST_REQUIRE_EQUAL(
-            format("{}", auth::make_data_resource("my_keyspace", "my_table")),
+            seastar::format"{}", auth::make_data_resource("my_keyspace", "my_table")),
             "<table my_keyspace.my_table>");
 
     //

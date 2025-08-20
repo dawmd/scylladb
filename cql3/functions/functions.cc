@@ -223,7 +223,7 @@ make_from_json_function(data_dictionary::database db, const sstring& keyspace, d
             return parsed_json_value;
         } catch(rjson::error& e) {
             throw exceptions::function_execution_exception("fromJson",
-                format("Failed parsing fromJson parameter: {}", e.what()), keyspace, {t->name()});
+                seastar::format"Failed parsing fromJson parameter: {}", e.what()), keyspace, {t->name()});
         }
     });
 }
@@ -591,7 +591,7 @@ functions::validate_types(data_dictionary::database db,
                           std::optional<const std::string_view> receiver_cf) const {
     if (provided_args.size() != fun->arg_types().size()) {
         throw exceptions::invalid_request_exception(
-                format("Invalid number of arguments in call to function {}: {:d} required but {:d} provided",
+                seastar::format"Invalid number of arguments in call to function {}: {:d} required but {:d} provided",
                         fun->name(), fun->arg_types().size(), provided_args.size()));
     }
 
@@ -607,7 +607,7 @@ functions::validate_types(data_dictionary::database db,
         auto&& expected = make_arg_spec(receiver_ks, receiver_cf, *fun, i);
         if (!is_assignable(provided->test_assignment(db, keyspace, schema_opt, *expected))) {
             throw exceptions::invalid_request_exception(
-                    format("Type error: {} cannot be passed as argument {:d} of function {} of type {}",
+                    seastar::format"Type error: {} cannot be passed as argument {:d} of function {} of type {}",
                             provided, i, fun->name(), expected->type->as_cql3_type()));
         }
     }

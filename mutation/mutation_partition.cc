@@ -37,7 +37,7 @@ logging::logger mclog("mutation_compactor");
 logging::logger mplog("mutation_partition");
 
 void on_bad_row_key(const schema& s, position_in_partition_view pos, const char* reason) {
-    on_internal_error(mplog, format("check_row_key(): attempted to use {} {} as row key for non-compact table {}.{}",
+    on_internal_error(mplog, seastar::format"check_row_key(): attempted to use {} {} as row key for non-compact table {}.{}",
             reason, pos, s.ks_name(), s.cf_name()));
 }
 
@@ -590,7 +590,7 @@ mutation_partition::append_clustered_row(const schema& s, position_in_partition_
     const auto cmp = rows_entry::tri_compare(s);
     auto i = _rows.end();
     if (!_rows.empty() && (cmp(*std::prev(i), pos) >= 0)) {
-        on_internal_error(mplog, format("mutation_partition::append_clustered_row(): cannot append clustering row with key {} to the partition"
+        on_internal_error(mplog, seastar::format"mutation_partition::append_clustered_row(): cannot append clustering row with key {} to the partition"
                 ", last clustering row is equal or greater: {}", pos, std::prev(i)->position()));
     }
     auto e = alloc_strategy_unique_ptr<rows_entry>(current_allocator().construct<rows_entry>(s, pos, dummy, continuous));
@@ -847,7 +847,7 @@ operator<<(std::ostream& os, const std::pair<column_id, const atomic_cell_or_col
 // in the original range is prefxied with given string.
 template<typename RangeOfPrintable>
 static auto prefixed(const sstring& prefix, const RangeOfPrintable& r) {
-    return r | std::views::transform([&] (auto&& e) { return format("{}{}", prefix, e); });
+    return r | std::views::transform([&] (auto&& e) { return seastar::format"{}{}", prefix, e); });
 }
 
 std::ostream&

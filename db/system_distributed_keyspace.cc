@@ -278,7 +278,7 @@ future<> system_distributed_keyspace::create_tables(std::vector<schema_ptr> tabl
                 std::nullopt);
         if (!db.has_keyspace(NAME)) {
             mutations = service::prepare_new_keyspace_announcement(db.real_database(), sd_ksm, ts);
-            description += format(" create {} keyspace;", NAME);
+            description += seastar::format" create {} keyspace;", NAME);
         } else {
             dlogger.info("{} keyspace is already present. Not creating", NAME);
         }
@@ -291,7 +291,7 @@ future<> system_distributed_keyspace::create_tables(std::vector<schema_ptr> tabl
         if (!db.has_keyspace(NAME_EVERYWHERE)) {
             auto sde_mutations = service::prepare_new_keyspace_announcement(db.real_database(), sde_ksm, ts);
             std::move(sde_mutations.begin(), sde_mutations.end(), std::back_inserter(mutations));
-            description += format(" create {} keyspace;", NAME_EVERYWHERE);
+            description += seastar::format" create {} keyspace;", NAME_EVERYWHERE);
         } else {
             dlogger.info("{} keyspace is already present. Not creating", NAME_EVERYWHERE);
         }
@@ -371,7 +371,7 @@ static service::query_state& internal_distributed_query_state() {
 future<> system_distributed_keyspace::start_view_build(sstring ks_name, sstring view_name) const {
     auto host_id = _sp.local_db().get_token_metadata().get_my_id();
     return _qp.execute_internal(
-            format("INSERT INTO {}.{} (keyspace_name, view_name, host_id, status) VALUES (?, ?, ?, ?)", NAME, VIEW_BUILD_STATUS),
+            seastar::format"INSERT INTO {}.{} (keyspace_name, view_name, host_id, status) VALUES (?, ?, ?, ?)", NAME, VIEW_BUILD_STATUS),
             db::consistency_level::ONE,
             internal_distributed_query_state(),
             { std::move(ks_name), std::move(view_name), host_id.uuid(), "STARTED" },
@@ -381,7 +381,7 @@ future<> system_distributed_keyspace::start_view_build(sstring ks_name, sstring 
 future<> system_distributed_keyspace::finish_view_build(sstring ks_name, sstring view_name) const {
     auto host_id = _sp.local_db().get_token_metadata().get_my_id();
     return _qp.execute_internal(
-            format("UPDATE {}.{} SET status = ? WHERE keyspace_name = ? AND view_name = ? AND host_id = ?", NAME, VIEW_BUILD_STATUS),
+            seastar::format"UPDATE {}.{} SET status = ? WHERE keyspace_name = ? AND view_name = ? AND host_id = ?", NAME, VIEW_BUILD_STATUS),
             db::consistency_level::ONE,
             internal_distributed_query_state(),
             { "SUCCESS", std::move(ks_name), std::move(view_name), host_id.uuid() },
@@ -390,7 +390,7 @@ future<> system_distributed_keyspace::finish_view_build(sstring ks_name, sstring
 
 future<> system_distributed_keyspace::remove_view(sstring ks_name, sstring view_name) const {
     return _qp.execute_internal(
-            format("DELETE FROM {}.{} WHERE keyspace_name = ? AND view_name = ?", NAME, VIEW_BUILD_STATUS),
+            seastar::format"DELETE FROM {}.{} WHERE keyspace_name = ? AND view_name = ?", NAME, VIEW_BUILD_STATUS),
             db::consistency_level::ONE,
             internal_distributed_query_state(),
             { std::move(ks_name), std::move(view_name) },
@@ -463,7 +463,7 @@ system_distributed_keyspace::insert_cdc_topology_description(
         context ctx) {
     check_exists(NAME, CDC_TOPOLOGY_DESCRIPTION, _qp.db().real_database());
     return _qp.execute_internal(
-            format("INSERT INTO {}.{} (time, description) VALUES (?,?)", NAME, CDC_TOPOLOGY_DESCRIPTION),
+            seastar::format"INSERT INTO {}.{} (time, description) VALUES (?,?)", NAME, CDC_TOPOLOGY_DESCRIPTION),
             quorum_if_many(ctx.num_token_owners),
             internal_distributed_query_state(),
             { gen_id.ts, make_list_value(cdc_generation_description_type, prepare_cdc_generation_description(description)) },
@@ -476,7 +476,7 @@ system_distributed_keyspace::read_cdc_topology_description(
         context ctx) {
     check_exists(NAME, CDC_TOPOLOGY_DESCRIPTION, _qp.db().real_database());
     return _qp.execute_internal(
-            format("SELECT description FROM {}.{} WHERE time = ?", NAME, CDC_TOPOLOGY_DESCRIPTION),
+            seastar::format"SELECT description FROM {}.{} WHERE time = ?", NAME, CDC_TOPOLOGY_DESCRIPTION),
             quorum_if_many(ctx.num_token_owners),
             internal_distributed_query_state(),
             { gen_id.ts },
@@ -550,7 +550,7 @@ system_distributed_keyspace::read_cdc_generation(utils::UUID id) {
     size_t num_ranges = 0;
     co_await _qp.query_internal(
             // This should be a local read so 20s should be more than enough
-            format("SELECT range_end, streams, ignore_msb, num_ranges FROM {}.{} WHERE id = ? USING TIMEOUT 20s", NAME_EVERYWHERE, CDC_GENERATIONS_V2),
+            seastar::format"SELECT range_end, streams, ignore_msb, num_ranges FROM {}.{} WHERE id = ? USING TIMEOUT 20s", NAME_EVERYWHERE, CDC_GENERATIONS_V2),
             db::consistency_level::ONE, // we wrote the generation with ALL so ONE must see it (or there's something really wrong)
             { id },
             1000, // for ~1KB rows, ~1MB page size
@@ -642,7 +642,7 @@ system_distributed_keyspace::create_cdc_desc(
 
     // Commit the description.
     co_await _qp.execute_internal(
-            format("INSERT INTO {}.{} (key, time) VALUES (?, ?)", NAME, CDC_TIMESTAMPS),
+            seastar::format"INSERT INTO {}.{} (key, time) VALUES (?, ?)", NAME, CDC_TIMESTAMPS),
             quorum_if_many(ctx.num_token_owners),
             internal_distributed_query_state(),
             { CDC_TIMESTAMPS_KEY, time },
@@ -688,7 +688,7 @@ system_distributed_keyspace::cdc_desc_exists(
 
     // At this point replicas know the schema, we can perform the actual read...
     co_return co_await _qp.execute_internal(
-            format("SELECT time FROM {}.{} WHERE key = ? AND time = ?", NAME, CDC_TIMESTAMPS),
+            seastar::format"SELECT time FROM {}.{} WHERE key = ? AND time = ?", NAME, CDC_TIMESTAMPS),
             quorum_if_many(ctx.num_token_owners),
             internal_distributed_query_state(),
             { CDC_TIMESTAMPS_KEY, streams_ts },
@@ -701,7 +701,7 @@ system_distributed_keyspace::cdc_desc_exists(
 future<std::map<db_clock::time_point, cdc::streams_version>> 
 system_distributed_keyspace::cdc_get_versioned_streams(db_clock::time_point not_older_than, context ctx) {
     auto timestamps_cql = co_await _qp.execute_internal(
-            format("SELECT time FROM {}.{} WHERE key = ?", NAME, CDC_TIMESTAMPS),
+            seastar::format"SELECT time FROM {}.{} WHERE key = ?", NAME, CDC_TIMESTAMPS),
             quorum_if_many(ctx.num_token_owners),
             internal_distributed_query_state(),
             { CDC_TIMESTAMPS_KEY },
@@ -723,7 +723,7 @@ system_distributed_keyspace::cdc_get_versioned_streams(db_clock::time_point not_
     std::map<db_clock::time_point, cdc::streams_version> result;
     co_await max_concurrent_for_each(first, timestamps.rend(), 5, [this, &ctx, &result] (db_clock::time_point ts) -> future<> {
         auto streams_cql = co_await _qp.execute_internal(
-                format("SELECT streams FROM {}.{} WHERE time = ?", NAME, CDC_DESC_V2),
+                seastar::format"SELECT streams FROM {}.{} WHERE time = ?", NAME, CDC_DESC_V2),
                 quorum_if_many(ctx.num_token_owners),
                 internal_distributed_query_state(),
                 { ts },
@@ -744,7 +744,7 @@ system_distributed_keyspace::cdc_get_versioned_streams(db_clock::time_point not_
 future<db_clock::time_point> 
 system_distributed_keyspace::cdc_current_generation_timestamp(context ctx) {
     auto timestamp_cql = co_await _qp.execute_internal(
-            format("SELECT time FROM {}.{} WHERE key = ? limit 1", NAME, CDC_TIMESTAMPS),
+            seastar::format"SELECT time FROM {}.{} WHERE key = ? limit 1", NAME, CDC_TIMESTAMPS),
             quorum_if_many(ctx.num_token_owners),
             internal_distributed_query_state(),
             { CDC_TIMESTAMPS_KEY },
@@ -759,7 +759,7 @@ system_distributed_keyspace::get_cdc_desc_v1_timestamps(context ctx) {
     co_await _qp.query_internal(
             // This is a long and expensive scan (mostly due to #8061).
             // Give it a bit more time than usual.
-            format("SELECT time FROM {}.{} USING TIMEOUT 60s", NAME, CDC_DESC_V1),
+            seastar::format"SELECT time FROM {}.{} USING TIMEOUT 60s", NAME, CDC_DESC_V1),
             quorum_if_many(ctx.num_token_owners),
             {},
             1000,
@@ -786,7 +786,7 @@ future<qos::service_levels_info> system_distributed_keyspace::get_service_level(
 }
 
 future<> system_distributed_keyspace::set_service_level(sstring service_level_name, qos::service_level_options slo) const {
-    static sstring prepared_query = format("INSERT INTO {}.{} (service_level) VALUES (?);", NAME, SERVICE_LEVELS);
+    static sstring prepared_query = seastar::format"INSERT INTO {}.{} (service_level) VALUES (?);", NAME, SERVICE_LEVELS);
     co_await _qp.execute_internal(prepared_query, db::consistency_level::ONE, internal_distributed_query_state(), {service_level_name}, cql3::query_processor::cache_internal::no);
     auto to_data_value = [&] (const qos::service_level_options::timeout_type& tv) {
         return std::visit(overloaded_functor {
@@ -834,7 +834,7 @@ future<> system_distributed_keyspace::set_service_level(sstring service_level_na
 }
 
 future<> system_distributed_keyspace::drop_service_level(sstring service_level_name) const {
-    static sstring prepared_query = format("DELETE FROM {}.{} WHERE service_level= ?;", NAME, SERVICE_LEVELS);
+    static sstring prepared_query = seastar::format"DELETE FROM {}.{} WHERE service_level= ?;", NAME, SERVICE_LEVELS);
     return _qp.execute_internal(prepared_query, db::consistency_level::ONE, internal_distributed_query_state(), {service_level_name}, cql3::query_processor::cache_internal::no).discard_result();
 }
 

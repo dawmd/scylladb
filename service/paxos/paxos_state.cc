@@ -83,7 +83,7 @@ static dht::shard_replica_set shards_for_writes(const schema& s, dht::token toke
     auto shards = s.table().shard_for_writes(token);
     if (const auto it = std::ranges::find(shards, this_shard_id()); it == shards.end()) {
         on_internal_error(paxos_state::logger,
-            format("invalid shard, this_shard_id {}, shard_for_writes {}", this_shard_id(), shards));
+            seastar::format"invalid shard, this_shard_id {}, shard_for_writes {}", this_shard_id(), shards));
     }
     std::ranges::sort(shards);
     return shards;
@@ -267,7 +267,7 @@ future<> paxos_state::learn(storage_proxy& sp, paxos_store& paxos_store, schema_
         // If there's no schema in the cache, then retrieve persisted column mapping
         // for that version and upgrade the mutation with it.
         if (decision.update.schema_version() != schema->version()) {
-            on_internal_error(logger, format("schema version in learn does not match current schema"));
+            on_internal_error(logger, seastar::format"schema version in learn does not match current schema"));
         }
 
         co_await sp.mutate_locally(schema, decision.update, tr_state, db::commitlog::force_sync::yes, timeout);
@@ -298,7 +298,7 @@ static int32_t paxos_ttl_sec(const schema& s) {
 
 static sstring paxos_state_cf_filter(const schema& s, const schema& state_schema) {
     return state_schema.cf_name() == db::system_keyspace::PAXOS
-        ? format(" AND cf_id = {}", s.id().uuid())
+        ? seastar::format" AND cf_id = {}", s.id().uuid())
         : sstring();
 }
 
@@ -548,7 +548,7 @@ future<paxos_state> paxos_store::load_paxos_state(partition_key_view key, schema
     // FIXME: we need execute_cql_with_now()
     (void)now;
     const auto results = co_await execute_cql_with_timeout(
-        format("SELECT * FROM \"{}\".\"{}\" WHERE row_key = ?{}", 
+        seastar::format"SELECT * FROM \"{}\".\"{}\" WHERE row_key = ?{}", 
             state_schema->ks_name(), state_schema->cf_name(), 
             paxos_state_cf_filter(*s, *state_schema)
         ),
@@ -585,7 +585,7 @@ future<paxos_state> paxos_store::load_paxos_state(partition_key_view key, schema
 future<> paxos_store::save_paxos_promise(const schema& s, const partition_key& key, const utils::UUID& ballot, db::timeout_clock::time_point timeout) {
     const auto state_schema = co_await get_paxos_state_schema(s, timeout);
     co_await execute_cql_with_timeout(
-            format("UPDATE \"{}\".\"{}\" USING TIMESTAMP ? AND TTL ? SET promise = ? WHERE row_key = ?{}",
+            seastar::format"UPDATE \"{}\".\"{}\" USING TIMESTAMP ? AND TTL ? SET promise = ? WHERE row_key = ?{}",
                 state_schema->ks_name(), state_schema->cf_name(), 
                 paxos_state_cf_filter(s, *state_schema)
             ),
@@ -601,7 +601,7 @@ future<> paxos_store::save_paxos_proposal(const schema& s, const proposal& propo
     const auto state_schema = co_await get_paxos_state_schema(s, timeout);
     partition_key_view key = proposal.update.key();
     co_await execute_cql_with_timeout(
-            format("UPDATE \"{}\".\"{}\" USING TIMESTAMP ? AND TTL ? SET promise = ?, proposal_ballot = ?, proposal = ? WHERE row_key = ?{}", 
+            seastar::format"UPDATE \"{}\".\"{}\" USING TIMESTAMP ? AND TTL ? SET promise = ?, proposal_ballot = ?, proposal = ? WHERE row_key = ?{}", 
                 state_schema->ks_name(), state_schema->cf_name(), 
                 paxos_state_cf_filter(s, *state_schema)
             ),
@@ -626,7 +626,7 @@ future<> paxos_store::save_paxos_decision(const schema& s, const proposal& decis
     // recent commit.
     partition_key_view key = decision.update.key();
     co_await execute_cql_with_timeout(
-            format("UPDATE \"{}\".\"{}\" USING TIMESTAMP ? AND TTL ? SET proposal_ballot = null, proposal = null, "
+            seastar::format"UPDATE \"{}\".\"{}\" USING TIMESTAMP ? AND TTL ? SET proposal_ballot = null, proposal = null, "
                    "most_recent_commit_at = ?, most_recent_commit = ? WHERE row_key = ?{}",
                 state_schema->ks_name(), state_schema->cf_name(), 
                 paxos_state_cf_filter(s, *state_schema)
@@ -648,7 +648,7 @@ future<> paxos_store::delete_paxos_decision(const schema& s, const partition_key
     // guarantees that if there is more recent round it will not be affected.
 
     co_await execute_cql_with_timeout(
-            format("DELETE most_recent_commit FROM \"{}\".\"{}\" USING TIMESTAMP ? WHERE row_key = ?{}",
+            seastar::format"DELETE most_recent_commit FROM \"{}\".\"{}\" USING TIMESTAMP ? WHERE row_key = ?{}",
                 state_schema->ks_name(), state_schema->cf_name(), 
                 paxos_state_cf_filter(s, *state_schema)
             ),

@@ -5377,8 +5377,8 @@ SEASTAR_TEST_CASE(test_cache_tombstone_gc_memtable_overlap_check_elision) {
         // Flush it to disk
         replica::database::flush_table_on_all_shards(env.db(), schema->id()).get();
 
-        const auto regular_query = format("SELECT * FROM {}.{} WHERE pk = {}", keyspace_name, table_name, pk_value);
-        const auto fragments_query = format("SELECT * FROM MUTATION_FRAGMENTS({}.{}) WHERE pk = {} AND mutation_source = 'row-cache' AND partition_region = 2 AND ck = 1 ",
+        const auto regular_query = seastar::format"SELECT * FROM {}.{} WHERE pk = {}", keyspace_name, table_name, pk_value);
+        const auto fragments_query = seastar::format"SELECT * FROM MUTATION_FRAGMENTS({}.{}) WHERE pk = {} AND mutation_source = 'row-cache' AND partition_region = 2 AND ck = 1 ",
                 keyspace_name, table_name, pk_value);
 
         // Populate this dead row in the cache

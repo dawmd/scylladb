@@ -576,7 +576,7 @@ query_processor::execute_direct_without_checking_exception_message(const std::st
     auto p = get_statement(query_string, query_state.get_client_state(), d);
     auto statement = p->statement;
     if (statement->get_bound_terms() != options.get_values_count()) {
-        const auto msg = format("Invalid amount of bind variables: expected {:d} received {:d}",
+        const auto msg = seastar::format"Invalid amount of bind variables: expected {:d} received {:d}",
                 statement->get_bound_terms(),
                 options.get_values_count());
         throw exceptions::invalid_request_exception(msg);
@@ -689,7 +689,7 @@ query_processor::prepare(sstring query_string, const service::client_state& clie
                 auto bound_terms = prepared->statement->get_bound_terms();
                 if (bound_terms > std::numeric_limits<uint16_t>::max()) {
                     throw exceptions::invalid_request_exception(
-                            format("Too many markers(?). {:d} markers exceed the allowed maximum of {:d}",
+                            seastar::format"Too many markers(?). {:d} markers exceed the allowed maximum of {:d}",
                                 bound_terms,
                                 std::numeric_limits<uint16_t>::max()));
                 }
@@ -806,7 +806,7 @@ query_options query_processor::make_internal_options(
         service::node_local_only node_local_only) const {
     if (p->bound_names.size() != values.size()) {
         throw std::invalid_argument(
-                format("Invalid number of values. Expecting {:d} but got {:d}", p->bound_names.size(), values.size()));
+                seastar::format"Invalid number of values. Expecting {:d} but got {:d}", p->bound_names.size(), values.size()));
     }
     auto ni = p->bound_names.begin();
     raw_value_vector_with_unset bound_values;
@@ -1081,7 +1081,7 @@ query_processor::execute_schema_statement(const statements::schema_altering_stat
 }
 
 future<> query_processor::announce_schema_statement(const statements::schema_altering_statement& stmt, service::group0_batch& mc) {
-    auto description = format("CQL DDL statement: \"{}\"", stmt.raw_cql_statement);
+    auto description = seastar::format"CQL DDL statement: \"{}\"", stmt.raw_cql_statement);
     auto [remote_, holder] = remote();
     auto [m, guard] = co_await std::move(mc).extract();
     if (m.empty()) {

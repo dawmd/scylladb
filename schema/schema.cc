@@ -51,9 +51,9 @@ speculative_retry::to_sstring() const {
     } else if (_t == type::ALWAYS) {
         return "ALWAYS";
     } else if (_t == type::CUSTOM) {
-        return format("{:.2f}ms", _v);
+        return seastar::format"{:.2f}ms", _v);
     } else if (_t == type::PERCENTILE) {
-        return format("{:.1f}PERCENTILE", 100 * _v);
+        return seastar::format"{:.1f}PERCENTILE", 100 * _v);
     } else {
         throw std::invalid_argument(format("unknown type: {:d}\n", uint8_t(_t)));
     }
@@ -88,7 +88,7 @@ speculative_retry::from_sstring(sstring str) {
         v = convert(percentile) / 100;
         if  (v <= 0.0 || v >= 1.0) {
             throw exceptions::configuration_exception(
-                format("Invalid value {} for PERCENTILE option 'speculative_retry': must be between (0.0 and 100.0)", str));
+                seastar::format"Invalid value {} for PERCENTILE option 'speculative_retry': must be between (0.0 and 100.0)", str));
         }
     } else {
         throw std::invalid_argument(format("cannot convert {} to speculative_retry\n", str));
@@ -150,7 +150,7 @@ const column_mapping_entry& column_mapping::column_at(column_kind kind, column_i
 
 const column_mapping_entry& column_mapping::static_column_at(column_id id) const {
     if (id >= _n_static) {
-        on_internal_error(dblog, format("static column id {:d} >= {:d}", id, _n_static));
+        on_internal_error(dblog, seastar::format"static column id {:d} >= {:d}", id, _n_static));
     }
     return _columns[id];
 }
@@ -158,7 +158,7 @@ const column_mapping_entry& column_mapping::static_column_at(column_id id) const
 const column_mapping_entry& column_mapping::regular_column_at(column_id id) const {
     auto n_regular = _columns.size() - _n_static;
     if (id >= n_regular) {
-        on_internal_error(dblog, format("regular column id {:d} >= {:d}", id, n_regular));
+        on_internal_error(dblog, seastar::format"regular column id {:d} >= {:d}", id, n_regular));
     }
     return _columns[id + _n_static];
 }
@@ -235,7 +235,7 @@ const dht::static_sharder& schema::get_sharder() const {
     auto* s = try_get_static_sharder();
     if (!s) {
         // Use table()->get_effective_replication_map()->get_sharder() instead.
-        on_internal_error(dblog, format("Attempted to obtain static sharder for table {}.{}", ks_name(), cf_name()));
+        on_internal_error(dblog, seastar::format"Attempted to obtain static sharder for table {}.{}", ks_name(), cf_name()));
     }
     return *s;
 }
@@ -282,11 +282,11 @@ v3_columns v3_columns::from_v2_schema(const schema& s) {
     if (s.is_static_compact_table()) {
         if (s.has_static_columns()) {
             throw std::runtime_error(
-                format("v2 static compact table should not have static columns: {}.{}", s.ks_name(), s.cf_name()));
+                seastar::format"v2 static compact table should not have static columns: {}.{}", s.ks_name(), s.cf_name()));
         }
         if (s.clustering_key_size()) {
             throw std::runtime_error(
-                format("v2 static compact table should not have clustering columns: {}.{}", s.ks_name(), s.cf_name()));
+                seastar::format"v2 static compact table should not have clustering columns: {}.{}", s.ks_name(), s.cf_name()));
         }
         static_column_name_type = s.regular_column_name_type();
         for (auto& c : s.all_columns()) {
@@ -498,7 +498,7 @@ schema::schema(private_tag, const raw_schema& raw, const schema_static_props& pr
     rebuild();
     if (_raw._view_info) {
         if (!base) {
-            on_internal_error(dblog, format("Tried to create schema for view {}.{} without schema or base info of {}",
+            on_internal_error(dblog, seastar::format"Tried to create schema for view {}.{} without schema or base info of {}",
                                             _raw._ks_name, _raw._cf_name, _raw._view_info->base_name()));
         }
         _view_info = std::visit(make_visitor(
@@ -510,7 +510,7 @@ schema::schema(private_tag, const raw_schema& raw, const schema_static_props& pr
             }
         ), *base);
     } else if (base) {
-        on_internal_error(dblog, format("Tried to create schema for table/view {}.{} with base info but without view info",
+        on_internal_error(dblog, seastar::format"Tried to create schema for table/view {}.{} with base info but without view info",
                                         _raw._ks_name, _raw._cf_name));
     }
 }
@@ -800,7 +800,7 @@ schema::column_at(column_kind kind, column_id id) const {
 const column_definition&
 schema::column_at(ordinal_column_id ordinal_id) const {
     if (size_t(ordinal_id) >= _raw._columns.size()) [[unlikely]] {
-        on_internal_error(dblog, format("{}.{}@{}: column id {:d} >= {:d}",
+        on_internal_error(dblog, seastar::format"{}.{}@{}: column id {:d} >= {:d}",
             ks_name(), cf_name(), version(), size_t(ordinal_id), _raw._columns.size()));
     }
     return _raw._columns.at(static_cast<column_count_type>(ordinal_id));
@@ -955,7 +955,7 @@ static fragmented_ostringstream& column_definition_as_cql_key(fragmented_ostring
 static void describe_index_columns(fragmented_ostringstream& os, bool is_local, const schema& index_schema, schema_ptr base_schema) {
     auto index_name = secondary_index::index_name_from_table_name(index_schema.cf_name());
     if (!base_schema->all_indices().contains(index_name)) {
-        on_internal_error(dblog, format("Couldn't find index {} on table {}", index_name, base_schema->cf_name()));
+        on_internal_error(dblog, seastar::format"Couldn't find index {} on table {}", index_name, base_schema->cf_name()));
     }
     
     int n = 0;
@@ -982,7 +982,7 @@ static void describe_index_columns(fragmented_ostringstream& os, bool is_local, 
     auto base_column_name = cql3_parser::index_target::column_name_from_target_string(target_str);
     auto base_column = base_schema->get_column_definition(to_bytes(base_column_name));
     if (!base_column) {
-        on_internal_error(dblog, format("Couldn't find base column {} in table {} for index {}", base_column_name, base_schema->cf_name(), index_name));
+        on_internal_error(dblog, seastar::format"Couldn't find base column {} in table {} for index {}", base_column_name, base_schema->cf_name(), index_name));
     }
     auto bk_type = base_column->type;
 
@@ -1530,7 +1530,7 @@ void schema_builder::prepare_dense_schema(schema::raw_schema& raw) {
                                 column_kind::regular_column, 0);
             } else if (regular_cols > 1) {
                 throw exceptions::configuration_exception(
-                                format("Expecting exactly one regular column. Found {:d}",
+                                seastar::format"Expecting exactly one regular column. Found {:d}",
                                                 regular_cols));
             }
         }
@@ -1583,12 +1583,12 @@ schema_ptr schema_builder::build(schema::raw_schema& new_raw) {
     if (static_props.use_schema_commitlog) {
         if (!static_props.use_null_sharder) {
             on_internal_error(dblog,
-                format("{}.{} uses schema commitlog, but not null sharder, "
+                seastar::format"{}.{} uses schema commitlog, but not null sharder, "
                        "schema commitlog works only on shard 0", ks_name(), cf_name()));
         }
         if (static_props.wait_for_sync_to_commitlog) {
             on_internal_error(dblog,
-                format("{}.{} uses schema commitlog, wait_for_sync_to_commitlog is redundant",
+                seastar::format"{}.{} uses schema commitlog, wait_for_sync_to_commitlog is redundant",
                         ks_name(), cf_name()));
         }
     }
@@ -1765,7 +1765,7 @@ static sstring compound_name(const schema& s) {
         compound += _collection_str;
         compound += "(";
         for (auto& c : s.collections()) {
-            compound += format("{}:{},", to_hex(c.first), c.second->name());
+            compound += seastar::format"{}:{},", to_hex(c.first), c.second->name());
         }
         compound.back() = ')';
         compound += ",";
@@ -1908,7 +1908,7 @@ schema::column_name_type(const column_definition& def) const {
 const column_definition&
 schema::regular_column_at(column_id id) const {
     if (id >= regular_columns_count()) {
-        on_internal_error(dblog, format("{}.{}@{}: regular column id {:d} >= {:d}",
+        on_internal_error(dblog, seastar::format"{}.{}@{}: regular column id {:d} >= {:d}",
             ks_name(), cf_name(), version(), id, regular_columns_count()));
     }
     return _raw._columns.at(column_offset(column_kind::regular_column) + id);
@@ -1917,7 +1917,7 @@ schema::regular_column_at(column_id id) const {
 const column_definition&
 schema::clustering_column_at(column_id id) const {
     if (id >= clustering_key_size()) {
-        on_internal_error(dblog, format("{}.{}@{}: clustering column id {:d} >= {:d}",
+        on_internal_error(dblog, seastar::format"{}.{}@{}: clustering column id {:d} >= {:d}",
             ks_name(), cf_name(), version(), id, clustering_key_size()));
     }
     return _raw._columns.at(column_offset(column_kind::clustering_key) + id);
@@ -1926,7 +1926,7 @@ schema::clustering_column_at(column_id id) const {
 const column_definition&
 schema::static_column_at(column_id id) const {
     if (id >= static_columns_count()) {
-        on_internal_error(dblog, format("{}.{}@{}: static column id {:d} >= {:d}",
+        on_internal_error(dblog, seastar::format"{}.{}@{}: static column id {:d} >= {:d}",
             ks_name(), cf_name(), version(), id, static_columns_count()));
     }
     return _raw._columns.at(column_offset(column_kind::static_column) + id);

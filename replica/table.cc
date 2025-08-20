@@ -537,7 +537,7 @@ lw_shared_ptr<sstables::sstable_set>
 compaction_group::do_add_sstable(lw_shared_ptr<sstables::sstable_set> sstables, sstables::shared_sstable sstable,
         enable_backlog_tracker backlog_tracker) {
     if (belongs_to_other_shard(sstable->get_shards_for_this_sstable())) {
-        on_internal_error(tlogger, format("Attempted to load the shared SSTable {} at table", sstable->get_filename()));
+        on_internal_error(tlogger, seastar::format"Attempted to load the shared SSTable {} at table", sstable->get_filename()));
     }
     // allow in-progress reads to continue using old list
     auto new_sstables = make_lw_shared<sstables::sstable_set>(*sstables);
@@ -815,12 +815,12 @@ private:
         auto idx = id.value();
 #ifndef SCYLLA_BUILD_MODE_RELEASE
         if (idx >= tablet_count()) {
-            on_fatal_internal_error(tlogger, format("storage_group_of: index out of range: idx={} size_log2={} size={} token={}",
+            on_fatal_internal_error(tlogger, seastar::format"storage_group_of: index out of range: idx={} size_log2={} size={} token={}",
                                                     idx, log2_storage_groups(), tablet_count(), t));
         }
         auto& sg = storage_group_for_id(idx);
         if (!t.is_minimum() && !t.is_maximum() && !sg.token_range().contains(t, dht::token_comparator())) {
-            on_fatal_internal_error(tlogger, format("storage_group_of: storage_group idx={} range={} does not contain token={}",
+            on_fatal_internal_error(tlogger, seastar::format"storage_group_of: storage_group idx={} range={} does not contain token={}",
                                                     idx, sg.token_range(), t));
         }
 #endif
@@ -1143,7 +1143,7 @@ future<> tablet_storage_group_manager::maybe_split_compaction_group_of(size_t id
 
     auto& sg = _storage_groups[idx];
     if (!sg) {
-        on_internal_error(tlogger, format("Tablet {} of table {}.{} is not allocated in this shard",
+        on_internal_error(tlogger, seastar::format"Tablet {} of table {}.{} is not allocated in this shard",
                                           idx, schema()->ks_name(), schema()->cf_name()));
     }
 
@@ -1247,7 +1247,7 @@ compaction_group& tablet_storage_group_manager::compaction_group_for_sstable(con
     auto [last_id, last_range_side] = storage_group_of(sst->get_last_decorated_key().token());
 
     if (first_id != last_id) {
-        on_internal_error(tlogger, format("Unable to load SSTable {} that belongs to tablets {} and {}",
+        on_internal_error(tlogger, seastar::format"Unable to load SSTable {} that belongs to tablets {} and {}",
                                           sst->get_filename(), first_id, last_id));
     }
 
@@ -1260,7 +1260,7 @@ compaction_group& tablet_storage_group_manager::compaction_group_for_sstable(con
 
         return *sg.select_compaction_group(first_range_side);
     } catch (std::out_of_range& e) {
-        on_internal_error(tlogger, format("Unable to load SSTable {} : {}", sst->get_filename(), e.what()));
+        on_internal_error(tlogger, seastar::format"Unable to load SSTable {} : {}", sst->get_filename(), e.what()));
     }
 }
 
@@ -1726,7 +1726,7 @@ table::try_flush_memtable_to_sstable(compaction_group& cg, lw_shared_ptr<memtabl
                 });
 
                 co_await utils::get_local_injector().inject("replica_post_flush_after_update_cache", [this] (auto& handler) -> future<> {
-                    const auto this_table_name = format("{}.{}", _schema->ks_name(), _schema->cf_name());
+                    const auto this_table_name = seastar::format"{}.{}", _schema->ks_name(), _schema->cf_name());
                     if (this_table_name == handler.get("table_name")) {
                         tlogger.info("error injection handler replica_post_flush_after_update_cache: suspending flush for table {}", this_table_name);
                         handler.set("suspended", true);
@@ -2719,7 +2719,7 @@ bool compaction_group::compaction_disabled() const {
 compaction_group::~compaction_group() {
     // Unclosed group is not tolerated since it might result in an use-after-free.
     if (!compaction_disabled()) {
-        on_fatal_internal_error(tlogger, format("Compaction group of id {} that belongs to {}.{} was not disabled.",
+        on_fatal_internal_error(tlogger, seastar::format"Compaction group of id {} that belongs to {}.{} was not disabled.",
                                                 _group_id, _t.schema()->ks_name(), _t.schema()->cf_name()));
     }
 }
@@ -2842,7 +2842,7 @@ void tablet_storage_group_manager::handle_tablet_split_completion(const locator:
     storage_group_map new_storage_groups;
 
     if (!old_tablet_count) {
-        on_internal_error(tlogger, format("Table {} had zero tablets, it should never happen when splitting.", table_id));
+        on_internal_error(tlogger, seastar::format"Table {} had zero tablets, it should never happen when splitting.", table_id));
     }
 
     // NOTE: exception when applying replica changes to reflect token metadata will abort for obvious reasons,
@@ -2853,14 +2853,14 @@ void tablet_storage_group_manager::handle_tablet_split_completion(const locator:
     tlogger.debug("Growth factor: {}, split size {}", growth_factor, split_size);
 
     if (old_tablet_count * split_size != new_tablet_count) {
-        on_internal_error(tlogger, format("New tablet count for table {} is unexpected, actual: {}, expected {}.",
+        on_internal_error(tlogger, seastar::format"New tablet count for table {} is unexpected, actual: {}, expected {}.",
             table_id, new_tablet_count, old_tablet_count * split_size));
     }
 
     // Stop the released main compaction groups asynchronously
     for (auto& [id, sg] : _storage_groups) {
         if (!sg->split_unready_groups_are_empty()) {
-            on_internal_error(tlogger, format("Found that storage of group {} for table {} wasn't split correctly, " \
+            on_internal_error(tlogger, seastar::format"Found that storage of group {} for table {} wasn't split correctly, " \
                                               "therefore groups cannot be remapped with the new tablet count.",
                                               id, table_id));
         }
@@ -2879,7 +2879,7 @@ void tablet_storage_group_manager::handle_tablet_split_completion(const locator:
         unsigned first_new_id = id << growth_factor;
         auto split_ready_groups = sg->split_ready_compaction_groups();
         if (split_ready_groups.size() != split_size) {
-            on_internal_error(tlogger, format("Found {} split ready compaction groups, but expected {} instead.", split_ready_groups.size(), split_size));
+            on_internal_error(tlogger, seastar::format"Found {} split ready compaction groups, but expected {} instead.", split_ready_groups.size(), split_size));
         }
         for (unsigned i = 0; i < split_size; i++) {
             auto group_id = first_new_id + i;
@@ -3770,7 +3770,7 @@ table::cache_hit_rate table::get_hit_rate(const gms::gossiper& gossiper, locator
             auto* state = eps->get_application_state_ptr(gms::application_state::CACHE_HITRATES);
             float f = -1.0f; // missing state means old node
             if (state) {
-                const auto me = format("{}.{}", _schema->ks_name(), _schema->cf_name());
+                const auto me = seastar::format"{}.{}", _schema->ks_name(), _schema->cf_name());
                 const auto& value = state->value();
                 const auto i = value.find(me);
                 if (i != sstring::npos) {

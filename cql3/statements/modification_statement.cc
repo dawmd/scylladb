@@ -506,7 +506,7 @@ modification_statement::process_where_clause(data_dictionary::database db, expr:
     const expr::expression& ck_restrictions = _restrictions->get_clustering_columns_restrictions();
     if (has_slice(ck_restrictions) && !allow_clustering_key_slices()) {
         throw exceptions::invalid_request_exception(
-                format("Invalid operator in where clause {}", to_string(ck_restrictions)));
+                seastar::format"Invalid operator in where clause {}", to_string(ck_restrictions)));
     }
     if (_restrictions->has_unrestricted_clustering_columns() && !applies_only_to_static_columns() && !s->is_dense()) {
         // Tomek: Origin had "&& s->comparator->is_composite()" in the condition below.
@@ -790,13 +790,13 @@ void modification_statement::validate_where_clause_for_conditions() const {
     // We don't support IN for CAS operation so far
     if (_restrictions->key_is_in_relation()) {
         throw exceptions::invalid_request_exception(
-                format("IN on the partition key is not supported with conditional {}",
+                seastar::format"IN on the partition key is not supported with conditional {}",
                     type.is_update() ? "updates" : "deletions"));
     }
 
     if (_restrictions->clustering_key_restrictions_has_IN()) {
         throw exceptions::invalid_request_exception(
-                format("IN on the clustering key columns is not supported with conditional {}",
+                seastar::format"IN on the clustering key columns is not supported with conditional {}",
                     type.is_update() ? "updates" : "deletions"));
     }
     if (type.is_delete() && (_restrictions->has_unrestricted_clustering_columns() ||

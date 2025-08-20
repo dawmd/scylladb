@@ -441,7 +441,7 @@ public:
             }
         }
         if (_pos + n > _end_pos) {
-            on_internal_error(sstables::sstlog, format("Skipping over the end position is disallowed: current pos={}, end pos={}, skip len={}", _pos, _end_pos, n));
+            on_internal_error(sstables::sstlog, seastar::format"Skipping over the end position is disallowed: current pos={}, end pos={}, skip len={}", _pos, _end_pos, n));
         }
         _pos += n;
         if (_pos == _end_pos) {

@@ -226,7 +226,7 @@ struct extra_msg_when_stall_detected {
 template <>
 struct fmt::formatter<extra_msg_when_stall_detected> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const extra_msg_when_stall_detected& msg, fmt::format_context& ctx) const {
+    auto seastar::formatconst extra_msg_when_stall_detected& msg, fmt::format_context& ctx) const {
         if (msg.stall_detected) {
             return fmt::format_to(ctx.out(), ", at {}", msg.backtrace);
         } else {
@@ -1673,13 +1673,13 @@ class region_impl final : public basic_region_impl {
 
         friend std::ostream& operator<<(std::ostream& out, const object_descriptor& desc) {
             if (!desc.is_live()) {
-                return out << format("{{free {:d}}}", desc.dead_size());
+                return out << seastar::format"{{free {:d}}}", desc.dead_size());
             } else {
                 auto m = desc.migrator();
                 auto x = reinterpret_cast<uintptr_t>(&desc) + sizeof(desc);
                 x = align_up(x, m->align());
                 auto obj = reinterpret_cast<const void*>(x);
-                return out << format("{{migrator={:p}, alignment={:d}, size={:d}}}",
+                return out << seastar::format"{{migrator={:p}, alignment={:d}, size={:d}}}",
                                       (void*)m, m->align(), m->size(obj));
             }
         }

@@ -311,7 +311,7 @@ bound_kind_m reverse_tombstone_kind(bound_kind_m k) {
         case bound_kind_m::excl_start:
             return bound_kind_m::excl_end;
         default:
-            on_internal_error(sstlog, format(
+            on_internal_error(sstlog, seastar::format
                 "reverse_tombstone_kind: expected tombstone kind, got {}", k));
     }
 }
@@ -496,12 +496,12 @@ public:
             bool look_in_last_block = false;
             if (_row_start >= _row_end) {
                 if (_row_start != _row_end) {
-                    on_internal_error(sstlog, format(
+                    on_internal_error(sstlog, seastar::format
                         "partition_reversing_data_source: invariant broken: _row_start({}) > _row_end({})",
                         _row_start, _row_end));
                 }
                 if (_row_start != _partition_end) {
-                    on_internal_error(sstlog, format(
+                    on_internal_error(sstlog, seastar::format
                         "partition_reversing_data_source: invariant broken: _row_start == _row_end({}), but"
                         " != _partition_end({})", _row_start, _row_end, _partition_end));
                 }
@@ -546,7 +546,7 @@ public:
                 // The first index block starts after the range being read,
                 // i.e. the range being read is empty.
                 if (_row_skipping_context->prev_len() != _clustering_range_start - _partition_start) {
-                    on_internal_error(sstlog, format(
+                    on_internal_error(sstlog, seastar::format
                         "partition_reversing_data_source: invariant broken: _row_start({}) < _clustering_range_start({})"
                         ", but _row_skipping_context->prev_len()({}) != _clustering_range_start - _partition_start({})",
                         _row_start, _clustering_range_start, _row_skipping_context->prev_len(), _partition_start));

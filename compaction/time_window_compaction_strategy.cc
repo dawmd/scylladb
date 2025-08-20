@@ -451,7 +451,7 @@ time_window_compaction_strategy::get_buckets(std::vector<shared_sstable> files, 
 template <>
 struct fmt::formatter<std::map<sstables::timestamp_type, std::vector<sstables::shared_sstable>>> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const std::map<sstables::timestamp_type, std::vector<sstables::shared_sstable>>& buckets, fmt::format_context& ctx) const {
+    auto seastar::formatconst std::map<sstables::timestamp_type, std::vector<sstables::shared_sstable>>& buckets, fmt::format_context& ctx) const {
         auto out = fmt::format_to(ctx.out(), "  buckets = {{\n");
         for (auto& [timestamp, sstables] : buckets | std::views::reverse) {
             out = fmt::format_to(out, "    key={}, size={}\n", timestamp, sstables.size());

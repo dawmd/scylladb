@@ -30,7 +30,7 @@ mutation_reader& mutation_reader::operator=(mutation_reader&& o) noexcept {
         // Abort to enforce calling close() before readers are closed
         // to prevent leaks and potential use-after-free due to background
         // tasks left behind.
-        on_internal_error_noexcept(mrlog, format("{} [{}]: permit {}: was not closed before overwritten by move-assign", typeid(*ip).name(), fmt::ptr(ip), ip->_permit.description()));
+        on_internal_error_noexcept(mrlog, seastar::format"{} [{}]: permit {}: was not closed before overwritten by move-assign", typeid(*ip).name(), fmt::ptr(ip), ip->_permit.description()));
         abort();
     }
     _impl = std::move(o._impl);
@@ -43,7 +43,7 @@ mutation_reader::~mutation_reader() {
         // Abort to enforce calling close() before readers are closed
         // to prevent leaks and potential use-after-free due to background
         // tasks left behind.
-        on_internal_error_noexcept(mrlog, format("{} [{}]: permit {}: was not closed before destruction", typeid(*ip).name(), fmt::ptr(ip), ip->_permit.description()));
+        on_internal_error_noexcept(mrlog, seastar::format"{} [{}]: permit {}: was not closed before destruction", typeid(*ip).name(), fmt::ptr(ip), ip->_permit.description()));
         abort();
     }
 }
@@ -83,7 +83,7 @@ void mutation_reader::do_upgrade_schema(const schema_ptr& s) {
 void mutation_reader::on_close_error(std::unique_ptr<impl> i, std::exception_ptr ep) noexcept {
     impl* ip = i.get();
     on_internal_error_noexcept(mrlog,
-            format("Failed to close {} [{}]: permit {}: {}", typeid(*ip).name(), fmt::ptr(ip), ip->_permit.description(), ep));
+            seastar::format"Failed to close {} [{}]: permit {}: {}", typeid(*ip).name(), fmt::ptr(ip), ip->_permit.description(), ep));
 }
 
 future<mutation_opt> read_mutation_from_mutation_reader(mutation_reader& r) {

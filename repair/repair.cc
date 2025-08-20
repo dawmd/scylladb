@@ -66,7 +66,7 @@ node_ops_info::node_ops_info(node_ops_id ops_uuid_, shared_ptr<abort_source> as_
 
 void node_ops_info::check_abort() {
     if (as && as->abort_requested()) {
-        auto msg = format("Node operation with ops_uuid={} is aborted", ops_uuid);
+        auto msg = seastar::format"Node operation with ops_uuid={} is aborted", ops_uuid);
         rlogger.warn("{}", msg);
         throw std::runtime_error(msg);
     }
@@ -199,7 +199,7 @@ static const replica::column_family* find_column_family_if_exists(const replica:
 }
 
 std::ostream& operator<<(std::ostream& os, const repair_uniq_id& x) {
-    return os << format("[id={}, uuid={}]", x.id, x.uuid());
+    return os << seastar::format"[id={}, uuid={}]", x.id, x.uuid());
 }
 
 // Must run inside a seastar thread
@@ -749,7 +749,7 @@ future<> repair::shard_repair_task_impl::repair_range(const dht::token_range& ra
         if (it == live_neighbors.end()) {
             nr_failed_ranges++;
             nodes_down.insert(node);
-            auto status = format("failed: mandatory neighbor={} is not alive", node);
+            auto status = seastar::format"failed: mandatory neighbor={} is not alive", node);
             rlogger.error("repair[{}]: Repair {} out of {} ranges, keyspace={}, table={}, range={}, peers={}, live_peers={}, status={}",
                     global_repair_id.uuid(), ranges_index, ranges_size(), _status.keyspace, table.name, range, neighbors, live_neighbors, status);
             // If the task is aborted, its state will change to failed. One can wait for this with task_manager::task::done().
@@ -2022,7 +2022,7 @@ future<> repair_service::do_rebuild_replace_with_repair(std::unordered_map<sstri
                 rs.get_metrics().replace_total_ranges = nr_ranges_total;
             }).get();
         } else {
-            on_internal_error(rlogger, format("do_rebuild_replace_with_repair: unsupported reason={}", reason));
+            on_internal_error(rlogger, seastar::format"do_rebuild_replace_with_repair: unsupported reason={}", reason));
         }
         std::unordered_set<locator::host_id> all_live_nodes;
         std::unordered_map<sstring, std::unordered_set<locator::host_id>> live_nodes_per_dc;
@@ -2105,7 +2105,7 @@ future<> repair_service::do_rebuild_replace_with_repair(std::unordered_map<sstri
                     // This could miss data written successfully only to a single node with CL=ONE,
                     // requiring cluster-wide repair or repair from an alternative dc.
                     if (lost > 1 || (lost == 1 && rf <= 1)) {
-                        auto msg = format("{}: it is unsafe to use source_dc={} to rebuild/replace keyspace={} since it lost {} nodes, rf={}", op, source_dc, keyspace_name, lost, rf);
+                        auto msg = seastar::format"{}: it is unsafe to use source_dc={} to rebuild/replace keyspace={} since it lost {} nodes, rf={}", op, source_dc, keyspace_name, lost, rf);
                         if (source_dc.force()) {
                             rlogger.warn("{}: using source_dc anyway according to the force option", msg);
                         } else if (source_dc.user_provided()) {
@@ -2428,7 +2428,7 @@ future<> repair::tablet_repair_task_impl::run() {
                     // Ignore the error if the keyspace and/or table were dropped
                     auto ignore = co_await streaming::table_sync_and_check(rs.get_db().local(), rs.get_migration_manager(), m.tid);
                     if (ignore) {
-                        ignore_msg = format("{} does not exist any more, ignoring it, ",
+                        ignore_msg = seastar::format"{} does not exist any more, ignoring it, ",
                                 rs.get_db().local().has_keyspace(m.keyspace_name) ? "table" : "keyspace");
                     }
                     rlogger.warn("repair[{}]: Repair tablet for table={}.{} range={} status=failed: {}{}",

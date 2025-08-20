@@ -53,7 +53,7 @@ private:
         _current_group_id = _classify(t);
 
         if (_current_group_id < prev_group_id) [[unlikely]] {
-            on_internal_error(logger, format("Token group id cannot go backwards, current={}, previous={}", _current_group_id, prev_group_id));
+            on_internal_error(logger, seastar::format"Token group id cannot go backwards, current={}, previous={}", _current_group_id, prev_group_id));
         }
 
         if (_current_writer && _current_group_id > prev_group_id) [[unlikely]] {

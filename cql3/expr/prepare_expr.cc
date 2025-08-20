@@ -256,7 +256,7 @@ map_prepare_expression(const collection_constructor& c, data_dictionary::databas
     const map_type_impl* map_type = dynamic_cast<const map_type_impl*>(&receiver->type->without_reversed());
     if (map_type == nullptr) {
         on_internal_error(expr_logger,
-                          format("map_prepare_expression bad non-map receiver type: {}", receiver->type->name()));
+                          seastar::format"map_prepare_expression bad non-map receiver type: {}", receiver->type->name()));
     }
     data_type map_element_tuple_type = tuple_type_impl::get_instance({map_type->get_keys_type(), map_type->get_values_type()});
 
@@ -680,7 +680,7 @@ tuple_constructor_prepare_nontuple(const tuple_constructor& tc, data_dictionary:
 }
 
 template <> struct fmt::formatter<cql3::expr::untyped_constant::type_class> : fmt::formatter<string_view> {
-    auto format(cql3::expr::untyped_constant::type_class t, fmt::format_context& ctx) const {
+    auto seastar::formatcql3::expr::untyped_constant::type_class t, fmt::format_context& ctx) const {
         using enum cql3::expr::untyped_constant::type_class;
         std::string_view name;
         switch (t) {
@@ -856,7 +856,7 @@ lw_shared_ptr<column_specification>
 casted_spec_of(const cast& c, data_dictionary::database db, const sstring& keyspace, const column_specification& receiver) {
     data_type cast_type = cast_get_prepared_type(c, db, keyspace);
 
-    sstring display_name = format("({}){:user}", cast_type->cql3_type_name(), c.arg);
+    sstring display_name = seastar::format"({}){:user}", cast_type->cql3_type_name(), c.arg);
 
     return make_lw_shared<column_specification>(receiver.ks_name, receiver.cf_name,
             ::make_shared<column_identifier>(display_name, true), cast_type);
@@ -891,7 +891,7 @@ c_cast_prepare_expression(const cast& c, data_dictionary::database db, const sst
     data_type cast_type = cast_get_prepared_type(c, db, keyspace);
 
     if (!receiver) {
-        sstring receiver_name = format("cast({}){:user}", cast_type->cql3_type_name(), c.arg);
+        sstring receiver_name = seastar::format"cast({}){:user}", cast_type->cql3_type_name(), c.arg);
         receiver = make_lw_shared<column_specification>(
             keyspace, "unknown_cf", ::make_shared<column_identifier>(receiver_name, true), cast_type);
     }
@@ -933,7 +933,7 @@ sql_cast_prepare_expression(const cast& c, data_dictionary::database db, const s
     data_type cast_type = cast_get_prepared_type(c, db, keyspace);
 
     if (!receiver) {
-        sstring receiver_name = format("cast({}){:user}", cast_type->cql3_type_name(), c.arg);
+        sstring receiver_name = seastar::format"cast({}){:user}", cast_type->cql3_type_name(), c.arg);
         receiver = make_lw_shared<column_specification>(
             keyspace, "unknown_cf", ::make_shared<column_identifier>(receiver_name, true), cast_type);
     }
@@ -979,7 +979,7 @@ field_selection_prepare_expression(const field_selection& fs, data_dictionary::d
     auto type = type_of(*prepared_structure);
     if (!type->underlying_type()->is_user_type()) {
         throw exceptions::invalid_request_exception(
-                format("Invalid field selection: {} of type {} is not a user type", fs.structure, type->as_cql3_type()));
+                seastar::format"Invalid field selection: {} of type {} is not a user type", fs.structure, type->as_cql3_type()));
     }
 
     auto ut = static_pointer_cast<const user_type_impl>(type->underlying_type());
@@ -1013,7 +1013,7 @@ field_selection_test_assignment(const field_selection& fs, data_dictionary::data
     auto type = type_of(*prepared_structure);
     if (!type->underlying_type()->is_user_type()) {
         throw exceptions::invalid_request_exception(
-                format("Invalid field selection: {} of type {} is not a user type", fs.structure, type->as_cql3_type()));
+                seastar::format"Invalid field selection: {} of type {} is not a user type", fs.structure, type->as_cql3_type()));
     }
     auto ut = static_pointer_cast<const user_type_impl>(type->underlying_type());
     // FIXME: this check is artificial: prepare() below requires a schema even though one isn't
@@ -1163,7 +1163,7 @@ std::optional<expression> prepare_conjunction(const conjunction& conj,
                                               lw_shared_ptr<column_specification> receiver) {
     if (receiver.get() != nullptr && receiver->type->without_reversed().get_kind() != abstract_type::kind::boolean) {
         throw exceptions::invalid_request_exception(
-            format("AND conjunction produces a boolean value, which doesn't match the type: {} of {}",
+            seastar::format"AND conjunction produces a boolean value, which doesn't match the type: {} of {}",
                    receiver->type->name(), receiver->name->text()));
     }
 
@@ -1214,7 +1214,7 @@ prepare_column_mutation_attribute(
     auto result_type = expr::column_mutation_attribute_type(cma);
     if (receiver.get() != nullptr && receiver->type->without_reversed().get_kind() != result_type->get_kind()) {
         throw exceptions::invalid_request_exception(
-            format("A {} produces a {} value, which doesn't match the type: {} of {}",
+            seastar::format"A {} produces a {} value, which doesn't match the type: {} of {}",
                     cma.kind, result_type->name(),
                     receiver->type->name(), receiver->name->text()));
     }
@@ -1241,7 +1241,7 @@ try_prepare_expression(const expression& expr, data_dictionary::database db, con
         [&] (const constant& value) -> std::optional<expression> {
             if (receiver && !is_assignable(expression_test_assignment(value.type, *receiver))) {
                 throw exceptions::invalid_request_exception(
-                    format("cannot assign a constant {:user} of type {} to receiver {} of type {}", value,
+                    seastar::format"cannot assign a constant {:user} of type {} to receiver {} of type {}", value,
                            value.type->as_cql3_type(), receiver->name, receiver->type->as_cql3_type()));
             }
 
@@ -1256,7 +1256,7 @@ try_prepare_expression(const expression& expr, data_dictionary::database db, con
         [&] (const binary_operator& binop) -> std::optional<expression> {
             if (receiver.get() != nullptr && &receiver->type->without_reversed() != boolean_type.get()) {
                 throw exceptions::invalid_request_exception(
-                    format("binary operator produces a boolean value, which doesn't match the type: {} of {}",
+                    seastar::format"binary operator produces a boolean value, which doesn't match the type: {} of {}",
                            receiver->type->name(), receiver->name->text()));
             }
 
@@ -1543,7 +1543,7 @@ static lw_shared_ptr<column_specification> get_lhs_receiver(const expression& pr
                         [](const shared_ptr<db::functions::function>& fun) -> data_type { return fun->return_type(); },
                         [&](const functions::function_name&) -> data_type {
                             on_internal_error(expr_logger,
-                                              format("get_lhs_receiver: unprepared function call {:debug}", fun_call));
+                                              seastar::format"get_lhs_receiver: unprepared function call {:debug}", fun_call));
                         }},
                     fun_call.func);
 
@@ -1553,7 +1553,7 @@ static lw_shared_ptr<column_specification> get_lhs_receiver(const expression& pr
                 return_type);
         },
         [](const auto& other) -> lw_shared_ptr<column_specification> {
-            on_internal_error(expr_logger, format("get_lhs_receiver: unexpected expression: {}", other));
+            on_internal_error(expr_logger, seastar::format"get_lhs_receiver: unexpected expression: {}", other));
         },
     }, prepared_lhs);
 }
@@ -1591,7 +1591,7 @@ static lw_shared_ptr<column_specification> get_rhs_receiver(lw_shared_ptr<column
     } else if (oper == oper_t::LIKE) {
         if (!lhs_type->is_string()) {
             throw exceptions::invalid_request_exception(
-                format("LIKE is allowed only on string types, which {} is not", lhs_receiver->name->text()));
+                seastar::format"LIKE is allowed only on string types, which {} is not", lhs_receiver->name->text()));
         }
         return lhs_receiver;
     } else {

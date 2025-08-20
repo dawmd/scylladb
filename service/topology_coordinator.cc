@@ -598,7 +598,7 @@ class topology_coordinator : public endpoint_lifecycle_subscriber {
             release_guard(std::move(guard));
 
             co_await parallel_for_each(updates.begin(), std::prev(updates.end()), [this, gen_uuid = gen_uuid] (canonical_mutation& m) {
-                auto const reason = format(
+                auto const reason = seastar::format
                     "insert CDC generation data (UUID: {}), part", gen_uuid);
 
                 rtlogger.trace("do update {} reason {}", m, reason);
@@ -1756,7 +1756,7 @@ class topology_coordinator : public endpoint_lifecycle_subscriber {
                 topology_mutation_builder(guard.write_timestamp())
                     .set_version(_topo_sm._topology.version + 1)
                     .build());
-            co_await update_topology_state(std::move(guard), std::move(updates), format("Tablet migration"));
+            co_await update_topology_state(std::move(guard), std::move(updates), seastar::format"Tablet migration"));
         }
 
         if (needs_barrier) {
@@ -1871,7 +1871,7 @@ class topology_coordinator : public endpoint_lifecycle_subscriber {
                 .del_transition_state()
                 .set_version(_topo_sm._topology.version + 1)
                 .build());
-        co_await update_topology_state(std::move(guard), std::move(updates), format("Finished tablet split finalization"));
+        co_await update_topology_state(std::move(guard), std::move(updates), seastar::format"Finished tablet split finalization"));
     }
 
     future<> handle_truncate_table(group0_guard guard) {
@@ -2248,7 +2248,7 @@ class topology_coordinator : public endpoint_lifecycle_subscriber {
                         break;
                     default:
                         on_internal_error(rtlogger,
-                                format("topology is in join_group0 state, but the node"
+                                seastar::format"topology is in join_group0 state, but the node"
                                        " being worked on ({}) is in unexpected state '{}'; should be"
                                        " either 'bootstrapping' or 'replacing'", node.id, node.rs->state));
                 }
@@ -3690,7 +3690,7 @@ future<> topology_coordinator::stop() {
         // once they are added as barriers
         for (auto& [stage, barrier]: tablet_state.barriers) {
             SCYLLA_ASSERT(barrier.has_value());
-            co_await stop_background_action(barrier, gid, [stage] { return format("at stage {}", tablet_transition_stage_to_string(stage)); });
+            co_await stop_background_action(barrier, gid, [stage] { return seastar::format"at stage {}", tablet_transition_stage_to_string(stage)); });
         }
 
         co_await stop_background_action(tablet_state.streaming, gid, [] { return "during streaming"; });
@@ -3744,7 +3744,7 @@ future<> run_topology_coordinator(
         } catch (...) {
             rtlogger.error("failed to step down before aborting: {}", std::current_exception());
         }
-        on_fatal_internal_error(rtlogger, format("unhandled exception in topology_coordinator::run: {}", ex));
+        on_fatal_internal_error(rtlogger, seastar::format"unhandled exception in topology_coordinator::run: {}", ex));
     }
     co_await lifecycle_notifier.unregister_subscriber(&coordinator);
     co_await coordinator.stop();

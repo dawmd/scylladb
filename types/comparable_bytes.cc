@@ -39,7 +39,7 @@ static constexpr uint8_t ESCAPED_0_DONE = 0xFF;
 static void read_fragmented_checked(managed_bytes_view& view, size_t bytes_to_read, bytes::value_type* out) {
     if (view.size_bytes() < bytes_to_read) {
         throw_with_backtrace<marshal_exception>(
-            format("read_fragmented_checked - not enough bytes (expected {:d}, got {:d})", bytes_to_read, view.size_bytes()));
+            seastar::format"read_fragmented_checked - not enough bytes (expected {:d}, got {:d})", bytes_to_read, view.size_bytes()));
     }
 
     return read_fragmented(view, bytes_to_read, out);

@@ -427,7 +427,7 @@ cql3::description keyspace_metadata::describe(const replica::database& db, cql3:
             if (!_initial_tablets.has_value()) {
                 os << " AND tablets = {'enabled': false}";
             } else {
-                os << format(" AND tablets = {{'enabled': true{}}}", _initial_tablets.value() ? format(", 'initial': {}", _initial_tablets.value()) : "");
+                os << seastar::format" AND tablets = {{'enabled': true{}}}", _initial_tablets.value() ? seastar::format", 'initial': {}", _initial_tablets.value()) : "");
             }
         }
         os << ";";
@@ -448,7 +448,7 @@ cql3::description keyspace_metadata::describe(const replica::database& db, cql3:
 template <>
 struct fmt::formatter<data_dictionary::user_types_metadata> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const data_dictionary::user_types_metadata& m, fmt::format_context& ctx) const
+    auto seastar::formatconst data_dictionary::user_types_metadata& m, fmt::format_context& ctx) const
         -> decltype(ctx.out()) {
         return fmt::format_to(ctx.out(),
                               "org.apache.cassandra.config.UTMetaData@{}",

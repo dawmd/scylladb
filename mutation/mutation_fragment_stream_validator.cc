@@ -43,16 +43,16 @@ format_partition_key(const schema& s, const dht::decorated_key& pkey, const char
     if (pkey.key().is_empty()) {
         return "";
     }
-    return format("{}{} ({})", prefix, pkey.key().with_schema(s), pkey);
+    return seastar::format"{}{} ({})", prefix, pkey.key().with_schema(s), pkey);
 }
 
 static mutation_fragment_stream_validator::validation_result
 ooo_key_result(const schema& s, dht::token t, const partition_key* pkey, dht::decorated_key prev_key) {
     return mutation_fragment_stream_validator::validation_result::invalid(format("out-of-order {} {}, previous {} was {}",
             pkey ? "partition key" : "token",
-            pkey ? format("{} ({{key: {}, token: {}}})", pkey->with_schema(s), *pkey, t) : format("{}", t),
+            pkey ? seastar::format"{} ({{key: {}, token: {}}})", pkey->with_schema(s), *pkey, t) : seastar::format"{}", t),
             prev_key.key().is_empty() ? "token" : "partition key",
-            prev_key.key().is_empty() ? format("{}", prev_key.token()) : format_partition_key(s, prev_key)));
+            prev_key.key().is_empty() ? seastar::format"{}", prev_key.token()) : format_partition_key(s, prev_key)));
 }
 
 mutation_fragment_stream_validator::validation_result
@@ -236,7 +236,7 @@ bool on_validation_error(seastar::logger& l, const mutation_fragment_stream_vali
         return false;
     }
     try {
-        on_internal_error(l, format("[validator {} for {}] {}", fmt::ptr(&zis), zis.full_name(), res.what()));
+        on_internal_error(l, seastar::format"[validator {} for {}] {}", fmt::ptr(&zis), zis.full_name(), res.what()));
     } catch (std::runtime_error& e) {
         throw invalid_mutation_fragment_stream(e);
     }
@@ -350,7 +350,7 @@ void mutation_fragment_stream_validating_filter::reset(mutation_fragment_v2::kin
         if (!t) {
             return "";
         }
-        return format(" (new tombstone: {})", *t);
+        return seastar::format" (new tombstone: {})", *t);
     }));
     _validator.reset(kind, pos, new_current_tombstone);
 }
@@ -359,7 +359,7 @@ void mutation_fragment_stream_validating_filter::reset(const mutation_fragment_v
         if (!mf.is_range_tombstone_change()) {
             return "";
         }
-        return format(" (new tombstone: {})", mf.as_range_tombstone_change().tombstone());
+        return seastar::format" (new tombstone: {})", mf.as_range_tombstone_change().tombstone());
     }));
     _validator.reset(mf);
 }

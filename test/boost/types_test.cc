@@ -868,7 +868,7 @@ BOOST_AUTO_TEST_CASE(test_parsing_of_user_type) {
 }
 
 static auto msg = [] (const char* m, data_type x, data_type y) -> std::string {
-    return format("{}({}, {})", m, x->name(), y->name());
+    return seastar::format"{}({}, {})", m, x->name(), y->name());
 };
 
 // Sort order does not change

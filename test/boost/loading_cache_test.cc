@@ -183,7 +183,7 @@ SEASTAR_TEST_CASE(test_loading_shared_values_parallel_loading_explicit_eviction)
         int rand_key = rand_int(num_loaders);
         BOOST_REQUIRE(shared_values.find(rand_key) != nullptr);
         anchors_vec[rand_key] = nullptr;
-        BOOST_REQUIRE_MESSAGE(shared_values.find(rand_key) == nullptr, format("explicit removal for key {} failed", rand_key));
+        BOOST_REQUIRE_MESSAGE(shared_values.find(rand_key) == nullptr, seastar::format"explicit removal for key {} failed", rand_key));
         anchors_vec.clear();
     });
 }

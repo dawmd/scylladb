@@ -32,7 +32,7 @@ struct node_printer {
 template <>
 struct fmt::formatter<node_printer> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const node_printer& np, fmt::format_context& ctx) const {
+    auto seastar::formatconst node_printer& np, fmt::format_context& ctx) const {
         const locator::node* node = np.v;
         auto out = fmt::format_to(ctx.out(), "node={}", fmt::ptr(node));
         if (node) {
@@ -238,11 +238,11 @@ const node& topology::add_node(node_holder nptr) {
 
 void topology::update_node(node& node, std::optional<host_id> opt_id, std::optional<endpoint_dc_rack> opt_dr, std::optional<node::state> opt_st, std::optional<shard_id> opt_shard_count) {
     tlogger.debug("topology[{}]: update_node: {}: to: host_id={} dc={} rack={} state={} shard_count={}, at {}", fmt::ptr(this), node_printer(&node),
-        opt_id ? format("{}", *opt_id) : "unchanged",
-        opt_dr ? format("{}", opt_dr->dc) : "unchanged",
-        opt_dr ? format("{}", opt_dr->rack) : "unchanged",
-        opt_st ? format("{}", *opt_st) : "unchanged",
-        opt_shard_count ? format("{}", *opt_shard_count) : "unchanged",
+        opt_id ? seastar::format"{}", *opt_id) : "unchanged",
+        opt_dr ? seastar::format"{}", opt_dr->dc) : "unchanged",
+        opt_dr ? seastar::format"{}", opt_dr->rack) : "unchanged",
+        opt_st ? seastar::format"{}", *opt_st) : "unchanged",
+        opt_shard_count ? seastar::format"{}", *opt_shard_count) : "unchanged",
         lazy_backtrace());
 
     bool changed = false;

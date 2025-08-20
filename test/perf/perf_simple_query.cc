@@ -144,7 +144,7 @@ static std::vector<perf_result> test_write(cql_test_env& env, test_config& cfg) 
     if (!cfg.timeout.empty()) {
         usings += "USING TIMEOUT " + cfg.timeout;
     }
-    sstring query = format("UPDATE cf {}SET "
+    sstring query = seastar::format"UPDATE cf {}SET "
             "\"C0\" = 0x8f75da6b3dcec90c8a404fb9a5f6b0621e62d39c69ba5758e5f41b78311fbb26cc7a,"
             "\"C1\" = 0xa8761a2127160003033a8f4f3d1069b7833ebe24ef56b3beee728c2b686ca516fa51,"
             "\"C2\" = 0x583449ce81bfebc2e1a695eb59aad5fcc74d6d7311fc6197b10693e1a161ca2e1c64,"
@@ -164,7 +164,7 @@ static std::vector<perf_result> test_delete(cql_test_env& env, test_config& cfg)
     if (!cfg.timeout.empty()) {
         usings += "USING TIMEOUT " + cfg.timeout;
     }
-    sstring query = format("DELETE \"C0\", \"C1\", \"C2\", \"C3\", \"C4\" FROM cf {}WHERE \"KEY\" = ?", usings);
+    sstring query = seastar::format"DELETE \"C0\", \"C1\", \"C2\", \"C3\", \"C4\" FROM cf {}WHERE \"KEY\" = ?", usings);
     auto id = env.prepare(query).get();
     return time_parallel([&env, &cfg, id] {
             bytes key = make_random_key(cfg);
@@ -177,7 +177,7 @@ static std::vector<perf_result> test_counter_update(cql_test_env& env, test_conf
     if (!cfg.timeout.empty()) {
         usings += "USING TIMEOUT " + cfg.timeout;
     }
-    sstring query = format("UPDATE cf {}SET "
+    sstring query = seastar::format"UPDATE cf {}SET "
             "\"C0\" = \"C0\" + 1,"
             "\"C1\" = \"C1\" + 2,"
             "\"C2\" = \"C2\" + 3,"

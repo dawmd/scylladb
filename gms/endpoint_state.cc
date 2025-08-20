@@ -53,7 +53,7 @@ locator::host_id endpoint_state::get_host_id() const noexcept {
     if (auto app_state = get_application_state_ptr(application_state::HOST_ID)) {
         host_id = locator::host_id(utils::UUID(app_state->value()));
         if (!host_id) {
-            on_internal_error_noexcept(logger, format("Node has null host_id"));
+            on_internal_error_noexcept(logger, seastar::format"Node has null host_id"));
         }
     }
     return host_id;
@@ -63,7 +63,7 @@ std::optional<locator::endpoint_dc_rack> endpoint_state::get_dc_rack() const {
     if (const auto* dc_state = get_application_state_ptr(application_state::DC)) {
         const auto* rack_state = get_application_state_ptr(application_state::RACK);
         if (dc_state->value().empty() || !rack_state || rack_state->value().empty()) {
-            on_internal_error_noexcept(logger, format("Node {} has empty dc={} or rack={}", get_host_id(), dc_state->value(), rack_state ? rack_state->value() : "(null)"));
+            on_internal_error_noexcept(logger, seastar::format"Node {} has empty dc={} or rack={}", get_host_id(), dc_state->value(), rack_state ? rack_state->value() : "(null)"));
         } else {
             return std::make_optional<locator::endpoint_dc_rack>(dc_state->value(), rack_state->value());
         }

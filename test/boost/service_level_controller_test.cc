@@ -75,27 +75,27 @@ struct qos_configuration_change_suscriber_simple : public qos_configuration_chan
 };
 
 template <> struct fmt::formatter<add_op> : fmt::formatter<string_view> {
-    auto format(const add_op& op, fmt::format_context& ctx) const {
+    auto seastar::formatconst add_op& op, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "Service Level: added '{}' with {}",
                               op.name, op.slo.workload);
     }
 };
 
 template <> struct fmt::formatter<change_op> : fmt::formatter<string_view> {
-    auto format(const change_op& op, fmt::format_context& ctx) const {
+    auto seastar::formatconst change_op& op, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "Service Level: changed '{}' from {} to {}",
                               op.name, op.slo_before.workload, op.slo_after.workload);
     }
 };
 
 template <> struct fmt::formatter<remove_op> : fmt::formatter<string_view> {
-    auto format(const remove_op& op, fmt::format_context& ctx) const {
+    auto seastar::formatconst remove_op& op, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "Service Level: removed '{}'", op.name);
     }
 };
 
 template <> struct fmt::formatter<service_level_op> : fmt::formatter<string_view> {
-    auto format(const service_level_op& op, fmt::format_context& ctx) const {
+    auto seastar::formatconst service_level_op& op, fmt::format_context& ctx) const {
         return std::visit(overloaded_functor {
             [&ctx] (const auto& op) { return fmt::format_to(ctx.out(), "{}", op); }
      }, op);
@@ -197,7 +197,7 @@ SEASTAR_THREAD_TEST_CASE(too_many_service_levels) {
     std::vector<sstring> expected_service_levels;
     while (service_level_count <= max_scheduling_groups()) {
         try {
-            sstring sl_name = format("sl{:020}",service_level_id);
+            sstring sl_name = seastar::format"sl{:020}",service_level_id);
             sl_controller.local().add_service_level(sl_name, sl_options).get();
             test_accessor->configuration[sl_name] = sl_options;
             expected_service_levels.emplace_back(sl_name);

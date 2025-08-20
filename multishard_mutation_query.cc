@@ -217,7 +217,7 @@ public:
             // The algorithm is full of assumptions about shard assignment being round-robin, static, and full.
             // This does not hold for tablets. We chose to avoid this algorithm rather than adapting it.
             // The coordinator should split ranges accordingly.
-            on_internal_error(mmq_log, format("multishard reader cannot be used on tables with non-static sharding: {}.{}",
+            on_internal_error(mmq_log, seastar::format("multishard reader cannot be used on tables with non-static sharding: {}.{}",
                               _schema->ks_name(), _schema->cf_name()));
         }
     }
@@ -287,7 +287,7 @@ public:
 };
 
 template <> struct fmt::formatter<read_context::dismantle_buffer_stats> : fmt::formatter<string_view> {
-    auto format(const read_context::dismantle_buffer_stats& s, fmt::format_context& ctx) const {
+    auto seastar::formatconst read_context::dismantle_buffer_stats& s, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(),
                               "kept {} partitions/{} fragments/{} bytes, discarded {} partitions/{} fragments/{} bytes",
                               s.partitions,

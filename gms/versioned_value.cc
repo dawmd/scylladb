@@ -47,7 +47,7 @@ sstring versioned_value::make_cdc_generation_id_string(std::optional<cdc::genera
     },
     [] (const cdc::generation_id_v2& id) {
         // v2;<timestamp>;<uuid>
-        return format("v2;{};{}", id.ts.time_since_epoch().count(), id.id);
+        return seastar::format"v2;{};{}", id.ts.time_since_epoch().count(), id.id);
     }
     ), *gen_id);
 }

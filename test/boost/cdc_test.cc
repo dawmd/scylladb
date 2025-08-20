@@ -527,7 +527,7 @@ SEASTAR_THREAD_TEST_CASE(test_pre_post_image_logging) {
     do_with_cql_env_thread([](cql_test_env& e) {
         auto test = [&e] (cdc::image_mode pre_enabled, bool post_enabled, bool with_ttl) {
             // note: 'val3' column is not used, but since not set in initial update, would provoke #6143 unless fixed.
-            cquery_nofail(e, format("CREATE TABLE ks.tbl (pk int, pk2 int, ck int, ck2 int, val int, val2 int, val3 int, PRIMARY KEY((pk, pk2), ck, ck2)) "
+            cquery_nofail(e, seastar::format"CREATE TABLE ks.tbl (pk int, pk2 int, ck int, ck2 int, val int, val2 int, val3 int, PRIMARY KEY((pk, pk2), ck, ck2)) "
                 "WITH cdc = {{'enabled':'true', 'preimage':'{}', 'postimage':'{}'}}", pre_enabled, post_enabled));
             cquery_nofail(e, "UPDATE ks.tbl"s + (with_ttl ? " USING TTL 654" : "") + " SET val = 11111, val2 = 22222 WHERE pk=1 AND pk2=11 AND ck=111 AND ck2=1111");
 
@@ -557,7 +557,7 @@ SEASTAR_THREAD_TEST_CASE(test_pre_post_image_logging) {
             for (auto i = 0u; i < 10; ++i) {
                 auto nv = last + 1;
                 const int64_t new_ttl = 100 * (i + 1);
-                cquery_nofail(e, "UPDATE ks.tbl" + (with_ttl ? format(" USING TTL {}", new_ttl) : "") + " SET val=" + std::to_string(nv) +" where pk=1 AND pk2=11 AND ck=111 AND ck2=1111");
+                cquery_nofail(e, "UPDATE ks.tbl" + (with_ttl ? seastar::format" USING TTL {}", new_ttl) : "") + " SET val=" + std::to_string(nv) +" where pk=1 AND pk2=11 AND ck=111 AND ck2=1111");
 
                 rows = select_log(e, "tbl");
 
@@ -625,7 +625,7 @@ SEASTAR_THREAD_TEST_CASE(test_pre_post_image_logging) {
 SEASTAR_THREAD_TEST_CASE(test_pre_post_image_logging_static_row) {
     do_with_cql_env_thread([](cql_test_env& e) {
         auto test = [&e] (bool enabled, bool with_ttl) {
-            cquery_nofail(e, format("CREATE TABLE ks.tbl (pk int, pk2 int, ck int, ck2 int, s int STATIC, s2 int STATIC, val int, PRIMARY KEY((pk, pk2), ck, ck2)) "
+            cquery_nofail(e, seastar::format"CREATE TABLE ks.tbl (pk int, pk2 int, ck int, ck2 int, s int STATIC, s2 int STATIC, val int, PRIMARY KEY((pk, pk2), ck, ck2)) "
                 "WITH cdc = {{'enabled':'true', 'preimage':'{0}', 'postimage':'{0}'}}", enabled));
             cquery_nofail(e, "INSERT INTO ks.tbl(pk, pk2, s, s2) VALUES(1, 11, 111, 1111)"s + (with_ttl ? " USING TTL 654" : ""));
 
@@ -652,7 +652,7 @@ SEASTAR_THREAD_TEST_CASE(test_pre_post_image_logging_static_row) {
             for (auto i = 0u; i < 10; ++i) {
                 auto nv = last + 1;
                 const int64_t new_ttl = 100 * (i + 1);
-                cquery_nofail(e, "UPDATE ks.tbl" + (with_ttl ? format(" USING TTL {}", new_ttl) : "") + " SET s=" + std::to_string(nv) +" where pk=1 AND pk2=11");
+                cquery_nofail(e, "UPDATE ks.tbl" + (with_ttl ? seastar::format" USING TTL {}", new_ttl) : "") + " SET s=" + std::to_string(nv) +" where pk=1 AND pk2=11");
 
                 rows = select_log(e, "tbl");
 
@@ -791,10 +791,10 @@ SEASTAR_THREAD_TEST_CASE(test_ttls) {
                     query += ",";
                 }
                 first_token = false;
-                query += format(" \"{0}\", ttl(\"{0}\")", reg_col.name_as_text());
+                query += seastar::format" \"{0}\", ttl(\"{0}\")", reg_col.name_as_text());
                 log_column_names.push_back(reg_col.name_as_text().c_str());
             }
-            query += format(" FROM ks.{}", cdc::log_name(base_tbl_name));
+            query += seastar::format" FROM ks.{}", cdc::log_name(base_tbl_name));
 
             // Execute query and get the first (and only) row of results:
             auto msg = e.execute_cql(query).get();
@@ -1239,7 +1239,7 @@ SEASTAR_THREAD_TEST_CASE(test_frozen_logging) {
 
         auto test_frozen = [&] (sstring type_string, sstring value_string) {
             BOOST_TEST_MESSAGE(format("Testing type {}", type_string));
-            cquery_nofail(e, format("CREATE TABLE {}.{} (pk int, ck int, {} {}, PRIMARY KEY (pk, ck)) WITH cdc = {{'enabled': 'true'}}",
+            cquery_nofail(e, seastar::format"CREATE TABLE {}.{} (pk int, ck int, {} {}, PRIMARY KEY (pk, ck)) WITH cdc = {{'enabled': 'true'}}",
                     keyspace_name, base_tbl_name, column_name, type_string)).get();
 
             // Corresponding column in CDC log should have the same type
@@ -1253,7 +1253,7 @@ SEASTAR_THREAD_TEST_CASE(test_frozen_logging) {
 
             BOOST_REQUIRE(base_column->type == log_column->type);
 
-            cquery_nofail(e, format("INSERT INTO {}.{} (pk, ck, {}) VALUES (0, 0, {})",
+            cquery_nofail(e, seastar::format"INSERT INTO {}.{} (pk, ck, {}) VALUES (0, 0, {})",
                     keyspace_name, base_tbl_name, column_name, value_string)).get();
 
             // Expect only one row, with the same value as inserted
@@ -1269,10 +1269,10 @@ SEASTAR_THREAD_TEST_CASE(test_frozen_logging) {
             const auto log_bytes = to_bytes(*log_rows);
             BOOST_REQUIRE_EQUAL(log_bytes, base_bytes);
 
-            cquery_nofail(e, format("DROP TABLE {}.{}", keyspace_name, base_tbl_name)).get();
+            cquery_nofail(e, seastar::format"DROP TABLE {}.{}", keyspace_name, base_tbl_name)).get();
         };
 
-        cquery_nofail(e, format("CREATE TYPE {}.udt (a text, ccc text)", keyspace_name));
+        cquery_nofail(e, seastar::format"CREATE TYPE {}.udt (a text, ccc text)", keyspace_name));
 
         test_frozen("frozen<list<text>>", "['a', 'bb', 'ccc']");
         test_frozen("frozen<set<text>>", "{'a', 'bb', 'ccc'}");
@@ -1285,14 +1285,14 @@ SEASTAR_THREAD_TEST_CASE(test_update_insert_delete_distinction) {
     do_with_cql_env_thread([](cql_test_env& e) {
         const auto base_tbl_name = "tbl_rowdel";
         const int pk = 1, ck = 11;
-        cquery_nofail(e, format("CREATE TABLE ks.{} (pk int, ck int, val int, PRIMARY KEY(pk, ck)) WITH cdc = {{'enabled':'true'}}", base_tbl_name));
+        cquery_nofail(e, seastar::format"CREATE TABLE ks.{} (pk int, ck int, val int, PRIMARY KEY(pk, ck)) WITH cdc = {{'enabled':'true'}}", base_tbl_name));
 
-        cquery_nofail(e, format("INSERT INTO ks.{} (pk, ck, val) VALUES ({}, {}, 222)", base_tbl_name, pk, ck)); // (0) an insert
-        cquery_nofail(e, format("UPDATE ks.{} set val=111 WHERE pk={} and ck={}", base_tbl_name, pk, ck));       // (1) an update
-        cquery_nofail(e, format("DELETE val FROM ks.{} WHERE pk = {} AND ck = {}", base_tbl_name, pk, ck));      // (2) also an update
-        cquery_nofail(e, format("DELETE FROM ks.{} WHERE pk = {} AND ck = {}", base_tbl_name, pk, ck));          // (3) a row delete
+        cquery_nofail(e, seastar::format"INSERT INTO ks.{} (pk, ck, val) VALUES ({}, {}, 222)", base_tbl_name, pk, ck)); // (0) an insert
+        cquery_nofail(e, seastar::format"UPDATE ks.{} set val=111 WHERE pk={} and ck={}", base_tbl_name, pk, ck));       // (1) an update
+        cquery_nofail(e, seastar::format"DELETE val FROM ks.{} WHERE pk = {} AND ck = {}", base_tbl_name, pk, ck));      // (2) also an update
+        cquery_nofail(e, seastar::format"DELETE FROM ks.{} WHERE pk = {} AND ck = {}", base_tbl_name, pk, ck));          // (3) a row delete
 
-        const sstring query = format("SELECT \"{}\" FROM ks.{}", cdc::log_meta_column_name("operation"), cdc::log_name(base_tbl_name));
+        const sstring query = seastar::format"SELECT \"{}\" FROM ks.{}", cdc::log_meta_column_name("operation"), cdc::log_name(base_tbl_name));
         auto msg = e.execute_cql(query).get();
         auto rows = dynamic_pointer_cast<cql_transport::messages::result_message::rows>(msg);
         BOOST_REQUIRE(rows);
@@ -1372,7 +1372,7 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
 
         auto now = api::new_timestamp();
 
-        cquery_nofail(e, format(
+        cquery_nofail(e, seastar::format
             "begin unlogged batch"
             " update ks.t using timestamp {} set s = -1 where pk = 0;"
             " update ks.t using timestamp {} set v1 = 1 where pk = 0 and ck = 0;"
@@ -1395,7 +1395,7 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
             BOOST_REQUIRE_EQUAL(expected, result);
         }
 
-        cquery_nofail(e, format("update ks.t using timestamp {} set m = null where pk = 0 and ck = 2;", now));
+        cquery_nofail(e, seastar::format"update ks.t using timestamp {} set m = null where pk = 0 and ck = 2;", now));
         {
             auto result = get_result(
                 {m_type, boolean_type, keys_type, timeuuid_type},
@@ -1411,7 +1411,7 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
             BOOST_REQUIRE_EQUAL(expected, result);
         }
 
-        cquery_nofail(e, format("update ks.t using timestamp {} set m = {{1:1}} where pk = 0 and ck = 3;", now));
+        cquery_nofail(e, seastar::format"update ks.t using timestamp {} set m = {{1:1}} where pk = 0 and ck = 3;", now));
         {
             auto result = get_result(
                 {m_type, boolean_type, keys_type, timeuuid_type},
@@ -1427,7 +1427,7 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
             BOOST_REQUIRE_EQUAL(expected, result);
         }
 
-        cquery_nofail(e, format(
+        cquery_nofail(e, seastar::format
             "begin unlogged batch"
             " update ks.t using timestamp {} and ttl 5 set v1 = 5, v2 = null where pk = 0 and ck = 1;"
             " update ks.t using timestamp {} and ttl 6 set m = m + {{0:6, 1:6}} where pk = 0 and ck = 1;"
@@ -1469,7 +1469,7 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
             BOOST_REQUIRE_EQUAL(expected, result);
         }
 
-        cquery_nofail(e, format(
+        cquery_nofail(e, seastar::format
             "begin unlogged batch"
             " delete from ks.t using timestamp {} where pk = 1;"
             " delete from ks.t using timestamp {} where pk = 1 and ck >= 0 and ck < 3;"
@@ -1520,7 +1520,7 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
 
         // Regression test for #6050
         cquery_nofail(e, "create table ks.t2 (pk int, ck int, s int static, cs set<text>, cm map<int, int>, primary key (pk, ck)) with cdc = {'enabled':true};");
-        cquery_nofail(e, format("insert into ks.t2 (pk, ck, s, cs, cm) VALUES (1, 2, 3, {{'4'}}, {{5:6}}) using timestamp {};", now));
+        cquery_nofail(e, seastar::format"insert into ks.t2 (pk, ck, s, cs, cm) VALUES (1, 2, 3, {{'4'}}, {{5:6}}) using timestamp {};", now));
 
         {
             auto cs_type = set_type_impl::get_instance(ascii_type, false);
@@ -1548,7 +1548,7 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
 
         // Splitting cells from INSERT with TTL and multiple collection columns
         cquery_nofail(e, "create table ks.t3 (pk int primary key, m1 map<int, int>, m2 map<int, int>) with cdc = {'enabled':true}");
-        cquery_nofail(e, format(
+        cquery_nofail(e, seastar::format
             "insert into ks.t3 (pk, m1, m2) VALUES (0, {{1:1}}, {{2:2}}) using timestamp {} and ttl 5;", now));
         {
             auto result = get_result(
@@ -1573,17 +1573,17 @@ SEASTAR_THREAD_TEST_CASE(test_batch_with_row_delete) {
         const int pk = 0, ck = 0;
 
         cquery_nofail(e, "CREATE TYPE ks.mytype (a int, b int)");
-        cquery_nofail(e, format("CREATE TABLE ks.{} (pk int, ck int, v1 int, v2 mytype, v3 map<int,int>, v4 set<int>, primary key (pk, ck)) WITH cdc = {{'enabled':true,'preimage':true}}", base_tbl_name));
+        cquery_nofail(e, seastar::format"CREATE TABLE ks.{} (pk int, ck int, v1 int, v2 mytype, v3 map<int,int>, v4 set<int>, primary key (pk, ck)) WITH cdc = {{'enabled':true,'preimage':true}}", base_tbl_name));
 
-        cquery_nofail(e, format("INSERT INTO ks.{} (pk, ck, v1, v2, v3, v4) VALUES ({}, {}, 1, (1,2), {{1:2,3:4}}, {{1,2,3}})", base_tbl_name, pk, ck));
-        cquery_nofail(e, format(
+        cquery_nofail(e, seastar::format"INSERT INTO ks.{} (pk, ck, v1, v2, v3, v4) VALUES ({}, {}, 1, (1,2), {{1:2,3:4}}, {{1,2,3}})", base_tbl_name, pk, ck));
+        cquery_nofail(e, seastar::format
                 "BEGIN UNLOGGED BATCH"
                 "   UPDATE ks.{tbl_name} set v1 = 666 WHERE pk = {pk} and ck = {ck};" // (1)
                 "   DELETE FROM ks.{tbl_name} WHERE pk = {pk} AND ck = {ck}; "        // (2)
                 "APPLY BATCH;",
                 fmt::arg("tbl_name", base_tbl_name), fmt::arg("pk", pk), fmt::arg("ck", ck)));
 
-        const sstring query = format("SELECT v1, v2, v3, v4, \"{}\" FROM ks.{}", cdc::log_meta_column_name("operation"), cdc::log_name(base_tbl_name));
+        const sstring query = seastar::format"SELECT v1, v2, v3, v4, \"{}\" FROM ks.{}", cdc::log_meta_column_name("operation"), cdc::log_name(base_tbl_name));
         auto msg = e.execute_cql(query).get();
         auto rows = dynamic_pointer_cast<cql_transport::messages::result_message::rows>(msg);
         BOOST_REQUIRE(rows);
@@ -1753,7 +1753,7 @@ static void test_pre_post_image(cql_test_env& e, const std::vector<image_persist
 
 void test_batch_images(bool preimage, bool postimage) {
     do_with_cql_env_thread([preimage, postimage] (cql_test_env& e) {
-        cquery_nofail(e, format(
+        cquery_nofail(e, seastar::format
                 "CREATE TABLE ks.tbl (pk int, ck int, s int STATIC, v1 int, v2 int, vm map<int, int>, PRIMARY KEY(pk, ck))"
                 " WITH cdc = {{'enabled':'true', 'preimage':'{}', 'postimage':'{}'}}",
                 preimage ? "true" : "false", postimage ? "true" : "false"));
@@ -1881,7 +1881,7 @@ void test_batch_images(bool preimage, bool postimage) {
             // Single row and column, multiple timestamps
             {
                 {
-                    format("BEGIN UNLOGGED BATCH"
+                    seastar::format"BEGIN UNLOGGED BATCH"
                         "   UPDATE ks.tbl USING TIMESTAMP {} SET vm = vm + {{1:2}} WHERE pk = 3 AND ck = 0;"
                         "   UPDATE ks.tbl USING TIMESTAMP {} SET vm = vm + {{3:4}} WHERE pk = 3 AND ck = 0;"
                         "APPLY BATCH",
@@ -1910,8 +1910,8 @@ void test_batch_images(bool preimage, bool postimage) {
             {
                 {
                     // Timestamps are necessary so that the first UPDATE will appear earlier in CDC log
-                    format("UPDATE ks.tbl USING TIMESTAMP {} SET vm = {{1:2}} WHERE pk = 6598 AND ck = 1;", now + 1),
-                    format("BEGIN UNLOGGED BATCH"
+                    seastar::format"UPDATE ks.tbl USING TIMESTAMP {} SET vm = {{1:2}} WHERE pk = 6598 AND ck = 1;", now + 1),
+                    seastar::format"BEGIN UNLOGGED BATCH"
                         "   UPDATE ks.tbl USING TIMESTAMP {} SET vm = {{}} WHERE pk = 6598 AND ck = 0;"
                         "   UPDATE ks.tbl USING TIMESTAMP {} SET vm = vm + {{3:4}} WHERE pk = 6598 AND ck = 1;"
                         "APPLY BATCH", now + 2, now + 2)
@@ -2002,7 +2002,7 @@ SEASTAR_THREAD_TEST_CASE(test_image_deleted_column) {
 
             // Create a table and insert data with v = NULL
             cquery_nofail(e, "drop table if exists tbl");
-            cquery_nofail(e, format("create table tbl(pk int, ck int, v int, v2 int, primary key(pk, ck)) with cdc = {{'enabled': true, 'preimage': {}, 'postimage': true}}", preimage_mode));
+            cquery_nofail(e, seastar::format"create table tbl(pk int, ck int, v int, v2 int, primary key(pk, ck)) with cdc = {{'enabled': true, 'preimage': {}, 'postimage': true}}", preimage_mode));
             cquery_nofail(e, "insert into tbl(pk, ck, v, v2) values (1, 1, null, 1)");
             cquery_nofail(e, "insert into tbl(pk, ck, v, v2) values (2, 2, null, 2)");
 
@@ -2042,10 +2042,10 @@ SEASTAR_THREAD_TEST_CASE(test_image_deleted_column) {
                 cquery_nofail(e, "drop table if exists tbl");
                 if (frozen_collection) {
                     cquery_nofail(e, 
-                        format("create table tbl(pk int, ck int, v frozen<set<int>>, v2 frozen<set<int>>, primary key(pk, ck)) with cdc = {{'enabled': true, 'preimage': {}, 'postimage': true}}", preimage_mode));
+                        seastar::format"create table tbl(pk int, ck int, v frozen<set<int>>, v2 frozen<set<int>>, primary key(pk, ck)) with cdc = {{'enabled': true, 'preimage': {}, 'postimage': true}}", preimage_mode));
                 } else {
                     cquery_nofail(e, 
-                        format("create table tbl(pk int, ck int, v set<int>, v2 set<int>, primary key(pk, ck)) with cdc = {{'enabled': true, 'preimage': {}, 'postimage': true}}", preimage_mode));
+                        seastar::format"create table tbl(pk int, ck int, v set<int>, v2 set<int>, primary key(pk, ck)) with cdc = {{'enabled': true, 'preimage': {}, 'postimage': true}}", preimage_mode));
                 }
                 cquery_nofail(e, "insert into tbl(pk, ck, v, v2) values (1, 1, null, {1})");
                 cquery_nofail(e, "insert into tbl(pk, ck, v, v2) values (2, 2, null, {2})");

@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
                 auto duration = clk::now() - start;
 
                 std::cout << "Allocated " << obj_count << " (" << obj_count * std_obj_size << " B) standard objects in "
-                    << format("{:.4f} [s]", std::chrono::duration_cast<std::chrono::duration<float>>(duration).count()) << "\n";
+                    << seastar::format"{:.4f} [s]", std::chrono::duration_cast<std::chrono::duration<float>>(duration).count()) << "\n";
                 print_region_stats();
             });
             return 0;

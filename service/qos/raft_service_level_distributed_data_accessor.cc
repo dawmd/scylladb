@@ -59,8 +59,8 @@ static void validate_state(const service::raft_group0_client& group0_client) {
 future<> raft_service_level_distributed_data_accessor::set_service_level(sstring service_level_name, qos::service_level_options slo, service::group0_batch& mc) const {
     validate_state(_group0_client);
     
-    static sstring insert_query = format("INSERT INTO {}.{} (service_level, timeout, workload_type) VALUES (?, ?, ?);", db::system_keyspace::NAME, db::system_keyspace::SERVICE_LEVELS_V2);
-    static sstring update_shares_query = format("UPDATE {}.{} SET shares = ? WHERE service_level = ?", db::system_keyspace::NAME, db::system_keyspace::SERVICE_LEVELS_V2);
+    static sstring insert_query = seastar::format"INSERT INTO {}.{} (service_level, timeout, workload_type) VALUES (?, ?, ?);", db::system_keyspace::NAME, db::system_keyspace::SERVICE_LEVELS_V2);
+    static sstring update_shares_query = seastar::format"UPDATE {}.{} SET shares = ? WHERE service_level = ?", db::system_keyspace::NAME, db::system_keyspace::SERVICE_LEVELS_V2);
     data_value workload = slo.workload == qos::service_level_options::workload_type::unspecified
             ? data_value::make_null(utf8_type)
             : data_value(qos::service_level_options::to_string(slo.workload));
@@ -80,16 +80,16 @@ future<> raft_service_level_distributed_data_accessor::set_service_level(sstring
 
     muts.insert(muts.end(), muts_shares.begin(), muts_shares.end());
 
-    mc.add_mutations(std::move(muts), format("service levels internal statement: {}", insert_query));
+    mc.add_mutations(std::move(muts), seastar::format"service levels internal statement: {}", insert_query));
 }
 
 future<> raft_service_level_distributed_data_accessor::drop_service_level(sstring service_level_name, service::group0_batch& mc) const {
     validate_state(_group0_client);
 
-    static sstring delete_query = format("DELETE FROM {}.{} WHERE service_level= ?;", db::system_keyspace::NAME, db::system_keyspace::SERVICE_LEVELS_V2);
+    static sstring delete_query = seastar::format"DELETE FROM {}.{} WHERE service_level= ?;", db::system_keyspace::NAME, db::system_keyspace::SERVICE_LEVELS_V2);
 
     auto muts = co_await _qp.get_mutations_internal(delete_query, qos_query_state(), mc.write_timestamp(), {service_level_name});
-    mc.add_mutations(std::move(muts), format("service levels internal statement: {}", delete_query));
+    mc.add_mutations(std::move(muts), seastar::format"service levels internal statement: {}", delete_query));
 }
 
 future<> raft_service_level_distributed_data_accessor::commit_mutations(service::group0_batch&& mc, abort_source& as) const {

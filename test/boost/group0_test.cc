@@ -180,8 +180,8 @@ SEASTAR_TEST_CASE(test_concurrent_group0_modifications) {
         auto perform_schema_changes = [] (cql_test_env& e, size_t n, size_t task_id) -> future<size_t> {
             size_t successes = 0;
             bool has_ks = false;
-            auto drop_ks_cql = format("drop keyspace new_ks{}", task_id);
-            auto create_ks_cql = format("create keyspace new_ks{} with replication = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}", task_id);
+            auto drop_ks_cql = seastar::format"drop keyspace new_ks{}", task_id);
+            auto create_ks_cql = seastar::format"create keyspace new_ks{} with replication = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}", task_id);
 
             auto perform = [&] () -> future<> {
                 try {

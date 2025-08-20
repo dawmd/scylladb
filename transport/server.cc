@@ -145,7 +145,7 @@ sstring to_string(cql_binary_opcode op) {
     case cql_binary_opcode::AUTH_SUCCESS:   return "AUTH_SUCCESS";
     case cql_binary_opcode::OPCODES_COUNT:  return "OPCODES_COUNT";
     }
-    return format("Unknown CQL binary opcode {}", static_cast<unsigned>(op));
+    return seastar::format"Unknown CQL binary opcode {}", static_cast<unsigned>(op));
 }
 
 sstring to_string(const event::status_change::status_type t) {
@@ -746,7 +746,7 @@ future<> cql_server::connection::process_request() {
         auto stream = f.stream;
         auto mem_estimate = f.length * 2 + 8000; // Allow for extra copies and bookkeeping
         if (mem_estimate > _server._config.max_request_size) {
-            const auto message = format("request size too large (frame size {:d}; estimate {:d}; allowed {:d})",
+            const auto message = seastar::format"request size too large (frame size {:d}; estimate {:d}; allowed {:d})",
                 uint32_t(f.length), mem_estimate, _server._config.max_request_size);
             clogger.debug("{}: {}, request dropped", _client_state.get_remote_address(), message);
             write_response(make_error(stream, exceptions::exception_code::INVALID, message, tracing::trace_state_ptr()));
@@ -758,7 +758,7 @@ future<> cql_server::connection::process_request() {
         if (_server._stats.requests_serving > _server._config.max_concurrent_requests) {
             ++_server._stats.requests_shed;
             return _read_buf.skip(f.length).then([this, stream = f.stream] {
-                const auto message = format("too many in-flight requests (configured via max_concurrent_requests_per_shard): {}",
+                const auto message = seastar::format"too many in-flight requests (configured via max_concurrent_requests_per_shard): {}",
                                             _server._stats.requests_serving);
                 clogger.debug("{}: {}, request dropped", _client_state.get_remote_address(), message);
                 write_response(make_error(stream, exceptions::exception_code::OVERLOADED,
@@ -826,7 +826,7 @@ future<> cql_server::connection::process_request() {
             future<> request_response_future = request_process_future.then_wrapped([this, buf = std::move(buf), mem_permit, leave = std::move(leave), stream] (future<foreign_ptr<std::unique_ptr<cql_server::response>>> response_f) mutable {
                 try {
                     if (response_f.failed()) {
-                        const auto message = format("request processing failed, error [{}]", response_f.get_exception());
+                        const auto message = seastar::format"request processing failed, error [{}]", response_f.get_exception());
                         clogger.error("{}: {}", _client_state.get_remote_address(), message);
                         write_response(make_error(stream, exceptions::exception_code::SERVER_ERROR,
                                                   message,
@@ -1209,7 +1209,7 @@ process_execute_internal(service::client_state& client_state, distributed<cql3::
     auto stmt = prepared->statement;
     tracing::trace(query_state.get_trace_state(), "Checking bounds");
     if (stmt->get_bound_terms() != options.get_values_count()) {
-        const auto msg = format("Invalid amount of bind variables: expected {:d} received {:d}",
+        const auto msg = seastar::format"Invalid amount of bind variables: expected {:d} received {:d}",
                 stmt->get_bound_terms(),
                 options.get_values_count());
         tracing::trace(query_state.get_trace_state(), "{}", msg);
@@ -1541,16 +1541,16 @@ std::unique_ptr<cql_server::response> cql_server::connection::make_supported(int
     opts.insert({"COMPRESSION", "lz4"});
     opts.insert({"COMPRESSION", "snappy"});
     if (_server._config.allow_shard_aware_drivers) {
-        opts.insert({"SCYLLA_SHARD", format("{:d}", this_shard_id())});
-        opts.insert({"SCYLLA_NR_SHARDS", format("{:d}", smp::count)});
+        opts.insert({"SCYLLA_SHARD", seastar::format"{:d}", this_shard_id())});
+        opts.insert({"SCYLLA_NR_SHARDS", seastar::format"{:d}", smp::count)});
         opts.insert({"SCYLLA_SHARDING_ALGORITHM", dht::cpu_sharding_algorithm_name()});
         if (_server._config.shard_aware_transport_port) {
-            opts.insert({"SCYLLA_SHARD_AWARE_PORT", format("{:d}", *_server._config.shard_aware_transport_port)});
+            opts.insert({"SCYLLA_SHARD_AWARE_PORT", seastar::format"{:d}", *_server._config.shard_aware_transport_port)});
         }
         if (_server._config.shard_aware_transport_port_ssl) {
-            opts.insert({"SCYLLA_SHARD_AWARE_PORT_SSL", format("{:d}", *_server._config.shard_aware_transport_port_ssl)});
+            opts.insert({"SCYLLA_SHARD_AWARE_PORT_SSL", seastar::format"{:d}", *_server._config.shard_aware_transport_port_ssl)});
         }
-        opts.insert({"SCYLLA_SHARDING_IGNORE_MSB", format("{:d}", _server._config.sharding_ignore_msb)});
+        opts.insert({"SCYLLA_SHARDING_IGNORE_MSB", seastar::format"{:d}", _server._config.sharding_ignore_msb)});
         opts.insert({"SCYLLA_PARTITIONER", _server._config.partitioner_name});
     }
     for (cql_protocol_extension ext : supported_cql_protocol_extensions()) {

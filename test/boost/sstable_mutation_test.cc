@@ -978,7 +978,7 @@ SEASTAR_TEST_CASE(test_promoted_index_repeats_open_tombstones) {
         int id = 0;
         for (auto& compact : { schema_builder::compact_storage::no, schema_builder::compact_storage::yes }) {
             const auto generation = id++;
-            schema_builder builder("ks", format("cf{:d}", generation));
+            schema_builder builder("ks", seastar::format"cf{:d}", generation));
             builder.with_column("p", utf8_type, column_kind::partition_key);
             builder.with_column("c1", bytes_type, column_kind::clustering_key);
             builder.with_column("v", int32_type);
@@ -1232,7 +1232,7 @@ SEASTAR_TEST_CASE(test_large_index_pages_do_not_cause_large_allocations) {
 
     auto make_pkey_text = [] (size_t pad_size) -> sstring {
         static int i = 0;
-        return format("pkey_0x{:x}_{}", i++, make_random_string(pad_size));
+        return seastar::format"pkey_0x{:x}_{}", i++, make_random_string(pad_size));
     };
 
     // Choose min from several random keys

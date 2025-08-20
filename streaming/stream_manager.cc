@@ -396,13 +396,13 @@ shared_ptr<stream_session> stream_manager::get_session(streaming::plan_id plan_i
         sr = get_receiving_stream(plan_id);
     }
     if (!sr) {
-        auto err = format("[Stream #{}] GOT {} from {}: Can not find stream_manager", plan_id, verb, from);
+        auto err = seastar::format"[Stream #{}] GOT {} from {}: Can not find stream_manager", plan_id, verb, from);
         sslog.debug("{}", err.c_str());
         throw std::runtime_error(err);
     }
     auto coordinator = sr->get_coordinator();
     if (!coordinator) {
-        auto err = format("[Stream #{}] GOT {} from {}: Can not find coordinator", plan_id, verb, from);
+        auto err = seastar::format"[Stream #{}] GOT {} from {}: Can not find coordinator", plan_id, verb, from);
         sslog.debug("{}", err.c_str());
         throw std::runtime_error(err);
     }

@@ -39,7 +39,7 @@ future<> service::client_state::check_user_can_login() {
 
     if (!exists) {
         throw exceptions::authentication_exception(
-                format("User {} doesn't exist - create it with CREATE USER query first", *_user->name));
+                seastar::format"User {} doesn't exist - create it with CREATE USER query first", *_user->name));
     }
 
     bool can_login = co_await role_manager.can_login(*_user->name);
@@ -120,12 +120,12 @@ future<> service::client_state::check_internal_table_permissions(std::string_vie
     if (service::paxos::paxos_store::try_get_base_table(table_name)) {
         if (forbidden_permissions.contains(cmd.permission)) {
             throw exceptions::unauthorized_exception(
-                    format("Cannot {} {}", auth::permissions::to_string(cmd.permission), cmd.resource));
+                    seastar::format"Cannot {} {}", auth::permissions::to_string(cmd.permission), cmd.resource));
         }
 
         if (!co_await _auth_service->underlying_role_manager().is_superuser(*_user->name)) {
             throw exceptions::unauthorized_exception(
-                    format("Only superusers are allowed to {} {}", auth::permissions::to_string(cmd.permission), cmd.resource));
+                    seastar::format"Only superusers are allowed to {} {}", auth::permissions::to_string(cmd.permission), cmd.resource));
         }
     }
 
@@ -136,7 +136,7 @@ future<> service::client_state::check_internal_table_permissions(std::string_vie
                 || table_name == db::system_distributed_keyspace::CDC_TIMESTAMPS
                 || table_name == db::system_distributed_keyspace::CDC_GENERATIONS_V2)) {
             throw exceptions::unauthorized_exception(
-                    format("Cannot {} {}", auth::permissions::to_string(cmd.permission), cmd.resource));
+                    seastar::format"Cannot {} {}", auth::permissions::to_string(cmd.permission), cmd.resource));
         }
     }
 }
@@ -176,7 +176,7 @@ future<> service::client_state::has_access(const sstring& ks, auth::command_desc
 
         if (dropping_anything_in_tracing || dropping_auth_keyspace) {
             throw exceptions::unauthorized_exception(
-                    format("Cannot {} {}", auth::permissions::to_string(cmd.permission), cmd.resource));
+                    seastar::format"Cannot {} {}", auth::permissions::to_string(cmd.permission), cmd.resource));
         }
     }
 
@@ -241,7 +241,7 @@ future<> service::client_state::ensure_has_permission(auth::command_desc cmd) co
     return check_has_permission(cmd).then([this, cmd](bool ok) {
         if (!ok) {
             return make_exception_future<>(exceptions::unauthorized_exception(
-                format("User {} has no {} permission on {} or any of its parents",
+                seastar::format"User {} has no {} permission on {} or any of its parents",
                         *_user,
                         auth::permissions::to_string(cmd.permission),
                         cmd.resource)));

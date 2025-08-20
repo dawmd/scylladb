@@ -1202,7 +1202,7 @@ SEASTAR_TEST_CASE(test_indexing_paging_and_aggregation) {
         cquery_nofail(e, "CREATE TABLE fpa (id int primary key, v int)");
         cquery_nofail(e, "CREATE INDEX ON fpa(v)");
         for (int i = 0; i < row_count; ++i) {
-            cquery_nofail(e, format("INSERT INTO fpa (id, v) VALUES ({}, {})", i + 1, i % 2).c_str());
+            cquery_nofail(e, seastar::format"INSERT INTO fpa (id, v) VALUES ({}, {})", i + 1, i % 2).c_str());
         }
 
       eventually([&] {
@@ -1236,7 +1236,7 @@ SEASTAR_TEST_CASE(test_indexing_paging_and_aggregation) {
 
       eventually([&] {
         for (int i = 0; i < row_count; ++i) {
-            cquery_nofail(e, format("INSERT INTO fpa2 (id, c1, c2) VALUES ({}, {}, {})", i + 1, i + 1, i % 2).c_str());
+            cquery_nofail(e, seastar::format"INSERT INTO fpa2 (id, c1, c2) VALUES ({}, {}, {})", i + 1, i + 1, i % 2).c_str());
         }
 
         auto qo = std::make_unique<cql3::query_options>(db::consistency_level::LOCAL_ONE, std::vector<cql3::raw_value>{},
@@ -1367,10 +1367,10 @@ SEASTAR_TEST_CASE(test_secondary_index_on_ck_first_column_and_aggregation) {
         // see issue #7355).
         cquery_nofail(e, "INSERT INTO t2(pk, ck) VALUES (0, -2)");
         cquery_nofail(e, "INSERT INTO t2(pk, ck) VALUES (0, 3)");
-        cquery_nofail(e, format("INSERT INTO t2(pk, ck) VALUES ({}, 3)", page_scenarios_just_after_first_page).c_str());
+        cquery_nofail(e, seastar::format"INSERT INTO t2(pk, ck) VALUES ({}, 3)", page_scenarios_just_after_first_page).c_str());
 
         test_with_different_page_scenarios([&](int current_row) {
-            cquery_nofail(e, format("INSERT INTO t2(pk, ck) VALUES ({}, 1)", current_row).c_str());
+            cquery_nofail(e, seastar::format"INSERT INTO t2(pk, ck) VALUES ({}, 1)", current_row).c_str());
         }, [&](int rows_inserted) {
             assert_select_count_and_select_rows_has_size(e, "FROM t2 WHERE ck = 1", rows_inserted);
           eventually([&] { 
@@ -1393,7 +1393,7 @@ SEASTAR_TEST_CASE(test_secondary_index_on_ck_first_column_and_aggregation) {
         cquery_nofail(e, "INSERT INTO t3(pk, ck1, ck2) VALUES (1, 2, 0)");
 
         test_with_different_page_scenarios([&](int current_row) {
-            cquery_nofail(e, format("INSERT INTO t3(pk, ck1, ck2) VALUES (1, 1, {})", current_row).c_str());
+            cquery_nofail(e, seastar::format"INSERT INTO t3(pk, ck1, ck2) VALUES (1, 1, {})", current_row).c_str());
         }, [&](int rows_inserted) {
             assert_select_count_and_select_rows_has_size(e, "FROM t3 WHERE ck1 = 1", rows_inserted);
           eventually([&] { 
@@ -1425,7 +1425,7 @@ SEASTAR_TEST_CASE(test_secondary_index_on_pk_column_and_aggregation) {
         cquery_nofail(e, "CREATE INDEX ON t1(pk2)");
 
         test_with_different_page_scenarios([&](int current_row) {
-            cquery_nofail(e, format("INSERT INTO t1(pk1, pk2, ck) VALUES (1, 1, {})", current_row).c_str());
+            cquery_nofail(e, seastar::format"INSERT INTO t1(pk1, pk2, ck) VALUES (1, 1, {})", current_row).c_str());
         }, [&](int rows_inserted) {
             assert_select_count_and_select_rows_has_size(e, "FROM t1 WHERE pk2 = 1", rows_inserted);
           eventually([&] { 
@@ -1445,7 +1445,7 @@ SEASTAR_TEST_CASE(test_secondary_index_on_pk_column_and_aggregation) {
         cquery_nofail(e, "CREATE INDEX ON t2(pk2)");
 
         test_with_different_page_scenarios([&](int current_row) {
-            cquery_nofail(e, format("INSERT INTO t2(pk1, pk2, ck) VALUES ({}, 1, {})", 
+            cquery_nofail(e, seastar::format"INSERT INTO t2(pk1, pk2, ck) VALUES ({}, 1, {})", 
                 current_row, current_row % 20).c_str());
         }, [&](int rows_inserted) {
             assert_select_count_and_select_rows_has_size(e, "FROM t2 WHERE pk2 = 1", rows_inserted);
@@ -1464,7 +1464,7 @@ SEASTAR_TEST_CASE(test_secondary_index_on_pk_column_and_aggregation) {
         cquery_nofail(e, "CREATE INDEX ON t3(pk2)");
 
         test_with_different_page_scenarios([&](int current_row) {
-            cquery_nofail(e, format("INSERT INTO t3(pk1, pk2) VALUES ({}, 1)", current_row).c_str());
+            cquery_nofail(e, seastar::format"INSERT INTO t3(pk1, pk2) VALUES ({}, 1)", current_row).c_str());
         }, [&](int rows_inserted) {
             assert_select_count_and_select_rows_has_size(e, "FROM t3 WHERE pk2 = 1", rows_inserted);
         });
@@ -1486,7 +1486,7 @@ SEASTAR_TEST_CASE(test_secondary_index_on_non_pk_ck_column_and_aggregation) {
         cquery_nofail(e, "CREATE INDEX ON t(v)");
 
         test_with_different_page_scenarios([&](int current_row) {
-            cquery_nofail(e, format("INSERT INTO t(pk, ck, v) VALUES ({}, {}, 1)", 
+            cquery_nofail(e, seastar::format"INSERT INTO t(pk, ck, v) VALUES ({}, {}, 1)", 
                 current_row, current_row % 20).c_str());
         }, [&](int rows_inserted) {
             assert_select_count_and_select_rows_has_size(e, "FROM t WHERE v = 1", rows_inserted);
@@ -1505,7 +1505,7 @@ SEASTAR_TEST_CASE(test_secondary_index_on_non_pk_ck_column_and_aggregation) {
         cquery_nofail(e, "CREATE INDEX ON t2(v)");
 
         test_with_different_page_scenarios([&](int current_row) {
-            cquery_nofail(e, format("INSERT INTO t2(pk, v) VALUES ({}, 1)", current_row).c_str());
+            cquery_nofail(e, seastar::format"INSERT INTO t2(pk, v) VALUES ({}, 1)", current_row).c_str());
         }, [&](int rows_inserted) {
             assert_select_count_and_select_rows_has_size(e, "FROM t2 WHERE v = 1", rows_inserted);
           eventually([&] { 
@@ -1522,7 +1522,7 @@ SEASTAR_TEST_CASE(test_secondary_index_on_non_pk_ck_column_and_aggregation) {
         cquery_nofail(e, "CREATE INDEX ON t3(v)");
 
         test_with_different_page_scenarios([&](int current_row) {
-            cquery_nofail(e, format("INSERT INTO t3(pk, ck, v) VALUES (1, {}, 1)", current_row).c_str());
+            cquery_nofail(e, seastar::format"INSERT INTO t3(pk, ck, v) VALUES (1, {}, 1)", current_row).c_str());
         }, [&](int rows_inserted) {
             assert_select_count_and_select_rows_has_size(e, "FROM t3 WHERE v = 1", rows_inserted);
           eventually([&] { 
@@ -1595,7 +1595,7 @@ SEASTAR_TEST_CASE(test_token_order) {
         cquery_nofail(e, "CREATE INDEX ON t(v)");
 
         for (int i = 0; i < 7; i++) {
-            cquery_nofail(e, format("INSERT INTO t (pk, v) VALUES ({}, 1)", i).c_str());
+            cquery_nofail(e, seastar::format"INSERT INTO t (pk, v) VALUES ({}, 1)", i).c_str());
         }
 
         eventually([&] {
@@ -1614,7 +1614,7 @@ SEASTAR_TEST_CASE(test_select_with_token_range_cases) {
 
         for (int i = 0; i < 7; i++) {
             // v=1 in each row, so WHERE v = 1 will select them all
-            cquery_nofail(e, format("INSERT INTO t (pk, v) VALUES ({}, 1)", i).c_str());
+            cquery_nofail(e, seastar::format"INSERT INTO t (pk, v) VALUES ({}, 1)", i).c_str());
         }
 
         auto get_result_rows = [&](int start, int end) {
@@ -1626,25 +1626,25 @@ SEASTAR_TEST_CASE(test_select_with_token_range_cases) {
         };
 
         auto get_query = [&](sstring token_restriction) {
-            return format("SELECT * FROM t WHERE v = 1 AND {} ALLOW FILTERING", token_restriction);
+            return seastar::format"SELECT * FROM t WHERE v = 1 AND {} ALLOW FILTERING", token_restriction);
         };
 
         auto q = [&](sstring token_restriction) {
             return cquery_nofail(e, get_query(token_restriction).c_str());
         };
 
-        auto inclusive_inclusive_range = [](int64_t start, int64_t end) { return format("token(pk) >= {} AND token(pk) <= {}", start, end); };
-        auto exclusive_inclusive_range = [](int64_t start, int64_t end) { return format("token(pk) > {} AND token(pk) <= {}", start, end); };
-        auto inclusive_exclusive_range = [](int64_t start, int64_t end) { return format("token(pk) >= {} AND token(pk) < {}", start, end); };
-        auto exclusive_exclusive_range = [](int64_t start, int64_t end) { return format("token(pk) > {} AND token(pk) < {}", start, end); };
+        auto inclusive_inclusive_range = [](int64_t start, int64_t end) { return seastar::format"token(pk) >= {} AND token(pk) <= {}", start, end); };
+        auto exclusive_inclusive_range = [](int64_t start, int64_t end) { return seastar::format"token(pk) > {} AND token(pk) <= {}", start, end); };
+        auto inclusive_exclusive_range = [](int64_t start, int64_t end) { return seastar::format"token(pk) >= {} AND token(pk) < {}", start, end); };
+        auto exclusive_exclusive_range = [](int64_t start, int64_t end) { return seastar::format"token(pk) > {} AND token(pk) < {}", start, end); };
 
-        auto inclusive_infinity_range = [](int64_t start) { return format("token(pk) >= {}", start); };
-        auto exclusive_infinity_range = [](int64_t start) { return format("token(pk) > {}", start); };
+        auto inclusive_infinity_range = [](int64_t start) { return seastar::format"token(pk) >= {}", start); };
+        auto exclusive_infinity_range = [](int64_t start) { return seastar::format"token(pk) > {}", start); };
 
-        auto infinity_inclusive_range = [](int64_t end) { return format("token(pk) <= {}", end); };
-        auto infinity_exclusive_range = [](int64_t end) { return format("token(pk) < {}", end); };
+        auto infinity_inclusive_range = [](int64_t end) { return seastar::format"token(pk) <= {}", end); };
+        auto infinity_exclusive_range = [](int64_t end) { return seastar::format"token(pk) < {}", end); };
 
-        auto equal_range = [](int64_t value) { return format("token(pk) = {}", value); };
+        auto equal_range = [](int64_t value) { return seastar::format"token(pk) = {}", value); };
 
         auto do_tests = [&] {
             assert_that(q(inclusive_inclusive_range(testset_tokens[1], testset_tokens[5]))).is_rows().with_rows(get_result_rows(1, 5));
@@ -1730,7 +1730,7 @@ SEASTAR_TEST_CASE(test_select_with_token_range_filtering) {
 
         std::vector<testset_row> rows;
         auto insert_row = [&](testset_row row) {
-            cquery_nofail(e, format("INSERT INTO t(pk1, pk2, ck1, ck2, v, v2) VALUES ({}, {}, {}, {}, {}, {})", row.pk1, row.pk2, row.ck1, row.ck2, row.v, row.v2).c_str());
+            cquery_nofail(e, seastar::format"INSERT INTO t(pk1, pk2, ck1, ck2, v, v2) VALUES ({}, {}, {}, {}, {}, {})", row.pk1, row.pk2, row.ck1, row.ck2, row.v, row.v2).c_str());
             rows.push_back(row);
         };
 
@@ -1751,7 +1751,7 @@ SEASTAR_TEST_CASE(test_select_with_token_range_filtering) {
                     int32_type->decompose(row.v), int32_type->decompose(row.v2) 
                 };
             }));
-            auto msg = cquery_nofail(e, format("SELECT pk1, pk2, ck1, ck2, v, v2 FROM t WHERE {} AND {} ALLOW FILTERING", token_restriction, column_restrictions).c_str());
+            auto msg = cquery_nofail(e, seastar::format"SELECT pk1, pk2, ck1, ck2, v, v2 FROM t WHERE {} AND {} ALLOW FILTERING", token_restriction, column_restrictions).c_str());
             assert_that(msg).is_rows().with_rows_ignore_order(expected_rows);
         };
 

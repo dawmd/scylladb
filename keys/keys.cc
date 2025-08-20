@@ -95,7 +95,7 @@ bound_kind reverse_kind(bound_kind k) {
     case bound_kind::excl_end:   return bound_kind::excl_start;
     case bound_kind::incl_end:   return bound_kind::incl_start;
     }
-    on_internal_error(klog, format("reverse_kind(): invalid value for `bound_kind`: {}", static_cast<std::underlying_type_t<bound_kind>>(k)));
+    on_internal_error(klog, seastar::format"reverse_kind(): invalid value for `bound_kind`: {}", static_cast<std::underlying_type_t<bound_kind>>(k)));
 }
 
 int32_t weight(bound_kind k) {

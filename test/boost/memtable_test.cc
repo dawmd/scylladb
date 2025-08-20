@@ -1145,7 +1145,7 @@ SEASTAR_TEST_CASE(failed_flush_prevents_writes) {
         // largest memtable to flush
         mutation mt = {s, tests::generate_partition_key(s)};
         for (uint32_t i = 0; i < 1000; ++i) {
-            ss.add_row(mt, ss.make_ckey(i), format("{}", i));
+            ss.add_row(mt, ss.make_ckey(i), seastar::format"{}", i));
         }
         t.apply(mt);
 
@@ -1198,7 +1198,7 @@ SEASTAR_TEST_CASE(flushing_rate_is_reduced_if_compaction_doesnt_keep_up) {
             const int sleep_ms;
 
             static sstring cf_name(unsigned thread_id) {
-                return format("cf_{}", thread_id);
+                return seastar::format"cf_{}", thread_id);
             }
 
             static sstring ks_name() {

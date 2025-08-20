@@ -60,13 +60,13 @@ void run_test(const sstring& name, schema_ptr s, MutationGenerator&& gen) {
             }
         });
         memtable_slm.stop();
-        std::cout << format("Memtable fill took {:.6f} [ms], {}", fill_d.count() * 1000, memtable_slm) << std::endl;
+        std::cout << seastar::format"Memtable fill took {:.6f} [ms], {}", fill_d.count() * 1000, memtable_slm) << std::endl;
 
         std::cout << "Draining..." << std::endl;
         auto drain_d = duration_in_seconds([&] {
             mt->cleaner().drain().get();
         });
-        std::cout << format("took {:.6f} [ms]", drain_d.count() * 1000) << std::endl;
+        std::cout << seastar::format"took {:.6f} [ms]", drain_d.count() * 1000) << std::endl;
 
         const auto prev_stats = logalloc::shard_tracker().statistics();
         auto prev_compacted = prev_stats.memory_compacted;
@@ -75,7 +75,7 @@ void run_test(const sstring& name, schema_ptr s, MutationGenerator&& gen) {
         auto prev_rows_merged_from_memtable = tracker.get_stats().rows_merged_from_memtable;
         auto prev_rows_dropped_from_memtable = tracker.get_stats().rows_dropped_from_memtable;
 
-        std::cout << format("cache: {:d}/{:d} [MB], memtable: {:d}/{:d} [MB], alloc/comp: {:d}/{:d} [MB] (amp: {:.3f})",
+        std::cout << seastar::format"cache: {:d}/{:d} [MB], memtable: {:d}/{:d} [MB], alloc/comp: {:d}/{:d} [MB] (amp: {:.3f})",
             tracker.region().occupancy().used_space() / MB,
             tracker.region().occupancy().total_space() / MB,
             mt->occupancy().used_space() / MB,
@@ -116,7 +116,7 @@ void run_test(const sstring& name, schema_ptr s, MutationGenerator&& gen) {
         auto compacted = stats.memory_compacted - prev_compacted;
         auto allocated = stats.memory_allocated - prev_allocated;
 
-        std::cout << format("update: {:.6f} [ms], preemption: {}, cache: {:d}/{:d} [MB], alloc/comp: {:d}/{:d} [MB] (amp: {:.3f}), pr/me/dr {:d}/{:d}/{:d}\n",
+        std::cout << seastar::format"update: {:.6f} [ms], preemption: {}, cache: {:d}/{:d} [MB], alloc/comp: {:d}/{:d} [MB] (amp: {:.3f}), pr/me/dr {:d}/{:d}/{:d}\n",
             d.count() * 1000,
             slm,
             tracker.region().occupancy().used_space() / MB,
@@ -134,7 +134,7 @@ void run_test(const sstring& name, schema_ptr s, MutationGenerator&& gen) {
     });
     invalidate_slm.stop();
 
-    std::cout << format("invalidation: {:.6f} [ms], preemption: {}", d.count() * 1000, invalidate_slm) << "\n";
+    std::cout << seastar::format"invalidation: {:.6f} [ms], preemption: {}", d.count() * 1000, invalidate_slm) << "\n";
 }
 
 static void test_small_partitions() {

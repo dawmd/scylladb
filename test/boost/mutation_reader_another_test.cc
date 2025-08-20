@@ -1013,7 +1013,7 @@ SEASTAR_THREAD_TEST_CASE(test_reverse_reader_memory_limit) {
         } catch (const std::runtime_error& e) {
             testlog.info("Got exception with message: {}", e.what());
             auto str = sstring(e.what());
-            const auto expected_str = format(
+            const auto expected_str = seastar::format
                     "Memory usage of reversed read exceeds hard limit of {} (configured via max_memory_for_unlimited_query_hard_limit), while reading partition {}",
                     hard_limit,
                     pk);

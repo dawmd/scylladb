@@ -41,7 +41,7 @@ enum_option<T> parse(const char* value) {
 }
 
 template <typename T>
-std::string format(typename T::enumeration d) {
+std::string seastar::formattypename T::enumeration d) {
     std::ostringstream os;
     os << enum_option<T>(d);
     return os.str();

@@ -75,7 +75,7 @@ void create_type_statement::check_for_duplicate_names(user_type type)
         for (auto j = i +  1; j < names.cend(); ++j) {
             if (*i == *j) {
                 throw exceptions::invalid_request_exception(
-                        format("Duplicate field name {} in type {}", to_hex(*i), type->get_name_as_string()));
+                        seastar::format"Duplicate field name {} in type {}", to_hex(*i), type->get_name_as_string()));
             }
         }
     }

@@ -454,7 +454,7 @@ dht::token_range_vector split_token_range_msb(unsigned most_significant_bits) {
         } else {
             auto token = dht::next_token(prev_last_token);
             if (compaction_group_of(most_significant_bits, token) != i) {
-                on_fatal_internal_error(logger, format("split_token_range_msb: inconsistent end_bound compaction group: index={} msbits={} token={} compaction_group_of={}",
+                on_fatal_internal_error(logger, seastar::format"split_token_range_msb: inconsistent end_bound compaction group: index={} msbits={} token={} compaction_group_of={}",
                                                        i, most_significant_bits, token, compaction_group_of(most_significant_bits, token)));
             }
             start_bound = dht::token_range::bound(prev_last_token, false);

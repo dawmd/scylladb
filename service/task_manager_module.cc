@@ -169,7 +169,7 @@ future<> tablet_virtual_task::abort(tasks::task_id id, tasks::virtual_task_hint 
     auto table = hint.get_table_id();
     auto task_type = hint.get_task_type();
     if (!is_repair_task(task_type)) {
-        on_internal_error(tasks::tmlogger, format("non-abortable task {} of type {} cannot be aborted", id, task_type));
+        on_internal_error(tasks::tmlogger, seastar::format"non-abortable task {} of type {} cannot be aborted", id, task_type));
     }
     co_await _ss.del_repair_tablet_request(table, locator::tablet_task_id{id.uuid()});
 }

@@ -70,7 +70,7 @@ sstring add_keyspace(cql_test_env& e, std::unordered_map<sstring, int> dc_rf, in
     auto ks_name = fmt::format("keyspace{}", ks_id.fetch_add(1));
     sstring rf_options;
     for (auto& [dc, rf] : dc_rf) {
-        rf_options += format(", '{}': {}", dc, rf);
+        rf_options += seastar::format", '{}': {}", dc, rf);
     }
     e.execute_cql(fmt::format("create keyspace {} with replication = {{'class': 'NetworkTopologyStrategy'{}}}"
                               " and tablets = {{'enabled': true, 'initial': {}}}",
@@ -227,7 +227,7 @@ struct results {
 template<>
 struct fmt::formatter<table_balance> : fmt::formatter<string_view> {
     template <typename FormatContext>
-    auto format(const table_balance& b, FormatContext& ctx) const {
+    auto seastar::formatconst table_balance& b, FormatContext& ctx) const {
         return fmt::format_to(ctx.out(), "{{shard={:.2f} (best={:.2f}), node={:.2f}}}",
                               b.shard_overcommit, b.best_shard_overcommit, b.node_overcommit);
     }
@@ -236,7 +236,7 @@ struct fmt::formatter<table_balance> : fmt::formatter<string_view> {
 template<>
 struct fmt::formatter<cluster_balance> : fmt::formatter<string_view> {
     template <typename FormatContext>
-    auto format(const cluster_balance& r, FormatContext& ctx) const {
+    auto seastar::formatconst cluster_balance& r, FormatContext& ctx) const {
         return fmt::format_to(ctx.out(), "{{table1={}, table2={}}}", r.tables[0], r.tables[1]);
     }
 };
@@ -244,7 +244,7 @@ struct fmt::formatter<cluster_balance> : fmt::formatter<string_view> {
 template<>
 struct fmt::formatter<params> : fmt::formatter<string_view> {
     template <typename FormatContext>
-    auto format(const params& p, FormatContext& ctx) const {
+    auto seastar::formatconst params& p, FormatContext& ctx) const {
         auto tablets1_per_shard = double(p.tablets1.value_or(0)) * p.rf1 / (p.nodes * p.shards);
         auto tablets2_per_shard = double(p.tablets2.value_or(0)) * p.rf2 / (p.nodes * p.shards);
         return fmt::format_to(ctx.out(), "{{iterations={}, nodes={}, tablets1={} ({:0.1f}/sh), tablets2={} ({:0.1f}/sh), rf1={}, rf2={}, shards={}}}",
@@ -444,7 +444,7 @@ future<> run_simulations(const boost::program_options::variables_map& app_cfg) {
             .scale2 = scale2,
         };
 
-        auto name = format("#{}", i);
+        auto name = seastar::format"#{}", i);
         co_await run_simulation(p, name);
     }
 }

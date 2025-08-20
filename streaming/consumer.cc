@@ -32,7 +32,7 @@ mutation_reader_consumer make_streaming_consumer(sstring origin,
         std::exception_ptr ex;
         try {
             if (current_scheduling_group() != db.local().get_streaming_scheduling_group()) {
-                on_internal_error(sstables::sstlog, format("The stream consumer is not running in streaming group current_scheduling_group={}",
+                on_internal_error(sstables::sstlog, seastar::format"The stream consumer is not running in streaming group current_scheduling_group={}",
                         current_scheduling_group().name()));
             }
 

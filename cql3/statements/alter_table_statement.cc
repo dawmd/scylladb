@@ -80,12 +80,12 @@ static data_type validate_alter(const schema& schema, const column_definition& d
     case column_kind::partition_key:
         if (type->is_counter()) {
             throw exceptions::invalid_request_exception(
-                    format("counter type is not supported for PRIMARY KEY part {}", def.name_as_text()));
+                    seastar::format"counter type is not supported for PRIMARY KEY part {}", def.name_as_text()));
         }
 
         if (!type->is_value_compatible_with(*def.type)) {
             throw exceptions::configuration_exception(
-                    format("Cannot change {} from type {} to type {}: types are incompatible.",
+                    seastar::format"Cannot change {} from type {} to type {}: types are incompatible.",
                            def.name_as_text(),
                            def.type->as_cql3_type(),
                            validator));
@@ -95,7 +95,7 @@ static data_type validate_alter(const schema& schema, const column_definition& d
     case column_kind::clustering_key:
         if (!schema.is_cql3_table()) {
             throw exceptions::invalid_request_exception(
-                    format("Cannot alter clustering column {} in a non-CQL3 table", def.name_as_text()));
+                    seastar::format"Cannot alter clustering column {} in a non-CQL3 table", def.name_as_text()));
         }
 
         // Note that CFMetaData.validateCompatibility already validate the change we're about to do. However, the error message it
@@ -103,7 +103,7 @@ static data_type validate_alter(const schema& schema, const column_definition& d
         // Do note that we need isCompatibleWith here, not just isValueCompatibleWith.
         if (!type->is_compatible_with(*def.type)) {
             throw exceptions::configuration_exception(
-                    format("Cannot change {} from type {} to type {}: types are not order-compatible.",
+                    seastar::format"Cannot change {} from type {} to type {}: types are not order-compatible.",
                            def.name_as_text(),
                            def.type->as_cql3_type(),
                            validator));
@@ -119,7 +119,7 @@ static data_type validate_alter(const schema& schema, const column_definition& d
         // ColumnDefinition already).
         if (!type->is_value_compatible_with(*def.type)) {
             throw exceptions::configuration_exception(
-                    format("Cannot change {} from type {} to type {}: types are incompatible.",
+                    seastar::format"Cannot change {} from type {} to type {}: types are incompatible.",
                            def.name_as_text(),
                            def.type->as_cql3_type(),
                            validator));

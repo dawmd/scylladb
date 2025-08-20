@@ -262,7 +262,7 @@ int main(int argc, char** argv) {
                     | std::ranges::to<std::vector<double>>();
             std::sort(absolute_deviations.begin(), absolute_deviations.end());
             auto mad = absolute_deviations[results.size() / 2];
-            std::cout << format("\nmedian {}\nmedian absolute deviation: {:.2f}\nmaximum: {:.2f}\nminimum: {:.2f}\n", median_result, mad, max, min);
+            std::cout << seastar::format"\nmedian {}\nmedian absolute deviation: {:.2f}\nmaximum: {:.2f}\nminimum: {:.2f}\n", median_result, mad, max, min);
 
             if (app.configuration().contains("json-result")) {
                 write_json_result(app.configuration()["json-result"].as<std::string>(), cfg, median_result, mad, max, min);

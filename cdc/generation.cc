@@ -403,7 +403,7 @@ future<cdc::generation_id> generation_service::legacy_make_new_generation(const 
             auto endpoint = tmptr->get_endpoint(end);
             if (!endpoint) {
                 throw std::runtime_error(
-                        format("Can't find endpoint for token {}", end));
+                        seastar::format"Can't find endpoint for token {}", end));
             }
             auto sc = get_shard_count(*endpoint, _gossiper);
             return {sc > 0 ? sc : 1, get_sharding_ignore_msb(*endpoint, _gossiper)};

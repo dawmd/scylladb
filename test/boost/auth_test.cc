@@ -104,7 +104,7 @@ SEASTAR_TEST_CASE(test_password_authenticator_operations) {
         return require_throws<exceptions::authentication_exception>(
             authenticate(env, username, password)).then([&env] {
             return seastar::async([&env] () {
-                cquery_nofail(env, format("CREATE ROLE {} WITH PASSWORD = '{}' AND LOGIN = true", username, password));
+                cquery_nofail(env, seastar::format"CREATE ROLE {} WITH PASSWORD = '{}' AND LOGIN = true", username, password));
             }).then([&env] () {
                 return authenticate(env, username, password);
             }).then([] (auth::authenticated_user user) {
@@ -224,14 +224,14 @@ SEASTAR_TEST_CASE(test_alter_with_timeouts) {
         e.db().invoke_on_all([] (replica::database& db) { return db.flush_all_memtables(); }).get();
 
         auto sl_is_v2 = e.local_client_state().get_service_level_controller().is_v2();
-	    auto msg = cquery_nofail(e, format("SELECT timeout FROM {}", sl_is_v2 ? "system.service_levels_v2" : "system_distributed.service_levels"));
+	    auto msg = cquery_nofail(e, seastar::format"SELECT timeout FROM {}", sl_is_v2 ? "system.service_levels_v2" : "system_distributed.service_levels"));
         assert_that(msg).is_rows().with_rows({{
             duration_type->from_string("5ms")
         }});
 
         cquery_nofail(e, "ALTER SERVICE LEVEL sl WITH timeout = 35s");
 
-	    msg = cquery_nofail(e, format("SELECT timeout FROM {} WHERE service_level = 'sl'", sl_is_v2 ? "system.service_levels_v2" : "system_distributed.service_levels"));
+	    msg = cquery_nofail(e, seastar::format"SELECT timeout FROM {} WHERE service_level = 'sl'", sl_is_v2 ? "system.service_levels_v2" : "system_distributed.service_levels"));
         assert_that(msg).is_rows().with_rows({{
             duration_type->from_string("35s")
         }});
@@ -311,7 +311,7 @@ SEASTAR_TEST_CASE(test_alter_with_workload_type) {
         cquery_nofail(e, "ATTACH SERVICE LEVEL sl TO user1");
 
         auto sl_is_v2 = e.local_client_state().get_service_level_controller().is_v2();
-	    auto msg = cquery_nofail(e, format("SELECT workload_type FROM {}", sl_is_v2 ? "system.service_levels_v2" : "system_distributed.service_levels"));
+	    auto msg = cquery_nofail(e, seastar::format"SELECT workload_type FROM {}", sl_is_v2 ? "system.service_levels_v2" : "system_distributed.service_levels"));
         assert_that(msg).is_rows().with_rows({{
             {}
         }});

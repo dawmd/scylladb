@@ -502,7 +502,7 @@ future<bool> server_impl::trigger_snapshot(seastar::abort_source* as) {
         }
     } catch (abort_requested_exception&) {
         throw request_aborted(
-            format("Aborted in snapshot trigger waiting for index: {}, last persisted snapshot descriptor idx: {}, on server: {}, latest applied entry: {}",
+            seastar::format"Aborted in snapshot trigger waiting for index: {}, last persisted snapshot descriptor idx: {}, on server: {}, latest applied entry: {}",
                    awaited_idx,
                    _snapshot_desc_idx,
                    _id,
@@ -663,7 +663,7 @@ future<entry_id> server_impl::add_entry_on_leader(command cmd, seastar::abort_so
             memory_permit = co_await _fsm->wait_for_memory_permit(as, log::memory_usage_of(cmd, _config.max_command_size));
         } catch (semaphore_aborted&) {
             throw request_aborted(
-                format("Semaphore aborted while waiting for memory availability for adding entry on leader in term: {}, on server: {}, current term: {}",
+                seastar::format"Semaphore aborted while waiting for memory availability for adding entry on leader in term: {}, on server: {}, current term: {}",
                        t,
                        _id,
                        _fsm->get_current_term()));
@@ -1721,7 +1721,7 @@ future<> server_impl::set_configuration(config_member_set c_new, seastar::abort_
             // Whoever resolves the promise must reset the field. Thus, if we're here, the promise is not resolved.
             std::exchange(_non_joint_conf_commit_promise, std::nullopt)
                 ->promise.set_exception(request_aborted(
-                    format("Aborted while setting configuration (at index: {}, term: {}, current config: {})", idx, term, _fsm->get_configuration())));
+                    seastar::format"Aborted while setting configuration (at index: {}, term: {}, current config: {})", idx, term, _fsm->get_configuration())));
         });
     }
 

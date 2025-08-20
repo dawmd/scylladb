@@ -1269,7 +1269,7 @@ SEASTAR_THREAD_TEST_CASE(test_reader_concurrency_semaphore_group) {
         }
         testlog.debug("create sg{}", sgi);
         scheduling_group sg;
-        const auto sg_name = format("sg{}", sgi++);
+        const auto sg_name = seastar::format"sg{}", sgi++);
         if (recycle_bin.empty()) {
             sg = create_scheduling_group(sg_name, initial_shares).get();
         } else {
@@ -1379,7 +1379,7 @@ public:
                 fmt::ptr(this),
                 _permit ? _permit->id() : 0,
                 to_string(_state),
-                _permit ? format("{}", _permit->get_state()) : "N/A",
+                _permit ? seastar::format"{}", _permit->get_state()) : "N/A",
                 _permit ? _permit->consumed_resources() : reader_resources{},
                 _sem.consumed_resources());
         switch (_state) {
@@ -1506,11 +1506,11 @@ SEASTAR_THREAD_TEST_CASE(test_reader_concurrency_semaphore_memory_limit_no_leaks
         semaphore.foreach_permit([&all_permit_res] (const reader_permit& p) { all_permit_res += p.consumed_resources(); });
 
         if (semaphore.consumed_resources().memory >= (semaphore.initial_resources().memory * kill_multiplier)) {
-            error = format("kill limit failed: semaphore.consumed_resources() ({}) >= kill limit ({})", semaphore.consumed_resources().memory, (semaphore.initial_resources().memory * kill_multiplier));
+            error = seastar::format"kill limit failed: semaphore.consumed_resources() ({}) >= kill limit ({})", semaphore.consumed_resources().memory, (semaphore.initial_resources().memory * kill_multiplier));
         } else if (semaphore.consumed_resources() != all_permit_res) {
-            error = format("resource mismatch: semaphore.consumed_resources() ({}) != sum of resources in permits ({})", semaphore.consumed_resources(), all_permit_res);
+            error = seastar::format"resource mismatch: semaphore.consumed_resources() ({}) != sum of resources in permits ({})", semaphore.consumed_resources(), all_permit_res);
         } else if (i >= iteration_limit) {
-            error = format("test failed to finish in {} iterations", iteration_limit);
+            error = seastar::format"test failed to finish in {} iterations", iteration_limit);
         }
 
         if (error.empty()) {

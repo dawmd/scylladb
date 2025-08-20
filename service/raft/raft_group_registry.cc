@@ -250,10 +250,10 @@ future<> raft_group_registry::uninit_rpc_verbs() {
 void raft_group_registry::destroy_server(raft::group_id gid) {
     const auto it = _servers.find(gid);
     if (it == _servers.end()) {
-        on_internal_error(rslog, format("destroy_server(): no server for group {}", gid));
+        on_internal_error(rslog, seastar::format"destroy_server(): no server for group {}", gid));
     }
     if (!it->second.aborted || !it->second.aborted->available()) {
-        on_internal_error(rslog, format("destroy_server(): the server for group {} is not aborted", gid));
+        on_internal_error(rslog, seastar::format"destroy_server(): the server for group {} is not aborted", gid));
     }
     _servers.erase(it);
 }
@@ -277,7 +277,7 @@ const raft::server_id& raft_group_registry::get_my_raft_id() {
 
 seastar::future<> raft_group_registry::stop() {
     if (_servers.size() > 0) {
-        on_internal_error(rslog, format("stop(): server for group {} is not destroyed", _servers.begin()->first));
+        on_internal_error(rslog, seastar::format"stop(): server for group {} is not destroyed", _servers.begin()->first));
     }
     co_await uninit_rpc_verbs();
     _direct_fd_subscription.reset();
@@ -298,7 +298,7 @@ raft_rpc& raft_group_registry::get_rpc(raft::group_id gid) {
 raft::server& raft_group_registry::get_server(raft::group_id gid) {
     auto ptr = server_for_group(gid).server.get();
     if (!ptr) {
-        on_internal_error(rslog, format("get_server(): no server for group {}", gid));
+        on_internal_error(rslog, seastar::format"get_server(): no server for group {}", gid));
     }
     return *ptr;
 }
@@ -306,7 +306,7 @@ raft::server& raft_group_registry::get_server(raft::group_id gid) {
 raft_server_with_timeouts raft_group_registry::get_server_with_timeouts(raft::group_id gid) {
     auto& group_server = server_for_group(gid);
     if (!group_server.server.get()) {
-        on_internal_error(rslog, format("get_server(): no server for group {}", gid));
+        on_internal_error(rslog, seastar::format"get_server(): no server for group {}", gid));
     }
     return raft_server_with_timeouts(group_server, failure_detector());
 }
@@ -346,7 +346,7 @@ future<> raft_group_registry::start_server_for_group(raft_server_for_group new_g
     auto gid = new_grp.gid;
 
     if (_servers.contains(gid)) {
-        on_internal_error(rslog, format("Attempt to add the second instance of raft server with the same gid={}", gid));
+        on_internal_error(rslog, seastar::format"Attempt to add the second instance of raft server with the same gid={}", gid));
     }
 
     try {
@@ -357,7 +357,7 @@ future<> raft_group_registry::start_server_for_group(raft_server_for_group new_g
     } catch (abort_requested_exception&) {
         throw;
     } catch (...) {
-        on_internal_error(rslog, format("Failed to start a Raft group {}: {}", gid,
+        on_internal_error(rslog, seastar::format"Failed to start a Raft group {}: {}", gid,
                 std::current_exception()));
     }
 

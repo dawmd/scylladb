@@ -60,7 +60,7 @@ inline std::string_view bytes_as_string(const_bytes sv) {
 
 template <>
 struct fmt::formatter<trie::trail_entry> : fmt::formatter<string_view> {
-    auto format(const trie::trail_entry& r, fmt::format_context& ctx) const
+    auto seastar::formatconst trie::trail_entry& r, fmt::format_context& ctx) const
             -> decltype(ctx.out()) {
         return fmt::format_to(ctx.out(), "trail_entry(id={} child_idx={} payload_bits={})", r.pos, r.child_idx, r.payload_bits);
     }

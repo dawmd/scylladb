@@ -822,7 +822,7 @@ future<> service_level_controller::migrate_to_v2(size_t nodes_count, db::system_
     }
     
     auto rows = co_await qp.execute_internal(
-        format("SELECT * FROM {}.{}", db::system_distributed_keyspace::NAME, db::system_distributed_keyspace::SERVICE_LEVELS),
+        seastar::format"SELECT * FROM {}.{}", db::system_distributed_keyspace::NAME, db::system_distributed_keyspace::SERVICE_LEVELS),
         cl,
         qs,
         {},
@@ -862,7 +862,7 @@ future<> service_level_controller::migrate_to_v2(size_t nodes_count, db::system_
             guard.write_timestamp(),
             std::move(values));
         if (muts.size() != 1) {
-            on_internal_error(sl_logger, format("expecting single insert mutation, got {}", muts.size()));
+            on_internal_error(sl_logger, seastar::format"expecting single insert mutation, got {}", muts.size()));
         }
         migration_muts.push_back(std::move(muts[0]));
     }

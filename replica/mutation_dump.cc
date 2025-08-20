@@ -64,7 +64,7 @@ private:
         {
             auto mss = tbl.select_memtables_as_mutation_sources(_dk.token());
             for (size_t i = 0; i < mss.size(); ++i) {
-                auto current_source = format("memtable:{}", i);
+                auto current_source = seastar::format"memtable:{}", i);
                 all_mutation_sources.emplace(std::move(current_source), mss[i]);
             }
         }
@@ -81,7 +81,7 @@ private:
         {
             auto ssts = tbl.select_sstables(_underlying_pr);
             for (size_t i = 0; i < ssts.size(); ++i) {
-                auto current_source = format("sstable:{}", ssts[i]->get_filename());
+                auto current_source = seastar::format"sstable:{}", ssts[i]->get_filename());
                 all_mutation_sources.emplace(std::move(current_source), ssts[i]->as_mutation_source());
             }
         }
@@ -551,7 +551,7 @@ make_partition_key_generator(distributed<replica::database>& db, schema_ptr sche
 
 schema_ptr generate_output_schema_from_underlying_schema(schema_ptr underlying_schema) {
     const auto& ks = underlying_schema->ks_name();
-    const auto tbl = format("{}_$mutation_fragments", underlying_schema->cf_name());
+    const auto tbl = seastar::format"{}_$mutation_fragments", underlying_schema->cf_name());
     auto sb = schema_builder(ks, tbl, generate_legacy_id(ks, tbl));
     // partition key
     for (const auto& pk_col : underlying_schema->partition_key_columns()) {

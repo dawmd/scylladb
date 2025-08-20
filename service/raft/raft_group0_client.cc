@@ -433,7 +433,7 @@ future<> raft_group0_client::set_group0_upgrade_state(group0_upgrade_state state
                 return "use_pre_raft_procedures";
         }
 
-        on_internal_error(logger, format(
+        on_internal_error(logger, seastar::format
                 "save_group0_upgrade_state: given value is outside the set of possible values (integer value: {})."
                 " This may have been caused by undefined behavior; best restart your system.",
                 static_cast<uint8_t>(s)));

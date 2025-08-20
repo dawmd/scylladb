@@ -61,7 +61,7 @@ bool operator==(const gcp_host::credentials_source& k1, const gcp_host::credenti
 template<> 
 struct fmt::formatter<encryption::gcp_host::credentials_source> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const encryption::gcp_host::credentials_source& d, fmt::format_context& ctxt) const {
+    auto seastar::formatconst encryption::gcp_host::credentials_source& d, fmt::format_context& ctxt) const {
         return fmt::format_to(ctxt.out(), "{{ gcp_credentials_file = {}, gcp_impersonate_service_account = {} }}", d.gcp_credentials_file, d.gcp_impersonate_service_account);
     }
 };
@@ -1015,7 +1015,7 @@ future<shared_ptr<encryption::symmetric_key>> encryption::gcp_host::get_key_by_i
 template<> 
 struct fmt::formatter<encryption::gcp_host::impl::attr_cache_key> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const encryption::gcp_host::impl::attr_cache_key& d, fmt::format_context& ctxt) const {
+    auto seastar::formatconst encryption::gcp_host::impl::attr_cache_key& d, fmt::format_context& ctxt) const {
         return fmt::format_to(ctxt.out(), "{},{},{}", d.master_key, d.src.gcp_credentials_file, d.src.gcp_impersonate_service_account);
     }
 };
@@ -1023,7 +1023,7 @@ struct fmt::formatter<encryption::gcp_host::impl::attr_cache_key> {
 template<> 
 struct fmt::formatter<encryption::gcp_host::impl::id_cache_key> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const encryption::gcp_host::impl::id_cache_key& d, fmt::format_context& ctxt) const {
+    auto seastar::formatconst encryption::gcp_host::impl::id_cache_key& d, fmt::format_context& ctxt) const {
         return fmt::format_to(ctxt.out(), "{},{},{}", d.id, d.src.gcp_credentials_file, d.src.gcp_impersonate_service_account);
     }
 };

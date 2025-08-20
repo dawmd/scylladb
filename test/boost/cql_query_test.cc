@@ -84,7 +84,7 @@ SEASTAR_TEST_CASE(test_create_table_with_id_statement) {
         e.execute_cql("DROP TABLE tbl").get();
         BOOST_REQUIRE_THROW(e.execute_cql("SELECT * FROM tbl").get(), std::exception);
         e.execute_cql(
-            format("CREATE TABLE tbl (a int, b int, PRIMARY KEY (a)) WITH id='{}'", id)).get();
+            seastar::format"CREATE TABLE tbl (a int, b int, PRIMARY KEY (a)) WITH id='{}'", id)).get();
         assert_that(e.execute_cql("SELECT * FROM tbl").get())
             .is_rows().with_size(0);
         BOOST_REQUIRE_THROW(
@@ -712,7 +712,7 @@ SEASTAR_TEST_CASE(test_cassandra_stress_like_write_and_read) {
 
         auto verify_row_for_key = [&e](sstring key) {
             return e.execute_cql(
-                format("select \"C0\", \"C1\", \"C2\", \"C3\", \"C4\" from cf where \"KEY\" = {}", key)).then(
+                seastar::format"select \"C0\", \"C1\", \"C2\", \"C3\", \"C4\" from cf where \"KEY\" = {}", key)).then(
                 [](shared_ptr<cql_transport::messages::result_message> msg) {
                     assert_that(msg).is_rows()
                         .with_size(1)
@@ -740,7 +740,7 @@ SEASTAR_TEST_CASE(test_cassandra_stress_like_write_and_read) {
                     .with_column("C4", bytes_type)
                     .build();
         }).then([execute_update_for_key, verify_row_for_key] {
-            static auto make_key = [](int suffix) { return format("0xdeadbeefcafebabe{:02d}", suffix); };
+            static auto make_key = [](int suffix) { return seastar::format"0xdeadbeefcafebabe{:02d}", suffix); };
             auto suffixes = std::views::iota(0, 10);
             return parallel_for_each(suffixes.begin(), suffixes.end(), [execute_update_for_key](int suffix) {
                 return execute_update_for_key(make_key(suffix));
@@ -1569,7 +1569,7 @@ static const api::timestamp_type the_timestamp = 123456789;
 SEASTAR_TEST_CASE(test_writetime_and_ttl) {
     return do_with_cql_env([] (cql_test_env& e) {
         return e.execute_cql("create table cf (p1 varchar primary key, i int, fc frozen<set<int>>, c set<int>);").discard_result().then([&e] {
-            auto q = format("insert into cf (p1, i) values ('key1', 1) using timestamp {:d};", the_timestamp);
+            auto q = seastar::format"insert into cf (p1, i) values ('key1', 1) using timestamp {:d};", the_timestamp);
             return e.execute_cql(q).discard_result();
         }).then([&e] {
             return e.execute_cql("select writetime(i) from cf where p1 in ('key1');");
@@ -1598,7 +1598,7 @@ SEASTAR_TEST_CASE(test_writetime_and_ttl) {
 SEASTAR_TEST_CASE(test_time_overflow_with_default_ttl) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
         auto verify = [&e] (int value, bool bypass_cache) -> future<> {
-            auto sq = format("select i from cf where p1 = 'key1' {};", bypass_cache ? "bypass cache" : "");
+            auto sq = seastar::format"select i from cf where p1 = 'key1' {};", bypass_cache ? "bypass cache" : "");
             return e.execute_cql(sq).then([value] (shared_ptr<cql_transport::messages::result_message> msg) {
                 assert_that(msg).is_rows()
                     .with_size(1)
@@ -1608,9 +1608,9 @@ SEASTAR_TEST_CASE(test_time_overflow_with_default_ttl) {
             });
         };
 
-        auto cr = format("create table cf (p1 varchar primary key, i int) with default_time_to_live = {:d};", max_ttl.count());
+        auto cr = seastar::format"create table cf (p1 varchar primary key, i int) with default_time_to_live = {:d};", max_ttl.count());
         e.execute_cql(cr).get();
-        auto q = format("insert into cf (p1, i) values ('key1', 1);");
+        auto q = seastar::format"insert into cf (p1, i) values ('key1', 1);");
         e.execute_cql(q).get();
         require_column_has_value(e, "cf", {sstring("key1")}, {}, "i", 1).get();
         verify(1, false).get();
@@ -1624,7 +1624,7 @@ SEASTAR_TEST_CASE(test_time_overflow_with_default_ttl) {
 SEASTAR_TEST_CASE(test_time_overflow_using_ttl) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
         auto verify = [&e] (int value, bool bypass_cache) -> future<> {
-            auto sq = format("select i from cf where p1 = 'key1' {};", bypass_cache ? "bypass cache" : "");
+            auto sq = seastar::format"select i from cf where p1 = 'key1' {};", bypass_cache ? "bypass cache" : "");
             return e.execute_cql(sq).then([value] (shared_ptr<cql_transport::messages::result_message> msg) {
                 assert_that(msg).is_rows()
                     .with_size(1)
@@ -1636,14 +1636,14 @@ SEASTAR_TEST_CASE(test_time_overflow_using_ttl) {
 
         auto cr = "create table cf (p1 varchar primary key, i int);";
         e.execute_cql(cr).get();
-        auto q = format("insert into cf (p1, i) values ('key1', 1) using ttl {:d};", max_ttl.count());
+        auto q = seastar::format"insert into cf (p1, i) values ('key1', 1) using ttl {:d};", max_ttl.count());
         e.execute_cql(q).get();
         require_column_has_value(e, "cf", {sstring("key1")}, {}, "i", 1).get();
         verify(1, true).get();
         verify(1, false).get();
-        q = format("insert into cf (p1, i) values ('key2', 0);");
+        q = seastar::format"insert into cf (p1, i) values ('key2', 0);");
         e.execute_cql(q).get();
-        q = format("update cf using ttl {:d} set i = 2 where p1 = 'key2';", max_ttl.count());
+        q = seastar::format"update cf using ttl {:d} set i = 2 where p1 = 'key2';", max_ttl.count());
         e.execute_cql(q).get();
         require_column_has_value(e, "cf", {sstring("key2")}, {}, "i", 2).get();
         verify(1, false).get();
@@ -3104,7 +3104,7 @@ SEASTAR_TEST_CASE(test_reversed_slice_with_many_clustering_ranges) {
             const auto select_query = fmt::format(
                     "SELECT * FROM test WHERE pk = {} and ck IN ({}) ORDER BY ck DESC BYPASS CACHE;",
                     pk,
-                    fmt::join(selected_cks | std::views::transform([] (int ck) { return format("{}", ck); }), ", "));
+                    fmt::join(selected_cks | std::views::transform([] (int ck) { return seastar::format"{}", ck); }), ", "));
             assert_that(e.execute_cql(select_query).get())
                     .is_rows()
                     .with_rows(selected_cks
@@ -3116,7 +3116,7 @@ SEASTAR_TEST_CASE(test_reversed_slice_with_many_clustering_ranges) {
         // A single wide range - to check that the right range bound is used for
         // determining the disk read-range upper bound.
         {
-            const auto select_query = format(
+            const auto select_query = seastar::format
                     "SELECT * FROM test WHERE pk = {} and ck >= {} and ck <= {} ORDER BY ck DESC BYPASS CACHE;",
                     pk,
                     selected_cks[0],
@@ -3880,7 +3880,7 @@ SEASTAR_TEST_CASE(test_rf_expand) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
         auto get_replication = [&] (const sstring& ks) {
             auto msg = e.execute_cql(
-                format("SELECT JSON replication FROM system_schema.keyspaces WHERE keyspace_name = '{}'", ks)).get();
+                seastar::format"SELECT JSON replication FROM system_schema.keyspaces WHERE keyspace_name = '{}'", ks)).get();
             auto res = dynamic_pointer_cast<cql_transport::messages::result_message::rows>(msg);
             auto rows = res->rs().result_set().rows();
             BOOST_REQUIRE_EQUAL(rows.size(), 1);
@@ -4449,7 +4449,7 @@ shared_ptr<cql_transport::messages::result_message> cql_func_require_nofail(
         std::unique_ptr<cql3::query_options>&& qo = nullptr,
         const seastar::compat::source_location& loc = seastar::compat::source_location::current()) {
     auto res = shared_ptr<cql_transport::messages::result_message>(nullptr);
-    auto query = format("SELECT {}({}) FROM t;", fct, inp);
+    auto query = seastar::format"SELECT {}({}) FROM t;", fct, inp);
     try {
         if (qo) {
             res = env.execute_cql(query, std::move(qo)).get();
@@ -4473,7 +4473,7 @@ void cql_func_require_throw(
         const seastar::sstring& inp,
         std::unique_ptr<cql3::query_options>&& qo = nullptr,
         const seastar::compat::source_location& loc = seastar::compat::source_location::current()) {
-    auto query = format("SELECT {}({}) FROM t;", fct, inp);
+    auto query = seastar::format"SELECT {}({}) FROM t;", fct, inp);
     try {
         if (qo) {
             env.execute_cql(query, std::move(qo)).get();
@@ -4723,7 +4723,7 @@ SEASTAR_TEST_CASE(test_null_value_tuple_floating_types_and_uuids) {
     cfg.need_remote_proxy = true;
     return do_with_cql_env_thread([] (cql_test_env& e) {
         auto test_for_single_type = [&e] (const shared_ptr<const abstract_type>& type, auto update_value) {
-            cquery_nofail(e, format("CREATE TABLE IF NOT EXISTS t (k int PRIMARY KEY, test {})", type->cql3_type_name()));
+            cquery_nofail(e, seastar::format"CREATE TABLE IF NOT EXISTS t (k int PRIMARY KEY, test {})", type->cql3_type_name()));
             cquery_nofail(e, "INSERT INTO t (k, test) VALUES (0, null)");
 
             auto list_type = list_type_impl::get_instance(type, true);
@@ -4731,7 +4731,7 @@ SEASTAR_TEST_CASE(test_null_value_tuple_floating_types_and_uuids) {
             auto arg_value = list_type->decompose(
                 make_list_value(list_type, {data_value::make_null(type)}));
 
-            prepared_on_shard(e, format("UPDATE t SET test={} WHERE k=0 IF test IN ?", update_value),
+            prepared_on_shard(e, seastar::format"UPDATE t SET test={} WHERE k=0 IF test IN ?", update_value),
                 {std::move(arg_value)},
                 {{boolean_type->decompose(true), std::nullopt}});
 
@@ -4937,7 +4937,7 @@ SEASTAR_THREAD_TEST_CASE(test_query_limit) {
                 for (auto scheduling_group : {groups.statement_scheduling_group, groups.streaming_scheduling_group, default_scheduling_group()}) {
                     const auto should_fail = !is_paged && scheduling_group == groups.statement_scheduling_group;
                     testlog.info("checking: is_paged={}, is_reversed={}, scheduling_group={}, should_fail={}", is_paged, is_reversed, scheduling_group.name(), should_fail);
-                    const auto select_query = format("SELECT * FROM test WHERE pk = {} ORDER BY ck {};", pk, is_reversed ? "DESC" : "ASC");
+                    const auto select_query = seastar::format"SELECT * FROM test WHERE pk = {} ORDER BY ck {};", pk, is_reversed ? "DESC" : "ASC");
 
                     int32_t page_size = is_paged ? 10000 : -1;
 

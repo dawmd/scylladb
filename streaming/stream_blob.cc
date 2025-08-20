@@ -99,7 +99,7 @@ future<> mark_tablet_stream_done(file_stream_id ops_id) {
 lw_shared_ptr<tablet_stream_status> get_tablet_stream(file_stream_id ops_id) {
     auto status = tablet_streams[ops_id];
     if (!status) {
-        auto msg = format("stream_sstables[{}] Could not find ops_id={}", ops_id, ops_id);
+        auto msg = seastar::format"stream_sstables[{}] Could not find ops_id={}", ops_id, ops_id);
         blogger.warn("{}", msg);
         throw std::runtime_error(msg);
     }
@@ -109,7 +109,7 @@ lw_shared_ptr<tablet_stream_status> get_tablet_stream(file_stream_id ops_id) {
 static void may_inject_error(const streaming::stream_blob_meta& meta, bool may_inject, const sstring& error) {
     if (may_inject) {
         if (rand() % 500 == 0) {
-            auto msg = format("fstream[{}] Injected file stream error={} file={}",
+            auto msg = seastar::format"fstream[{}] Injected file stream error={} file={}",
                 meta.ops_id, error, meta.filename);
             blogger.warn("{}", msg);
             throw std::runtime_error(msg);
@@ -149,7 +149,7 @@ future<> stream_blob_handler(replica::database& db,
         // Reject any file_ops that is not support by this node
         if (meta.fops != streaming::file_ops::stream_sstables &&
             meta.fops != streaming::file_ops::load_sstables) {
-            auto msg = format("fstream[{}] Unsupported file_ops={} peer={} file={}",
+            auto msg = seastar::format"fstream[{}] Unsupported file_ops={} peer={} file={}",
                     meta.ops_id, int(meta.fops), from, meta.filename);
             blogger.warn("{}", msg);
             throw std::runtime_error(msg);

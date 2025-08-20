@@ -244,7 +244,7 @@ struct fmt_fragmented_buffer {
 template <>
 struct fmt::formatter<fmt_fragmented_buffer> : fmt::formatter<fmt_hex> {
     template <typename FormatContext>
-    auto format(const fmt_fragmented_buffer& s, FormatContext& ctx) const {
+    auto seastar::formatconst fmt_fragmented_buffer& s, FormatContext& ctx) const {
         fmt::format_to(ctx.out(), "[");
         const char* separator = "";
         for (const auto& frag : s.frags) {

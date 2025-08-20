@@ -901,7 +901,7 @@ public:
     const lw_shared_ptr<const sstables::sstable_set>& find_sstable_set(size_t i) const {
         auto it = _sstable_sets.find(i);
         if (it == _sstable_sets.end() || !it->second) [[unlikely]] {
-            on_internal_error(tablet_logger, format("SSTable set wasn't found for tablet {} of table {}.{}", i, schema()->ks_name(), schema()->cf_name()));
+            on_internal_error(tablet_logger, seastar::format"SSTable set wasn't found for tablet {} of table {}.{}", i, schema()->ks_name(), schema()->cf_name()));
         }
         return it->second;
     }
@@ -913,7 +913,7 @@ private:
     dht::token first_token_of(size_t idx) const noexcept {
 #ifndef SCYLLA_BUILD_MODE_RELEASE
         if (idx >= _tablet_map.tablet_count()) {
-            on_fatal_internal_error(tablet_logger, format("first_token_of: idx={} out of range", idx));
+            on_fatal_internal_error(tablet_logger, seastar::format"first_token_of: idx={} out of range", idx));
         }
 #endif
         return _tablet_map.get_first_token(tablet_id(idx));
@@ -921,7 +921,7 @@ private:
     dht::token last_token_of(size_t idx) const noexcept {
 #ifndef SCYLLA_BUILD_MODE_RELEASE
         if (idx >= _tablet_map.tablet_count()) {
-            on_fatal_internal_error(tablet_logger, format("last_token_of: idx={} out of range", idx));
+            on_fatal_internal_error(tablet_logger, seastar::format"last_token_of: idx={} out of range", idx));
         }
 #endif
         return _tablet_map.get_last_token(tablet_id(idx));

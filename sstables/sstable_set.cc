@@ -106,7 +106,7 @@ std::ostream& operator<<(std::ostream& os, const sstables::sstable_run& run) {
     if (run.all().empty()) {
         os << "  Identifier: not found\n";
     } else {
-        os << format("  Identifier: {}\n", (*run.all().begin())->run_identifier());
+        os << seastar::format"  Identifier: {}\n", (*run.all().begin())->run_identifier());
     }
 
     auto frags = run.all() | std::ranges::to<std::vector<shared_sstable>>();
@@ -115,7 +115,7 @@ std::ostream& operator<<(std::ostream& os, const sstables::sstable_run& run) {
     });
     os << "  Fragments = {\n";
     for (auto& frag : frags) {
-        os << format("    {}={}:{}\n", frag->generation(), frag->get_first_decorated_key().token(), frag->get_last_decorated_key().token());
+        os << seastar::format"    {}={}:{}\n", frag->generation(), frag->get_first_decorated_key().token(), frag->get_last_decorated_key().token());
     }
     os << "  }\n}\n";
     return os;

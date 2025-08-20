@@ -156,7 +156,7 @@ static const data_type collection_entries_type(const abstract_type& t) {
 
 
 sstring index_table_name(const sstring& index_name) {
-    return format("{}_index", index_name);
+    return seastar::format"{}_index", index_name);
 }
 
 sstring index_name_from_table_name(const sstring& table_name) {
@@ -307,7 +307,7 @@ view_ptr secondary_index_manager::create_view_for_index(const index_metadata& im
     // when col is a collection.
     const sstring where_clause =
         (target_type == cql3::statements::index_target::target_type::regular_values) ?
-        format("{} IS NOT NULL", index_target->name_as_cql_string()) :
+        seastar::format"{} IS NOT NULL", index_target->name_as_cql_string()) :
         "";
     builder.with_view_info(schema, false, where_clause);
     // A local secondary index should be backed by a *synchronous* view,

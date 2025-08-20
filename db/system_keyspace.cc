@@ -1662,7 +1662,7 @@ future<> system_keyspace::save_local_info(local_info sysinfo, gms::inet_address 
 }
 
 future<> system_keyspace::save_local_supported_features(const std::set<std::string_view>& feats) {
-    static const auto req = format("INSERT INTO system.{} (key, supported_features) VALUES (?, ?)", LOCAL);
+    static const auto req = seastar::format"INSERT INTO system.{} (key, supported_features) VALUES (?, ?)", LOCAL);
     return execute_cql(req,
         sstring(db::system_keyspace::LOCAL),
         fmt::to_string(fmt::join(feats, ","))).discard_result();
@@ -1682,7 +1682,7 @@ future<> system_keyspace::peers_table_read_fixup() {
     }
     _peers_table_read_fixup_done = true;
 
-    const auto cql = format("SELECT peer, host_id, WRITETIME(host_id) as ts from system.{}", PEERS);
+    const auto cql = seastar::format"SELECT peer, host_id, WRITETIME(host_id) as ts from system.{}", PEERS);
     std::unordered_map<utils::UUID, std::pair<net::inet_address, int64_t>> map{};
     const auto cql_result = co_await execute_cql(cql);
     for (const auto& row : *cql_result) {
@@ -1720,7 +1720,7 @@ future<> system_keyspace::peers_table_read_fixup() {
 }
 
 future<> system_keyspace::build_bootstrap_info() {
-    sstring req = format("SELECT bootstrapped FROM system.{} WHERE key = ? ", LOCAL);
+    sstring req = seastar::format"SELECT bootstrapped FROM system.{} WHERE key = ? ", LOCAL);
     return execute_cql(req, sstring(LOCAL)).then([this] (auto msg) {
         static auto state_map = std::unordered_map<sstring, bootstrap_state>({
             { "NEEDS_BOOTSTRAP", bootstrap_state::NEEDS_BOOTSTRAP },
@@ -1747,7 +1747,7 @@ namespace db {
 future<std::unordered_map<table_id, db_clock::time_point>> system_keyspace::load_truncation_times() {
     std::unordered_map<table_id, db_clock::time_point> result;
     if (!_db.get_config().ignore_truncation_record.is_set()) {
-        sstring req = format("SELECT DISTINCT table_uuid, truncated_at from system.{}", TRUNCATED);
+        sstring req = seastar::format"SELECT DISTINCT table_uuid, truncated_at from system.{}", TRUNCATED);
         auto result_set = co_await execute_cql(req);
         for (const auto& row: *result_set) {
             const auto table_uuid = table_id(row.get_as<utils::UUID>("table_uuid"));
@@ -1759,7 +1759,7 @@ future<std::unordered_map<table_id, db_clock::time_point>> system_keyspace::load
 }
 
 future<> system_keyspace::drop_truncation_rp_records() {
-    sstring req = format("SELECT table_uuid, shard, segment_id from system.{}", TRUNCATED);
+    sstring req = seastar::format"SELECT table_uuid, shard, segment_id from system.{}", TRUNCATED);
     auto rs = co_await execute_cql(req);
 
     bool any = false;
@@ -1770,7 +1770,7 @@ future<> system_keyspace::drop_truncation_rp_records() {
 
         if (segment_id != 0) {
             any = true;
-            sstring req = format("UPDATE system.{} SET segment_id = 0, position = 0 WHERE table_uuid = {} AND shard = {}", TRUNCATED, table_uuid, shard);
+            sstring req = seastar::format"UPDATE system.{} SET segment_id = 0, position = 0 WHERE table_uuid = {} AND shard = {}", TRUNCATED, table_uuid, shard);
             co_await execute_cql(req);
         }
     });
@@ -1780,7 +1780,7 @@ future<> system_keyspace::drop_truncation_rp_records() {
 }
 
 future<> system_keyspace::save_truncation_record(const replica::column_family& cf, db_clock::time_point truncated_at, db::replay_position rp) {
-    sstring req = format("INSERT INTO system.{} (table_uuid, shard, position, segment_id, truncated_at) VALUES(?,?,?,?,?)", TRUNCATED);
+    sstring req = seastar::format"INSERT INTO system.{} (table_uuid, shard, position, segment_id, truncated_at) VALUES(?,?,?,?,?)", TRUNCATED);
     co_await _qp.execute_internal(req, {cf.schema()->id().uuid(), int32_t(rp.shard_id()), int32_t(rp.pos), int64_t(rp.base_id()), truncated_at}, cql3::query_processor::cache_internal::yes);
     // Flush the table so that the value is available on boot before commitlog replay.
     // Commit log replay depends on truncation records to determine the minimum replay position.
@@ -1792,7 +1792,7 @@ future<replay_positions> system_keyspace::get_truncated_positions(table_id cf_id
     if (_db.get_config().ignore_truncation_record.is_set()) {
         co_return result;
     }
-    const auto req = format("SELECT * from system.{} WHERE table_uuid = ?", TRUNCATED);
+    const auto req = seastar::format"SELECT * from system.{} WHERE table_uuid = ?", TRUNCATED);
     auto result_set = co_await execute_cql(req, {cf_id.uuid()});
     result.reserve(result_set->size());
     for (const auto& row: *result_set) {
@@ -1813,7 +1813,7 @@ future<> system_keyspace::drop_all_commitlog_cleanup_records() {
     //
     // But we don't know that here, so we have to SELECT the set of partition keys,
     // and issue DELETEs on that.
-    sstring req = format("SELECT shard from system.{}", COMMITLOG_CLEANUPS);
+    sstring req = seastar::format"SELECT shard from system.{}", COMMITLOG_CLEANUPS);
     auto rs = co_await execute_cql(req);
 
     co_await coroutine::parallel_for_each(*rs, [&] (const cql3::untyped_result_set_row& row) -> future<> {
@@ -1827,14 +1827,14 @@ future<> system_keyspace::drop_old_commitlog_cleanup_records(replay_position min
         int64_t(min_position.base_id()),
         int32_t(min_position.pos)
     }));
-    sstring req = format("DELETE FROM system.{} WHERE shard = ? AND position < ?", COMMITLOG_CLEANUPS);
+    sstring req = seastar::format"DELETE FROM system.{} WHERE shard = ? AND position < ?", COMMITLOG_CLEANUPS);
     co_await _qp.execute_internal(req, {int32_t(min_position.shard_id()), pos}, cql3::query_processor::cache_internal::yes);
 }
 
 future<> system_keyspace::save_commitlog_cleanup_record(table_id table, dht::token_range tr, db::replay_position rp) {
     auto [start_token_exclusive, end_token_inclusive] = canonical_token_range(tr);
     auto pos = make_tuple_value(replay_position_type, tuple_type_impl::native_type({int64_t(rp.base_id()), int32_t(rp.pos)}));
-    sstring req = format("INSERT INTO system.{} (shard, position, table_uuid, start_token_exclusive, end_token_inclusive) VALUES(?,?,?,?,?)", COMMITLOG_CLEANUPS);
+    sstring req = seastar::format"INSERT INTO system.{} (shard, position, table_uuid, start_token_exclusive, end_token_inclusive) VALUES(?,?,?,?,?)", COMMITLOG_CLEANUPS);
     co_await _qp.execute_internal(req, {int32_t(rp.shard_id()), pos, table.uuid(), start_token_exclusive, end_token_inclusive}, cql3::query_processor::cache_internal::yes);
 }
 
@@ -1903,7 +1903,7 @@ std::optional<db::replay_position> system_keyspace::commitlog_cleanup_local_map:
 
 future<system_keyspace::commitlog_cleanup_map> system_keyspace::get_commitlog_cleanup_records() {
     commitlog_cleanup_map ret;
-    const auto req = format("SELECT * from system.{}", COMMITLOG_CLEANUPS);
+    const auto req = seastar::format"SELECT * from system.{}", COMMITLOG_CLEANUPS);
     auto result_set = co_await execute_cql(req);
     for (const auto& row: *result_set) {
         auto table = table_id(row.get_as<utils::UUID>("table_uuid"));
@@ -1974,7 +1974,7 @@ static std::vector<cdc::generation_id_v2> decode_cdc_generations_ids(const set_t
 future<std::unordered_map<gms::inet_address, std::unordered_set<dht::token>>> system_keyspace::load_tokens() {
     co_await peers_table_read_fixup();
 
-    const sstring req = format("SELECT peer, tokens FROM system.{}", PEERS);
+    const sstring req = seastar::format"SELECT peer, tokens FROM system.{}", PEERS);
     std::unordered_map<gms::inet_address, std::unordered_set<dht::token>> ret;
     const auto cql_result = co_await execute_cql(req);
     for (const auto& row : *cql_result) {
@@ -1989,7 +1989,7 @@ future<std::unordered_map<gms::inet_address, std::unordered_set<dht::token>>> sy
 future<std::unordered_map<gms::inet_address, locator::host_id>> system_keyspace::load_host_ids() {
     co_await peers_table_read_fixup();
 
-    const sstring req = format("SELECT peer, host_id FROM system.{}", PEERS);
+    const sstring req = seastar::format"SELECT peer, host_id FROM system.{}", PEERS);
     std::unordered_map<gms::inet_address, locator::host_id> ret;
     const auto cql_result = co_await execute_cql(req);
     for (const auto& row : *cql_result) {
@@ -2010,7 +2010,7 @@ future<std::unordered_map<locator::host_id, gms::loaded_endpoint_state>> system_
         auto ep = row.get_as<net::inet_address>("peer");
         if (!row.has("host_id")) {
             // Must never happen after `peers_table_read_fixup` call above
-            on_internal_error_noexcept(slogger, format("load_endpoint_state: node {} has no host_id in system.{}", ep, PEERS));
+            on_internal_error_noexcept(slogger, seastar::format"load_endpoint_state: node {} has no host_id in system.{}", ep, PEERS));
         }
         auto host_id = locator::host_id(row.get_as<utils::UUID>("host_id"));
         if (row.has("tokens")) {
@@ -2082,7 +2082,7 @@ future<std::vector<locator::host_id>> system_keyspace::load_peers_ids() {
 future<std::unordered_map<locator::host_id, sstring>> system_keyspace::load_peer_features() {
     co_await peers_table_read_fixup();
 
-    const sstring req = format("SELECT host_id, supported_features FROM system.{}", PEERS);
+    const sstring req = seastar::format"SELECT host_id, supported_features FROM system.{}", PEERS);
     std::unordered_map<locator::host_id, sstring> ret;
     const auto cql_result = co_await execute_cql(req);
     for (const auto& row : *cql_result) {
@@ -2097,7 +2097,7 @@ future<std::unordered_map<locator::host_id, sstring>> system_keyspace::load_peer
 future<std::unordered_map<gms::inet_address, gms::inet_address>> system_keyspace::get_preferred_ips() {
     co_await peers_table_read_fixup();
 
-    const sstring req = format("SELECT peer, preferred_ip FROM system.{}", PEERS);
+    const sstring req = seastar::format"SELECT peer, preferred_ip FROM system.{}", PEERS);
     std::unordered_map<gms::inet_address, gms::inet_address> res;
 
     const auto cql_result = co_await execute_cql(req);
@@ -2133,13 +2133,13 @@ static data_value_or_unset make_data_value_or_unset(const std::optional<std::uno
 
 future<> system_keyspace::update_peer_info(gms::inet_address ep, locator::host_id hid, const peer_info& info) {
     if (ep == gms::inet_address{}) {
-        on_internal_error(slogger, format("update_peer_info called with empty inet_address, host_id {}", hid));
+        on_internal_error(slogger, seastar::format"update_peer_info called with empty inet_address, host_id {}", hid));
     }
     if (!hid) {
-        on_internal_error(slogger, format("update_peer_info called with empty host_id, ep {}", ep));
+        on_internal_error(slogger, seastar::format"update_peer_info called with empty host_id, ep {}", ep));
     }
     if (_db.get_token_metadata().get_topology().is_me(hid)) {
-        on_internal_error(slogger, format("update_peer_info called for this node: {}", ep));
+        on_internal_error(slogger, seastar::format"update_peer_info called for this node: {}", ep));
     }
 
     data_value_list values = {
@@ -2166,7 +2166,7 @@ future<> system_keyspace::update_peer_info(gms::inet_address ep, locator::host_i
 
 template <typename T>
 future<> system_keyspace::set_scylla_local_param_as(const sstring& key, const T& value, bool visible_before_cl_replay) {
-    sstring req = format("UPDATE system.{} SET value = ? WHERE key = ?", system_keyspace::SCYLLA_LOCAL);
+    sstring req = seastar::format"UPDATE system.{} SET value = ? WHERE key = ?", system_keyspace::SCYLLA_LOCAL);
     auto type = data_type_for<T>();
     co_await execute_cql(req, type->to_string_impl(data_value(value)), key).discard_result();
     if (visible_before_cl_replay) {
@@ -2176,7 +2176,7 @@ future<> system_keyspace::set_scylla_local_param_as(const sstring& key, const T&
 
 template <typename T>
 future<std::optional<T>> system_keyspace::get_scylla_local_param_as(const sstring& key) {
-    sstring req = format("SELECT value FROM system.{} WHERE key = ?", system_keyspace::SCYLLA_LOCAL);
+    sstring req = seastar::format"SELECT value FROM system.{} WHERE key = ?", system_keyspace::SCYLLA_LOCAL);
     return execute_cql(req, key).then([] (::shared_ptr<cql3::untyped_result_set> res)
             -> future<std::optional<T>> {
         if (res->empty() || !res->one().has("value")) {
@@ -2201,7 +2201,7 @@ future<std::optional<sstring>> system_keyspace::get_scylla_local_param(const sst
 }
 
 future<> system_keyspace::update_schema_version(table_schema_version version) {
-    sstring req = format("INSERT INTO system.{} (key, schema_version) VALUES (?, ?)", LOCAL);
+    sstring req = seastar::format"INSERT INTO system.{} (key, schema_version) VALUES (?, ?)", LOCAL);
     return execute_cql(req, sstring(LOCAL), version.uuid()).discard_result();
 }
 
@@ -2209,13 +2209,13 @@ future<> system_keyspace::update_schema_version(table_schema_version version) {
  * Remove stored tokens being used by another node
  */
 future<> system_keyspace::remove_endpoint(gms::inet_address ep) {
-    const sstring req = format("DELETE FROM system.{} WHERE peer = ?", PEERS);
+    const sstring req = seastar::format"DELETE FROM system.{} WHERE peer = ?", PEERS);
     slogger.debug("DELETE FROM system.{} WHERE peer = {}", PEERS, ep);
     co_await execute_cql(req, ep.addr()).discard_result();
 }
 
 future<> system_keyspace::update_tokens(const std::unordered_set<dht::token>& tokens) {
-    sstring req = format("INSERT INTO system.{} (key, tokens) VALUES (?, ?)", LOCAL);
+    sstring req = seastar::format"INSERT INTO system.{} (key, tokens) VALUES (?, ?)", LOCAL);
     auto set_type = set_type_impl::get_instance(utf8_type, true);
     co_await execute_cql(req, sstring(LOCAL), make_set_value(set_type, prepare_tokens(tokens)));
 }
@@ -2228,7 +2228,7 @@ future<> system_keyspace::force_blocking_flush(sstring cfname) {
 }
 
 future<std::unordered_set<dht::token>> system_keyspace::get_saved_tokens() {
-    sstring req = format("SELECT tokens FROM system.{} WHERE key = ?", LOCAL);
+    sstring req = seastar::format"SELECT tokens FROM system.{} WHERE key = ?", LOCAL);
     return execute_cql(req, sstring(LOCAL)).then([] (auto msg) {
         if (msg->empty() || !msg->one().has("tokens")) {
             return make_ready_future<std::unordered_set<dht::token>>();
@@ -2242,7 +2242,7 @@ future<std::unordered_set<dht::token>> system_keyspace::get_saved_tokens() {
 future<std::unordered_set<dht::token>> system_keyspace::get_local_tokens() {
     return get_saved_tokens().then([] (auto&& tokens) {
         if (tokens.empty()) {
-            auto err = format("get_local_tokens: tokens is empty");
+            auto err = seastar::format"get_local_tokens: tokens is empty");
             slogger.error("{}", err);
             throw std::runtime_error(err);
         }
@@ -2254,12 +2254,12 @@ future<> system_keyspace::update_cdc_generation_id(cdc::generation_id gen_id) {
     co_await std::visit(make_visitor(
     [this] (cdc::generation_id_v1 id) -> future<> {
         co_await execute_cql(
-                format("INSERT INTO system.{} (key, streams_timestamp) VALUES (?, ?)", v3::CDC_LOCAL),
+                seastar::format"INSERT INTO system.{} (key, streams_timestamp) VALUES (?, ?)", v3::CDC_LOCAL),
                 sstring(v3::CDC_LOCAL), id.ts);
     },
     [this] (cdc::generation_id_v2 id) -> future<> {
         co_await execute_cql(
-                format("INSERT INTO system.{} (key, streams_timestamp, uuid) VALUES (?, ?, ?)", v3::CDC_LOCAL),
+                seastar::format"INSERT INTO system.{} (key, streams_timestamp, uuid) VALUES (?, ?, ?)", v3::CDC_LOCAL),
                 sstring(v3::CDC_LOCAL), id.ts, id.id);
     }
     ), gen_id);
@@ -2267,7 +2267,7 @@ future<> system_keyspace::update_cdc_generation_id(cdc::generation_id gen_id) {
 
 future<std::optional<cdc::generation_id>> system_keyspace::get_cdc_generation_id() {
     auto msg = co_await execute_cql(
-            format("SELECT streams_timestamp, uuid FROM system.{} WHERE key = ?", v3::CDC_LOCAL),
+            seastar::format"SELECT streams_timestamp, uuid FROM system.{} WHERE key = ?", v3::CDC_LOCAL),
             sstring(v3::CDC_LOCAL));
 
     if (msg->empty()) {
@@ -2294,12 +2294,12 @@ static const sstring CDC_REWRITTEN_KEY = "rewritten";
 future<> system_keyspace::cdc_set_rewritten(std::optional<cdc::generation_id_v1> gen_id) {
     if (gen_id) {
         return execute_cql(
-                format("INSERT INTO system.{} (key, streams_timestamp) VALUES (?, ?)", v3::CDC_LOCAL),
+                seastar::format"INSERT INTO system.{} (key, streams_timestamp) VALUES (?, ?)", v3::CDC_LOCAL),
                 CDC_REWRITTEN_KEY, gen_id->ts).discard_result();
     } else {
         // Insert just the row marker.
         return execute_cql(
-                format("INSERT INTO system.{} (key) VALUES (?)", v3::CDC_LOCAL),
+                seastar::format"INSERT INTO system.{} (key) VALUES (?)", v3::CDC_LOCAL),
                 CDC_REWRITTEN_KEY).discard_result();
     }
 }
@@ -2342,7 +2342,7 @@ future<> system_keyspace::set_bootstrap_state(bootstrap_state state) {
 
     sstring state_name = state_to_name.at(state);
 
-    sstring req = format("INSERT INTO system.{} (key, bootstrapped) VALUES (?, ?)", LOCAL);
+    sstring req = seastar::format"INSERT INTO system.{} (key, bootstrapped) VALUES (?, ?)", LOCAL);
     co_await execute_cql(req, sstring(LOCAL), state_name).discard_result();
     co_await container().invoke_on_all([state] (auto& sys_ks) {
         sys_ks._cache->_state = state;
@@ -2511,7 +2511,7 @@ future<> system_keyspace::update_compaction_history(compaction_history_entry ent
                 sstables_in, sstables_out, total_tombstone_purge_attempt, total_tombstone_purge_failure_due_to_overlapping_with_memtable, \
                 total_tombstone_purge_failure_due_to_overlapping_with_uncompacting_sstable \
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        sstring request = format(reqest_template, COMPACTION_HISTORY);
+        sstring request = seastar::formatreqest_template, COMPACTION_HISTORY);
         execute = [&, request=std::move(request)]() {
             return execute_cql(request, entry.id, int32_t(entry.shard_id), entry.ks, entry.cf, started_at, compacted_at, entry.compaction_type,
                         entry.bytes_in, entry.bytes_out, make_map_value(map_type, prepare_rows_merged(entry.rows_merged)),
@@ -2522,7 +2522,7 @@ future<> system_keyspace::update_compaction_history(compaction_history_entry ent
     } else {
         static constexpr auto reqest_template = "INSERT INTO system.{} ( \
                 id, keyspace_name, columnfamily_name, compacted_at, bytes_in, bytes_out, rows_merged) VALUES (?, ?, ?, ?, ?, ?, ?)";
-        sstring request = format(reqest_template, COMPACTION_HISTORY);
+        sstring request = seastar::formatreqest_template, COMPACTION_HISTORY);
         execute = [&, request=std::move(request)]() {
             return execute_cql(request, entry.id, entry.ks, entry.cf, compacted_at, entry.bytes_in, entry.bytes_out,
                         make_map_value(map_type, prepare_rows_merged(entry.rows_merged)));
@@ -2535,7 +2535,7 @@ future<> system_keyspace::update_compaction_history(compaction_history_entry ent
 }
 
 future<> system_keyspace::get_compaction_history(compaction_history_consumer consumer) {
-    sstring req = format("SELECT * from system.{}", COMPACTION_HISTORY);
+    sstring req = seastar::format"SELECT * from system.{}", COMPACTION_HISTORY);
     co_await _qp.query_internal(req, [&consumer] (const cql3::untyped_result_set::row& row) mutable -> future<stop_iteration> {
         compaction_history_entry entry;
         entry.id = row.get_as<utils::UUID>("id");
@@ -2566,12 +2566,12 @@ future<> system_keyspace::get_compaction_history(compaction_history_consumer con
 }
 
 future<> system_keyspace::update_repair_history(repair_history_entry entry) {
-    sstring req = format("INSERT INTO system.{} (table_uuid, repair_time, repair_uuid, keyspace_name, table_name, range_start, range_end) VALUES (?, ?, ?, ?, ?, ?, ?)", REPAIR_HISTORY);
+    sstring req = seastar::format"INSERT INTO system.{} (table_uuid, repair_time, repair_uuid, keyspace_name, table_name, range_start, range_end) VALUES (?, ?, ?, ?, ?, ?, ?)", REPAIR_HISTORY);
     co_await execute_cql(req, entry.table_uuid.uuid(), entry.ts, entry.id.uuid(), entry.ks, entry.cf, entry.range_start, entry.range_end).discard_result();
 }
 
 future<> system_keyspace::get_repair_history(::table_id table_id, repair_history_consumer f) {
-    sstring req = format("SELECT * from system.{} WHERE table_uuid = {}", REPAIR_HISTORY, table_id);
+    sstring req = seastar::format"SELECT * from system.{} WHERE table_uuid = {}", REPAIR_HISTORY, table_id);
     co_await _qp.query_internal(req, [&f] (const cql3::untyped_result_set::row& row) mutable -> future<stop_iteration> {
         repair_history_entry ent;
         ent.id = tasks::task_id(row.get_as<utils::UUID>("repair_uuid"));
@@ -2587,7 +2587,7 @@ future<> system_keyspace::get_repair_history(::table_id table_id, repair_history
 }
 
 future<gms::generation_type> system_keyspace::increment_and_get_generation() {
-    auto req = format("SELECT gossip_generation FROM system.{} WHERE key='{}'", LOCAL, LOCAL);
+    auto req = seastar::format"SELECT gossip_generation FROM system.{} WHERE key='{}'", LOCAL, LOCAL);
     auto rs = co_await _qp.execute_internal(req, cql3::query_processor::cache_internal::yes);
     gms::generation_type generation;
     if (rs->empty() || !rs->one().has("gossip_generation")) {
@@ -2607,7 +2607,7 @@ future<gms::generation_type> system_keyspace::increment_and_get_generation() {
             generation = now;
         }
     }
-    req = format("INSERT INTO system.{} (key, gossip_generation) VALUES ('{}', ?)", LOCAL, LOCAL);
+    req = seastar::format"INSERT INTO system.{} (key, gossip_generation) VALUES ('{}', ?)", LOCAL, LOCAL);
     co_await _qp.execute_internal(req, {generation.value()}, cql3::query_processor::cache_internal::yes);
     co_return generation;
 }
@@ -2629,7 +2629,7 @@ mutation system_keyspace::make_size_estimates_mutation(const sstring& ks, std::v
 }
 
 future<> system_keyspace::register_view_for_building(sstring ks_name, sstring view_name, const dht::token& token) {
-    sstring req = format("INSERT INTO system.{} (keyspace_name, view_name, generation_number, cpu_id, first_token) VALUES (?, ?, ?, ?, ?)",
+    sstring req = seastar::format"INSERT INTO system.{} (keyspace_name, view_name, generation_number, cpu_id, first_token) VALUES (?, ?, ?, ?, ?)",
             v3::SCYLLA_VIEWS_BUILDS_IN_PROGRESS);
     return execute_cql(
             std::move(req),
@@ -2641,7 +2641,7 @@ future<> system_keyspace::register_view_for_building(sstring ks_name, sstring vi
 }
 
 future<> system_keyspace::update_view_build_progress(sstring ks_name, sstring view_name, const dht::token& token) {
-    sstring req = format("INSERT INTO system.{} (keyspace_name, view_name, next_token, cpu_id) VALUES (?, ?, ?, ?)",
+    sstring req = seastar::format"INSERT INTO system.{} (keyspace_name, view_name, next_token, cpu_id) VALUES (?, ?, ?, ?)",
             v3::SCYLLA_VIEWS_BUILDS_IN_PROGRESS);
     return execute_cql(
             std::move(req),
@@ -2653,14 +2653,14 @@ future<> system_keyspace::update_view_build_progress(sstring ks_name, sstring vi
 
 future<> system_keyspace::remove_view_build_progress_across_all_shards(sstring ks_name, sstring view_name) {
     return execute_cql(
-            format("DELETE FROM system.{} WHERE keyspace_name = ? AND view_name = ?", v3::SCYLLA_VIEWS_BUILDS_IN_PROGRESS),
+            seastar::format"DELETE FROM system.{} WHERE keyspace_name = ? AND view_name = ?", v3::SCYLLA_VIEWS_BUILDS_IN_PROGRESS),
             std::move(ks_name),
             std::move(view_name)).discard_result();
 }
 
 future<> system_keyspace::remove_view_build_progress(sstring ks_name, sstring view_name) {
     return execute_cql(
-            format("DELETE FROM system.{} WHERE keyspace_name = ? AND view_name = ? AND cpu_id = ?", v3::SCYLLA_VIEWS_BUILDS_IN_PROGRESS),
+            seastar::format"DELETE FROM system.{} WHERE keyspace_name = ? AND view_name = ? AND cpu_id = ?", v3::SCYLLA_VIEWS_BUILDS_IN_PROGRESS),
             std::move(ks_name),
             std::move(view_name),
             int32_t(this_shard_id())).discard_result();
@@ -2668,14 +2668,14 @@ future<> system_keyspace::remove_view_build_progress(sstring ks_name, sstring vi
 
 future<> system_keyspace::mark_view_as_built(sstring ks_name, sstring view_name) {
     return execute_cql(
-            format("INSERT INTO system.{} (keyspace_name, view_name) VALUES (?, ?)", v3::BUILT_VIEWS),
+            seastar::format"INSERT INTO system.{} (keyspace_name, view_name) VALUES (?, ?)", v3::BUILT_VIEWS),
             std::move(ks_name),
             std::move(view_name)).discard_result();
 }
 
 future<> system_keyspace::remove_built_view(sstring ks_name, sstring view_name) {
     return execute_cql(
-            format("DELETE FROM system.{} WHERE keyspace_name = ? AND view_name = ?", v3::BUILT_VIEWS),
+            seastar::format"DELETE FROM system.{} WHERE keyspace_name = ? AND view_name = ?", v3::BUILT_VIEWS),
             std::move(ks_name),
             std::move(view_name)).discard_result();
 }
@@ -2745,7 +2745,7 @@ static constexpr auto GROUP0_HISTORY_KEY = "history";
 
 future<utils::UUID> system_keyspace::get_last_group0_state_id() {
     auto rs = co_await execute_cql(
-        format(
+        seastar::format
             "SELECT state_id FROM system.{} WHERE key = '{}' LIMIT 1",
             GROUP0_HISTORY, GROUP0_HISTORY_KEY));
     SCYLLA_ASSERT(rs);
@@ -2757,7 +2757,7 @@ future<utils::UUID> system_keyspace::get_last_group0_state_id() {
 
 future<bool> system_keyspace::group0_history_contains(utils::UUID state_id) {
     auto rs = co_await execute_cql(
-        format(
+        seastar::format
             "SELECT state_id FROM system.{} WHERE key = '{}' AND state_id = ?",
             GROUP0_HISTORY, GROUP0_HISTORY_KEY),
         state_id);
@@ -2867,7 +2867,7 @@ static service::query_state& internal_system_query_state() {
 };
 
 future<mutation> system_keyspace::make_auth_version_mutation(api::timestamp_type ts, db::system_keyspace::auth_version_t version) {
-    static sstring query = format("INSERT INTO {}.{} (key, value) VALUES (?, ?);", db::system_keyspace::NAME, db::system_keyspace::SCYLLA_LOCAL);
+    static sstring query = seastar::format"INSERT INTO {}.{} (key, value) VALUES (?, ?);", db::system_keyspace::NAME, db::system_keyspace::SCYLLA_LOCAL);
     auto muts = co_await _qp.get_mutations_internal(query, internal_system_query_state(), ts, {AUTH_VERSION_KEY, std::to_string(int64_t(version))});
     if (muts.size() != 1) {
          on_internal_error(slogger, fmt::format("expected 1 auth_version mutation got {}", muts.size()));
@@ -2900,7 +2900,7 @@ future<std::optional<mutation>> system_keyspace::get_view_builder_version_mutati
 }
 
 future<mutation> system_keyspace::make_view_builder_version_mutation(api::timestamp_type ts, db::system_keyspace::view_builder_version_t version) {
-    static sstring query = format("INSERT INTO {}.{} (key, value) VALUES (?, ?);", db::system_keyspace::NAME, db::system_keyspace::SCYLLA_LOCAL);
+    static sstring query = seastar::format"INSERT INTO {}.{} (key, value) VALUES (?, ?);", db::system_keyspace::NAME, db::system_keyspace::SCYLLA_LOCAL);
     auto muts = co_await _qp.get_mutations_internal(query, internal_system_query_state(), ts, {VIEW_BUILDER_VERSION_KEY, std::to_string(int64_t(version))});
     if (muts.size() != 1) {
          on_internal_error(slogger, fmt::format("expected 1 view_builder_version mutation got {}", muts.size()));
@@ -2915,11 +2915,11 @@ future<std::optional<mutation>> system_keyspace::get_service_levels_version_muta
 }
 
 future<mutation> system_keyspace::make_service_levels_version_mutation(int8_t version, api::timestamp_type timestamp) {
-    static sstring query = format("INSERT INTO {}.{} (key, value) VALUES (?, ?);", db::system_keyspace::NAME, db::system_keyspace::SCYLLA_LOCAL);
-    auto muts = co_await _qp.get_mutations_internal(query, internal_system_query_state(), timestamp, {SERVICE_LEVELS_VERSION_KEY, format("{}", version)});
+    static sstring query = seastar::format"INSERT INTO {}.{} (key, value) VALUES (?, ?);", db::system_keyspace::NAME, db::system_keyspace::SCYLLA_LOCAL);
+    auto muts = co_await _qp.get_mutations_internal(query, internal_system_query_state(), timestamp, {SERVICE_LEVELS_VERSION_KEY, seastar::format"{}", version)});
 
     if (muts.size() != 1) {
-        on_internal_error(slogger, format("expecting single insert mutation, got {}", muts.size()));
+        on_internal_error(slogger, seastar::format"expecting single insert mutation, got {}", muts.size()));
     }
     co_return std::move(muts[0]);
 }
@@ -2976,7 +2976,7 @@ static bool must_have_tokens(service::node_state nst) {
 
 future<service::topology> system_keyspace::load_topology_state(const std::unordered_set<locator::host_id>& force_load_hosts) {
     auto rs = co_await execute_cql(
-        format("SELECT * FROM system.{} WHERE key = '{}'", TOPOLOGY, TOPOLOGY));
+        seastar::format"SELECT * FROM system.{} WHERE key = '{}'", TOPOLOGY, TOPOLOGY));
     SCYLLA_ASSERT(rs);
 
     service::topology_state_machine::topology_type ret;
@@ -3033,7 +3033,7 @@ future<service::topology> system_keyspace::load_topology_state(const std::unorde
                     };
                 }
             } else if (must_have_tokens(nstate)) {
-                on_fatal_internal_error(slogger, format(
+                on_fatal_internal_error(slogger, seastar::format
                         "load_topology_state: node {} in {} state but missing ring slice", host_id, nstate));
             }
         }
@@ -3115,7 +3115,7 @@ future<service::topology> system_keyspace::load_topology_state(const std::unorde
             // Currently, at most one node at a time can be in transitioning state.
             if (!map->empty()) {
                 const auto& [other_id, other_rs] = *map->begin();
-                on_fatal_internal_error(slogger, format(
+                on_fatal_internal_error(slogger, seastar::format
                     "load_topology_state: found two nodes in transitioning state: {} in {} state and {} in {} state",
                     other_id, other_rs.state, host_id, nstate));
             }
@@ -3147,7 +3147,7 @@ future<service::topology> system_keyspace::load_topology_state(const std::unorde
             auto it = std::find_if(ret.transition_nodes.begin(), ret.transition_nodes.end(),
                     [] (auto& p) { return p.second.state != service::node_state::rebuilding; });
             if (it != ret.transition_nodes.end()) {
-                on_internal_error(slogger, format(
+                on_internal_error(slogger, seastar::format
                     "load_topology_state: topology not in transition state"
                     " but transition node {} in rebuilding state is present", it->first));
             }
@@ -3170,12 +3170,12 @@ future<service::topology> system_keyspace::load_topology_state(const std::unorde
             // Sanity check for CDC generation data consistency.
             auto gen_id = ret.committed_cdc_generations.back();
             auto gen_rows = co_await execute_cql(
-                format("SELECT count(range_end) as cnt FROM {}.{} WHERE key = '{}' AND id = ?",
+                seastar::format"SELECT count(range_end) as cnt FROM {}.{} WHERE key = '{}' AND id = ?",
                         NAME, CDC_GENERATIONS_V3, cdc::CDC_GENERATIONS_V3_KEY),
                 gen_id.id);
             SCYLLA_ASSERT(gen_rows);
             if (gen_rows->empty()) {
-                on_internal_error(slogger, format(
+                on_internal_error(slogger, seastar::format
                     "load_topology_state: last committed CDC generation time UUID ({}) present, but data missing", gen_id.id));
             }
             auto cnt = gen_rows->one().get_as<int64_t>("cnt");
@@ -3237,7 +3237,7 @@ future<service::topology> system_keyspace::load_topology_state(const std::unorde
 
 future<std::optional<service::topology_features>> system_keyspace::load_topology_features_state() {
     auto rs = co_await execute_cql(
-        format("SELECT host_id, node_state, supported_features, enabled_features FROM system.{} WHERE key = '{}'", TOPOLOGY, TOPOLOGY));
+        seastar::format"SELECT host_id, node_state, supported_features, enabled_features FROM system.{} WHERE key = '{}'", TOPOLOGY, TOPOLOGY));
     SCYLLA_ASSERT(rs);
 
     co_return decode_topology_features_state(std::move(rs));
@@ -3279,7 +3279,7 @@ system_keyspace::read_cdc_generation(utils::UUID id) {
     auto gen_desc = co_await read_cdc_generation_opt(id);
 
     if (!gen_desc) {
-        on_internal_error(slogger, format(
+        on_internal_error(slogger, seastar::format
             "read_cdc_generation: data for CDC generation {} not present", id));
     }
 
@@ -3290,7 +3290,7 @@ future<std::optional<cdc::topology_description>>
 system_keyspace::read_cdc_generation_opt(utils::UUID id) {
     utils::chunked_vector<cdc::token_range_description> entries;
     co_await _qp.query_internal(
-            format("SELECT range_end, streams, ignore_msb FROM {}.{} WHERE key = '{}' AND id = ?",
+            seastar::format"SELECT range_end, streams, ignore_msb FROM {}.{} WHERE key = '{}' AND id = ?",
                    NAME, CDC_GENERATIONS_V3, cdc::CDC_GENERATIONS_V3_KEY),
             db::consistency_level::ONE,
             { id },
@@ -3313,33 +3313,33 @@ system_keyspace::read_cdc_generation_opt(utils::UUID id) {
 }
 
 future<> system_keyspace::sstables_registry_create_entry(table_id owner, sstring status, sstables::sstable_state state, sstables::entry_descriptor desc) {
-    static const auto req = format("INSERT INTO system.{} (owner, generation, status, state, version, format) VALUES (?, ?, ?, ?, ?, ?)", SSTABLES_REGISTRY);
+    static const auto req = seastar::format"INSERT INTO system.{} (owner, generation, status, state, version, format) VALUES (?, ?, ?, ?, ?, ?)", SSTABLES_REGISTRY);
     slogger.trace("Inserting {}.{} into {}", owner, desc.generation, SSTABLES_REGISTRY);
     co_await execute_cql(req, owner.id, desc.generation, status, sstables::state_to_dir(state), fmt::to_string(desc.version), fmt::to_string(desc.format)).discard_result();
 }
 
 future<> system_keyspace::sstables_registry_update_entry_status(table_id owner, sstables::generation_type gen, sstring status) {
-    static const auto req = format("UPDATE system.{} SET status = ? WHERE owner = ? AND generation = ?", SSTABLES_REGISTRY);
+    static const auto req = seastar::format"UPDATE system.{} SET status = ? WHERE owner = ? AND generation = ?", SSTABLES_REGISTRY);
     slogger.trace("Updating {}.{} -> status={} in {}", owner, gen, status, SSTABLES_REGISTRY);
     co_await execute_cql(req, status, owner.id, gen).discard_result();
 }
 
 future<> system_keyspace::sstables_registry_update_entry_state(table_id owner, sstables::generation_type gen, sstables::sstable_state state) {
-    static const auto req = format("UPDATE system.{} SET state = ? WHERE owner = ? AND generation = ?", SSTABLES_REGISTRY);
+    static const auto req = seastar::format"UPDATE system.{} SET state = ? WHERE owner = ? AND generation = ?", SSTABLES_REGISTRY);
     auto new_state = sstables::state_to_dir(state);
     slogger.trace("Updating {}.{} -> state={} in {}", owner, gen, new_state, SSTABLES_REGISTRY);
     co_await execute_cql(req, new_state, owner.id, gen).discard_result();
 }
 
 future<> system_keyspace::sstables_registry_delete_entry(table_id owner, sstables::generation_type gen) {
-    static const auto req = format("DELETE FROM system.{} WHERE owner = ? AND generation = ?", SSTABLES_REGISTRY);
+    static const auto req = seastar::format"DELETE FROM system.{} WHERE owner = ? AND generation = ?", SSTABLES_REGISTRY);
     slogger.trace("Removing {}.{} from {}", owner, gen, SSTABLES_REGISTRY);
     co_await execute_cql(req, owner.id, gen).discard_result();
 
 }
 
 future<> system_keyspace::sstables_registry_list(table_id owner, sstable_registry_entry_consumer consumer) {
-    static const auto req = format("SELECT status, state, generation, version, format FROM system.{} WHERE owner = ?", SSTABLES_REGISTRY);
+    static const auto req = seastar::format"SELECT status, state, generation, version, format FROM system.{} WHERE owner = ?", SSTABLES_REGISTRY);
     slogger.trace("Listing {} entries from {}", owner, SSTABLES_REGISTRY);
 
     co_await _qp.query_internal(req, db::consistency_level::ONE, { owner.id }, 1000, [ consumer = std::move(consumer) ] (const cql3::untyped_result_set::row& row) -> future<stop_iteration> {
@@ -3356,10 +3356,10 @@ future<> system_keyspace::sstables_registry_list(table_id owner, sstable_registr
 
 future<service::topology_request_state> system_keyspace::get_topology_request_state(utils::UUID id, bool require_entry) {
     auto rs = co_await execute_cql(
-        format("SELECT done, error FROM system.{} WHERE id = {}", TOPOLOGY_REQUESTS, id));
+        seastar::format"SELECT done, error FROM system.{} WHERE id = {}", TOPOLOGY_REQUESTS, id));
     if (!rs || rs->empty()) {
         if (require_entry) {
-            on_internal_error(slogger, format("no entry for request id {}", id));
+            on_internal_error(slogger, seastar::format"no entry for request id {}", id));
         } else {
             co_return service::topology_request_state{false, ""};
         }
@@ -3415,11 +3415,11 @@ system_keyspace::topology_requests_entry system_keyspace::topology_request_row_t
 
 future<system_keyspace::topology_requests_entry> system_keyspace::get_topology_request_entry(utils::UUID id, bool require_entry) {
     auto rs = co_await execute_cql(
-        format("SELECT * FROM system.{} WHERE id = {}", TOPOLOGY_REQUESTS, id));
+        seastar::format"SELECT * FROM system.{} WHERE id = {}", TOPOLOGY_REQUESTS, id));
 
     if (!rs || rs->empty()) {
         if (require_entry) {
-            on_internal_error(slogger, format("no entry for request id {}", id));
+            on_internal_error(slogger, seastar::format"no entry for request id {}", id));
         } else {
             co_return topology_requests_entry{
                 .id = utils::null_uuid()
@@ -3434,13 +3434,13 @@ future<system_keyspace::topology_requests_entry> system_keyspace::get_topology_r
 future<system_keyspace::topology_requests_entries> system_keyspace::get_node_ops_request_entries(db_clock::time_point end_time_limit) {
     // Running requests.
     auto rs_running = co_await execute_cql(
-        format("SELECT * FROM system.{} WHERE done = false AND request_type IN ('{}', '{}', '{}', '{}', '{}') ALLOW FILTERING", TOPOLOGY_REQUESTS,
+        seastar::format"SELECT * FROM system.{} WHERE done = false AND request_type IN ('{}', '{}', '{}', '{}', '{}') ALLOW FILTERING", TOPOLOGY_REQUESTS,
             service::topology_request::join, service::topology_request::replace, service::topology_request::rebuild, service::topology_request::leave, service::topology_request::remove));
 
 
     // Requests which finished after end_time_limit.
     auto rs_done = co_await execute_cql(
-        format("SELECT * FROM system.{} WHERE end_time > {} AND request_type IN ('{}', '{}', '{}', '{}', '{}') ALLOW FILTERING", TOPOLOGY_REQUESTS, end_time_limit.time_since_epoch().count(),
+        seastar::format"SELECT * FROM system.{} WHERE end_time > {} AND request_type IN ('{}', '{}', '{}', '{}', '{}') ALLOW FILTERING", TOPOLOGY_REQUESTS, end_time_limit.time_since_epoch().count(),
             service::topology_request::join, service::topology_request::replace, service::topology_request::rebuild, service::topology_request::leave, service::topology_request::remove));
 
     topology_requests_entries m;
@@ -3468,7 +3468,7 @@ future<mutation> system_keyspace::get_insert_dict_mutation(
 ) const {
     slogger.debug("Publishing new compression dictionary: {} {} {}", name, dict_ts, host_id);
 
-    static sstring insert_new = format("INSERT INTO {}.{} (name, timestamp, origin, data) VALUES (?, ?, ?, ?);", NAME, DICTS);
+    static sstring insert_new = seastar::format"INSERT INTO {}.{} (name, timestamp, origin, data) VALUES (?, ?, ?, ?);", NAME, DICTS);
     auto muts = co_await _qp.get_mutations_internal(insert_new, internal_system_query_state(), write_ts, {
         data_value(name),
         data_value(dict_ts),
@@ -3492,7 +3492,7 @@ mutation system_keyspace::get_delete_dict_mutation(std::string_view name, api::t
 
 future<std::vector<sstring>> system_keyspace::query_all_dict_names() const {
     std::vector<sstring> result;
-    sstring query = format("SELECT name from {}.{}", NAME, DICTS);
+    sstring query = seastar::format"SELECT name from {}.{}", NAME, DICTS);
     auto rs = co_await _qp.execute_internal(
         query, db::consistency_level::ONE, internal_system_query_state(), {}, cql3::query_processor::cache_internal::yes);
     for (const auto& row : *rs) {
@@ -3502,7 +3502,7 @@ future<std::vector<sstring>> system_keyspace::query_all_dict_names() const {
 }
 
 future<utils::shared_dict> system_keyspace::query_dict(std::string_view name) const {
-    static sstring query = format("SELECT * FROM {}.{} WHERE name = ?;", NAME, DICTS);
+    static sstring query = seastar::format"SELECT * FROM {}.{} WHERE name = ?;", NAME, DICTS);
     auto result_set = co_await _qp.execute_internal(
         query, db::consistency_level::ONE, internal_system_query_state(), {name}, cql3::query_processor::cache_internal::yes);
     if (!result_set->empty()) {
@@ -3523,7 +3523,7 @@ future<utils::shared_dict> system_keyspace::query_dict(std::string_view name) co
 }
 
 future<std::optional<db_clock::time_point>> system_keyspace::query_dict_timestamp(std::string_view name) const {
-    static sstring query = format("SELECT timestamp FROM {}.{} WHERE name = ?;", NAME, DICTS);
+    static sstring query = seastar::format"SELECT timestamp FROM {}.{} WHERE name = ?;", NAME, DICTS);
     auto result_set = co_await _qp.execute_internal(
         query, db::consistency_level::ONE, internal_system_query_state(), {name}, cql3::query_processor::cache_internal::yes);
     if (!result_set->empty()) {

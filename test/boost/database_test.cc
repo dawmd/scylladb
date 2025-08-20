@@ -790,7 +790,7 @@ SEASTAR_TEST_CASE(clear_multiple_snapshots) {
     auto num_snapshots = 2;
 
     auto snapshot_name = [] (int idx) {
-        return format("test-snapshot-{}", idx);
+        return seastar::format"test-snapshot-{}", idx);
     };
 
     co_await do_with_some_data({table_name}, [&] (cql_test_env& e) {
@@ -1321,7 +1321,7 @@ SEASTAR_THREAD_TEST_CASE(per_service_level_reader_concurrency_semaphore_test) {
         };
 
         for (unsigned i = 0; i < num_service_levels; i++) {
-            sstring sl_name = format("sl{}", i);
+            sstring sl_name = seastar::format"sl{}", i);
             slo.shares.emplace<int32_t>(index_to_weight(i));
             sl_controller.local().add_service_level(sl_name, slo).get();
             expected_total_weight += index_to_weight(i);
@@ -1524,7 +1524,7 @@ SEASTAR_TEST_CASE(database_drop_column_family_clears_querier_cache) {
 
 static future<> test_drop_table_with_auto_snapshot(bool auto_snapshot) {
     sstring ks_name = "ks";
-    sstring table_name = format("table_with_auto_snapshot_{}", auto_snapshot ? "enabled" : "disabled");
+    sstring table_name = seastar::format"table_with_auto_snapshot_{}", auto_snapshot ? "enabled" : "disabled");
     auto tmpdir_for_data = make_lw_shared<tmpdir>();
     auto db_cfg_ptr = make_shared<db::config>();
     db_cfg_ptr->data_file_directories(std::vector<sstring>({ tmpdir_for_data->path().string() }));
@@ -1573,7 +1573,7 @@ SEASTAR_TEST_CASE(drop_table_with_explicit_snapshot) {
     sstring table_name = "table_with_explicit_snapshot";
 
     co_await do_with_some_data({table_name}, [&] (cql_test_env& e) -> future<> {
-        auto snapshot_tag = format("test-{}", db_clock::now().time_since_epoch().count());
+        auto snapshot_tag = seastar::format"test-{}", db_clock::now().time_since_epoch().count());
         co_await take_snapshot(e, ks_name, table_name, snapshot_tag);
         auto cf_dir = table_dir(e.local_db().find_column_family(ks_name, table_name)).native();
 

@@ -35,7 +35,7 @@ static inline bool needs_escaping(const sstring& s) {
 
 static sstring quote_json_string(const sstring& value) {
     if (!needs_escaping(value)) {
-        return format("\"{}\"", value);
+        return seastar::format"\"{}\"", value);
     }
     std::ostringstream oss;
     oss << std::hex << std::uppercase << std::setfill('0');
@@ -220,7 +220,7 @@ static bytes from_json_object_aux(const tuple_type_impl& t, const rjson::value& 
     }
     if (value.Size() > t.all_types().size()) {
         throw marshal_exception(
-                format("Too many values ({}) for tuple with size {}", value.Size(), t.all_types().size()));
+                seastar::format"Too many values ({}) for tuple with size {}", value.Size(), t.all_types().size()));
     }
     std::vector<bytes_opt> raw_tuple;
     raw_tuple.reserve(value.Size());
@@ -238,12 +238,12 @@ static bytes from_json_object_aux(const vector_type_impl& t, const rjson::value&
     
     if (value.Size() > t.get_dimension()) {
         throw marshal_exception(
-                format("Too many values ({}) for vector with size {}", value.Size(), t.get_dimension()));
+                seastar::format"Too many values ({}) for vector with size {}", value.Size(), t.get_dimension()));
     }
     
     if (value.Size() < t.get_dimension()) {
         throw marshal_exception(
-                format("Too few values ({}) for vector with size {}", value.Size(), t.get_dimension()));
+                seastar::format"Too few values ({}) for vector with size {}", value.Size(), t.get_dimension()));
     }
 
     std::vector<bytes> raw_vector;
@@ -364,7 +364,7 @@ struct from_json_object_visitor {
             return t.from_string(rjson::to_string_view(value));
         } else if (!value.IsNumber()) {
             throw marshal_exception(
-                    format("{} must be represented as numeric or string in JSON", value));
+                    seastar::format"{} must be represented as numeric or string in JSON", value));
         }
 
         return t.from_string(rjson::print(value));

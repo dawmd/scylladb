@@ -59,7 +59,7 @@ SEASTAR_TEST_CASE(test_column_mapping_ttl_check) {
         const auto table_id = schema->id();
         const table_schema_version v1 = schema->version();
 
-        const sstring select_ttl_query = format(
+        const sstring select_ttl_query = seastar::format
             "select ttl(type) from system.scylla_table_schema_history where cf_id={} and schema_version={}",
             table_id, v1);
 

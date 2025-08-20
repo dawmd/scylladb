@@ -1314,9 +1314,9 @@ void writer::record_corrupt_row(clustering_row&& clustered_row) {
     sstring result;
     try {
         corrupt_row_id = handler.record_corrupt_clustering_row(_schema, pk, std::move(clustered_row), "sstable-write", fmt::to_string(_sst.get_filename())).get();
-        result = format("written corrupt row to {} with id {}", handler.storage_name(), corrupt_row_id);
+        result = seastar::format"written corrupt row to {} with id {}", handler.storage_name(), corrupt_row_id);
     } catch (...) {
-        result = format("failed to write corrupt row to {}: {}", handler.storage_name(), std::current_exception());
+        result = seastar::format"failed to write corrupt row to {}: {}", handler.storage_name(), std::current_exception());
     }
 
     slogger.error("found non-full clustering key {} in partition {} while writing sstable {} for non-compact table {}.{}; {}",

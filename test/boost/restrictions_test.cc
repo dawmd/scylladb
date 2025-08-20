@@ -263,22 +263,22 @@ future<> test_lhs_null_with_operator(sstring op) {
         cquery_nofail(e, "INSERT INTO cf (pk) VALUES (0);");
         
         // Now we have all types of NULLs
-        require_rows(e, format("SELECT * FROM cf WHERE flt {} 99.9 ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE dbl {} 99.9 ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE dec {} 99.9 ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE b   {} true ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE ti  {} 99   ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE si  {} 999  ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE i   {} 999  ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE bi  {} 999  ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE vi  {} 999  ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE ip  {} '255.255.255.255' ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE u   {} ffffffff-e89b-12d3-a456-426655440000 ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE tu  {} ffffffff-e89b-12d3-a456-426655440000 ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE t   {} '23:59:59'   ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE d   {} '2137-01-01' ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE a   {} 'Z'          ALLOW FILTERING;", op), {});
-        require_rows(e, format("SELECT * FROM cf WHERE txt {} 'Ż'          ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE flt {} 99.9 ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE dbl {} 99.9 ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE dec {} 99.9 ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE b   {} true ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE ti  {} 99   ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE si  {} 999  ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE i   {} 999  ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE bi  {} 999  ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE vi  {} 999  ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE ip  {} '255.255.255.255' ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE u   {} ffffffff-e89b-12d3-a456-426655440000 ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE tu  {} ffffffff-e89b-12d3-a456-426655440000 ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE t   {} '23:59:59'   ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE d   {} '2137-01-01' ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE a   {} 'Z'          ALLOW FILTERING;", op), {});
+        require_rows(e, seastar::format"SELECT * FROM cf WHERE txt {} 'Ż'          ALLOW FILTERING;", op), {});
     });
 }
 } // anon. namespace
@@ -862,7 +862,7 @@ SEASTAR_THREAD_TEST_CASE(token) {
         require_rows(e, "select p from t where token(p,q) <= token(1,11) and token(p,q) = token(2,12)", {{I(2)}});
 
         require_rows(e, "select p from t where token(p,q) > token(9,9) and token(p,q) < token(9,9)", {});
-        const auto min_bounds = format("select p from t where token(p,q) > {:d} and token(p,q) < {:d}",
+        const auto min_bounds = seastar::format"select p from t where token(p,q) > {:d} and token(p,q) < {:d}",
                std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::min());
         require_rows(e, min_bounds, {{I(1)}, {I(2)}, {I(3)}});
         require_rows(e, "select p from t where token(p,q) <= token(1,11) and r<102 allow filtering",

@@ -111,7 +111,7 @@ public:
         reader.Parse(stream, *this);
         if (reader.HasParseError()) {
             throw rjson::error(
-                format("Parsing JSON failed: {} at {}",
+                seastar::format"Parsing JSON failed: {} at {}",
                     rapidjson::GetParseError_En(reader.GetParseErrorCode()), reader.GetErrorOffset()));
         }
         //NOTICE: The handler has parsed the string, but in case of rapidjson::GenericDocument

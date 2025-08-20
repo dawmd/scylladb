@@ -141,7 +141,7 @@ namespace {
 /// Asserts that a column of type \p type cannot be LHS of the LIKE operator.
 auto assert_like_doesnt_accept(const char* type) {
     return do_with_cql_env_thread([type] (cql_test_env& e) {
-        cquery_nofail(e, format("create table t (k {}, p int primary key)", type).c_str());
+        cquery_nofail(e, seastar::format"create table t (k {}, p int primary key)", type).c_str());
         BOOST_REQUIRE_EXCEPTION(
                 e.execute_cql("select * from t where k like 123 allow filtering").get(),
                 exceptions::invalid_request_exception,

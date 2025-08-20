@@ -19,12 +19,12 @@ std::string validate_histogram(utils::approx_exponential_histogram<MIN, MAX, NUM
     size_t i = 0;
     for (; i < r.size(); i++) {
         if (r[i] != h.get(i)) {
-            return format("{:d} != {:d}", r[i], h.get(i)) ;
+            return seastar::format"{:d} != {:d}", r[i], h.get(i)) ;
         }
     }
     for (; i < h.size(); i++) {
         if (h.get(i)) {
-            return format("{:d} != 0", h.get(i)) ;
+            return seastar::format"{:d} != 0", h.get(i)) ;
         }
     }
     return "";
@@ -34,12 +34,12 @@ std::string validate_histogram(seastar::metrics::histogram& h, const std::vector
     size_t i = 0;
     for (; i < counts.size(); i++) {
         if (counts[i] != h.buckets[i].count) {
-            return format("Bucket {} limit {}  count {} !=  limit {} count {}", i, limits[i], counts[i], h.buckets[i].upper_bound, h.buckets[i].count);
+            return seastar::format"Bucket {} limit {}  count {} !=  limit {} count {}", i, limits[i], counts[i], h.buckets[i].upper_bound, h.buckets[i].count);
         }
     }
     for (; i < h.buckets.size(); i++) {
         if (h.buckets[i].count != counts[counts.size() - 1]) {
-            return format("Bucket {} limit {}  count {} !=  limit {} count {}", i, limits[i], counts[counts.size() - 1], h.buckets[i].upper_bound, h.buckets[i].count);
+            return seastar::format"Bucket {} limit {}  count {} !=  limit {} count {}", i, limits[i], counts[counts.size() - 1], h.buckets[i].upper_bound, h.buckets[i].count);
         }
     }
     return "";

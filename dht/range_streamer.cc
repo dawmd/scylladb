@@ -268,7 +268,7 @@ future<> range_streamer::stream_async() {
                 unsigned nr_ranges_streamed = 0;
                 size_t nr_ranges_total = range_vec.size();
                 auto do_streaming = [&] (dht::token_range_vector&& ranges_to_stream) {
-                    auto sp = stream_plan(_stream_manager.local(), format("{}-{}-index-{:d}", description, keyspace, sp_index++),
+                    auto sp = stream_plan(_stream_manager.local(), seastar::format"{}-{}-index-{:d}", description, keyspace, sp_index++),
                                           _reason, _topo_guard);
                     auto abort_listener = _abort_source.subscribe([&] () noexcept { sp.abort(); });
                     _abort_source.check();

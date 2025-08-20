@@ -423,7 +423,7 @@ static locator::node::state to_topology_node_state(node_state ns) {
         case node_state::rebuilding: return locator::node::state::normal;
         case node_state::none: return locator::node::state::none;
     }
-    on_internal_error(rtlogger, format("unhandled node state: {}", ns));
+    on_internal_error(rtlogger, seastar::format"unhandled node state: {}", ns));
 }
 
 future<storage_service::host_id_to_ip_map_t> storage_service::get_host_id_to_ip_map() {
@@ -1257,7 +1257,7 @@ public:
             },
             [] (const join_node_request_result::rejected& rej) {
                 throw std::runtime_error(
-                        format("the topology coordinator rejected request to join the cluster: {}", rej.reason));
+                        seastar::format"the topology coordinator rejected request to join the cluster: {}", rej.reason));
             },
         }, result.result);
 
@@ -1323,7 +1323,7 @@ future<> storage_service::raft_initialize_discovery_leader(const join_node_reque
 }
 
 future<> storage_service::initialize_done_topology_upgrade_state() {
-    const sstring insert_query = format("UPDATE {}.{} SET upgrade_state='done' WHERE key='topology'",
+    const sstring insert_query = seastar::format"UPDATE {}.{} SET upgrade_state='done' WHERE key='topology'",
         db::system_keyspace::NAME, db::system_keyspace::TOPOLOGY);
     co_await _qp.execute_internal(
             insert_query,
@@ -3069,7 +3069,7 @@ future<> storage_service::join_cluster(sharded<service::storage_proxy>& proxy,
                     co_await _sys_ks.local().remove_endpoint(st.endpoint);
                 } else {
                     if (host_id == my_host_id()) {
-                        on_internal_error(slogger, format("Loaded saved endpoint {} with my host_id={}", st.endpoint, host_id));
+                        on_internal_error(slogger, seastar::format"Loaded saved endpoint {} with my host_id={}", st.endpoint, host_id));
                     }
                     if (!st.opt_dc_rack) {
                         st.opt_dc_rack = locator::endpoint_dc_rack::default_location;
@@ -3093,7 +3093,7 @@ future<> storage_service::join_cluster(sharded<service::storage_proxy>& proxy,
         co_await coroutine::parallel_for_each(loaded_endpoints, [&] (auto& e) -> future<> {
             auto& [host_id, st] = e;
             if (host_id == my_host_id()) {
-                on_internal_error(slogger, format("Loaded saved endpoint {} with my host_id={}", st.endpoint, host_id));
+                on_internal_error(slogger, seastar::format"Loaded saved endpoint {} with my host_id={}", st.endpoint, host_id));
             }
             co_await _gossiper.add_saved_endpoint(host_id, st, gms::null_permit_id);
         });
@@ -3601,7 +3601,7 @@ future<std::map<gms::inet_address, float>> storage_service::effective_ownership(
 void storage_service::set_mode(mode m) {
     if (m == mode::MAINTENANCE && _operation_mode != mode::NONE) {
         // Prevent from calling `start_maintenance_mode` after `join_cluster`.
-        on_fatal_internal_error(slogger, format("Node should enter maintenance mode only from mode::NONE (current mode: {})", _operation_mode));
+        on_fatal_internal_error(slogger, seastar::format"Node should enter maintenance mode only from mode::NONE (current mode: {})", _operation_mode));
     }
     if (m == mode::STARTING && _operation_mode == mode::MAINTENANCE) {
         // Prevent from calling `join_cluster` after `start_maintenance_mode`.
@@ -6436,7 +6436,7 @@ future<> storage_service::stream_tablet(locator::global_tablet_id tablet) {
             auto streamer = make_lw_shared<dht::range_streamer>(_db, _stream_manager, std::move(tm),
                                                                 guard.get_abort_source(),
                                                                 my_id, _snitch.local()->get_location(),
-                                                                format("Tablet {}", trinfo->transition),
+                                                                seastar::format"Tablet {}", trinfo->transition),
                                                                 reason,
                                                                 topo_guard,
                                                                 std::move(tables));
@@ -6627,7 +6627,7 @@ future<std::unordered_map<sstring, sstring>> storage_service::add_repair_tablet_
                     .build());
         }
 
-        sstring reason = format("Repair tablet by API request tokens={} tablet_task_id={}", tokens, repair_task_info.tablet_task_id);
+        sstring reason = seastar::format"Repair tablet by API request tokens={} tablet_task_id={}", tokens, repair_task_info.tablet_task_id);
         if (co_await exec_tablet_update(std::move(guard), std::move(updates), std::move(reason))) {
             break;
         }
@@ -6699,7 +6699,7 @@ future<> storage_service::del_repair_tablet_request(table_id table, locator::tab
             updates.emplace_back(update.build());
         });
 
-        sstring reason = format("Deleting tablet repair request by API request tablet_id={} tablet_task_id={}", table, tablet_task_id);
+        sstring reason = seastar::format"Deleting tablet repair request by API request tablet_id={} tablet_task_id={}", table, tablet_task_id);
         if (co_await exec_tablet_update(std::move(guard), std::move(updates), std::move(reason))) {
             break;
         }
@@ -6736,7 +6736,7 @@ future<> storage_service::move_tablet(table_id table, dht::token token, locator:
         }
 
         if (src == dst) {
-            sstring reason = format("No-op move of tablet {} to {}", gid, dst);
+            sstring reason = seastar::format"No-op move of tablet {} to {}", gid, dst);
             return std::make_tuple(std::move(updates), std::move(reason));
         }
 
@@ -6772,7 +6772,7 @@ future<> storage_service::move_tablet(table_id table, dht::token token, locator:
             .set_migration_task_info(last_token, std::move(migration_task_info), _feature_service)
             .build());
 
-        sstring reason = format("Moving tablet {} from {} to {}", gid, src, dst);
+        sstring reason = seastar::format"Moving tablet {} from {} to {}", gid, src, dst);
 
         return std::make_tuple(std::move(updates), std::move(reason));
     });
@@ -6816,7 +6816,7 @@ future<> storage_service::add_tablet_replica(table_id table, dht::token token, l
             .set_transition(last_token, locator::choose_rebuild_transition_kind(_feature_service))
             .build());
 
-        sstring reason = format("Adding replica to tablet {}, node {}", gid, dst);
+        sstring reason = seastar::format"Adding replica to tablet {}, node {}", gid, dst);
 
         return std::make_tuple(std::move(updates), std::move(reason));
     });
@@ -6861,7 +6861,7 @@ future<> storage_service::del_tablet_replica(table_id table, dht::token token, l
             .set_transition(last_token, locator::choose_rebuild_transition_kind(_feature_service))
             .build());
 
-        sstring reason = format("Removing replica from tablet {}, node {}", gid, dst);
+        sstring reason = seastar::format"Removing replica from tablet {}, node {}", gid, dst);
 
         return std::make_tuple(std::move(updates), std::move(reason));
     });
@@ -7020,7 +7020,7 @@ future<> storage_service::set_tablet_balancing_enabled(bool enabled) {
             .set_tablet_balancing_enabled(enabled)
             .build()));
 
-        sstring reason = format("Setting tablet balancing to {}", enabled);
+        sstring reason = seastar::format"Setting tablet balancing to {}", enabled);
         rtlogger.info("{}", reason);
         topology_change change{std::move(updates)};
         group0_command g0_cmd = _group0->client().prepare_command(std::move(change), guard, reason);
@@ -7152,7 +7152,7 @@ future<join_node_request_result> storage_service::join_node_request_handler(join
                     std::chrono::duration_cast<std::chrono::seconds>(timeout).count());
 
             result.result = join_node_request_result::rejected{
-                .reason = format(
+                .reason = seastar::format
                         "It is only allowed to replace dead nodes, however the"
                         " node that was requested to be replaced is still seen"
                         " as the group0 leader after {}s, which indicates that"
@@ -7235,7 +7235,7 @@ future<join_node_request_result> storage_service::join_node_request_handler(join
 
         topology_change change{{std::move(mutation)}};
         group0_command g0_cmd = _group0->client().prepare_command(std::move(change), guard,
-                format("raft topology: placing join request for {}", params.host_id));
+                seastar::format"raft topology: placing join request for {}", params.host_id));
 
         co_await utils::get_local_injector().inject("join-node-before-add-entry", utils::wait_for_message(5min));
 
@@ -7330,7 +7330,7 @@ future<join_node_response_result> storage_service::join_node_response_handler(jo
             },
             [&] (const join_node_response_params::rejected& rej) -> future<join_node_response_result> {
                 auto eptr = std::make_exception_ptr(std::runtime_error(
-                        format("the topology coordinator rejected request to join the cluster: {}", rej.reason)));
+                        seastar::format"the topology coordinator rejected request to join the cluster: {}", rej.reason)));
                 _join_node_response_done.set_exception(std::move(eptr));
 
                 co_return join_node_response_result{};
@@ -7367,7 +7367,7 @@ node_state storage_service::get_node_state(locator::host_id id) {
     }
     auto rid = raft::server_id{id.uuid()};
     if (!_topology_state_machine._topology.contains(rid)) {
-        on_internal_error(rtlogger, format("unknown node {}", rid));
+        on_internal_error(rtlogger, seastar::format"unknown node {}", rid));
     }
     auto p = _topology_state_machine._topology.find(rid);
     if (!p) {

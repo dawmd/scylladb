@@ -456,7 +456,7 @@ view_updates::view_updates(view_ptr v, schema_ptr base)
         } else if (base_col && base_col->is_static()) {
             _base_static_columns_in_view_pk.push_back(base_col->id);
         } else if (!base_col) {
-            on_internal_error(vlogger, format("Column {} in view {}.{} was not found in the base table {}.{}",
+            on_internal_error(vlogger, seastar::format"Column {} in view {}.{} was not found in the base table {}.{}",
                     view_col_name, _view->ks_name(), _view->cf_name(), _base->ks_name(), _base->cf_name()));
         }
     }
@@ -560,7 +560,7 @@ public:
             return {_update.key()->get_component(_base, base_col->position())};
         default:
             if (base_col->kind != _update.column_kind()) {
-                on_internal_error(vlogger, format("Tried to get a {} column {} from a {} row update, which is impossible",
+                on_internal_error(vlogger, seastar::format"Tried to get a {} column {} from a {} row update, which is impossible",
                         to_sstring(base_col->kind), base_col->name_as_text(), _update.is_clustering_row() ? "clustering" : "static"));
             }
             auto& c = _update.cells().cell_at(base_col->id);
@@ -605,7 +605,7 @@ private:
     vector_type handle_collection_column_computation(const collection_column_computation* collection_computation) {
         vector_type ret;
         if (collection_column_position.has_value()) {
-            on_internal_error(vlogger, format("Multiple columns in view (either pk or ck) are collection computed columns. Current is {}, the previous one found was {}", column_position - 1, *collection_column_position));
+            on_internal_error(vlogger, seastar::format"Multiple columns in view (either pk or ck) are collection computed columns. Current is {}, the previous one found was {}", column_position - 1, *collection_column_position));
         }
         collection_column_position = column_position - 1;
 
@@ -672,7 +672,7 @@ view_updates::get_view_rows(const partition_key& base_key, const clustering_or_s
             auto throw_length_error = [&] {
                 size_t pk_size = cartesian_product_size(pk_elems_),
                        ck_size = cartesian_product_size(ck_elems_);
-                on_internal_error(vlogger, format("Computed sizes of possible partition keys and clustering keys don't match: {} != {}", pk_size, ck_size));
+                on_internal_error(vlogger, seastar::format"Computed sizes of possible partition keys and clustering keys don't match: {} != {}", pk_size, ck_size));
             };
             for (std::vector<view_managed_key_view_and_action>& pk : cartesian_product_pk) {
                 if (ck_it == cartesian_product_ck.end()) {
@@ -837,7 +837,7 @@ void create_virtual_column(schema_builder& builder, const bytes& name, const dat
         builder.with_column(name, type, column_kind::regular_column, column_view_virtual::yes);
     } else {
         throw exceptions::invalid_request_exception(
-                format("Unsupported unselected multi-cell non-collection, non-UDT column {} for Materialized View", name));
+                seastar::format"Unsupported unselected multi-cell non-collection, non-UDT column {} for Materialized View", name));
     }
 }
 
@@ -1339,7 +1339,7 @@ std::optional<partition_key> view_updates::construct_view_partition_key_from_bas
         } else {
             // This shouldn't happen because we already checked that all
             // the view partition key columns appear in the base partition key.
-            on_internal_error(vlogger, format("Unexpected failure to construct view partition update for view {}.{} of {}.{}, ",
+            on_internal_error(vlogger, seastar::format"Unexpected failure to construct view partition update for view {}.{} of {}.{}, ",
                 _view->ks_name(), _view->cf_name(), _base->ks_name(), _base->cf_name()));
         }
     }
@@ -1598,7 +1598,7 @@ future<stop_iteration> view_update_builder::on_results() {
             generate_update(std::move(*_update).as_clustering_row(), { std::move(*_existing).as_clustering_row() });
         } else if (_update->is_static_row()) {
             if (!_existing->is_static_row()) {
-                on_internal_error(vlogger, format("Static row update mutation part {} shouldn't compare equal with an existing, non-static row mutation part {}",
+                on_internal_error(vlogger, seastar::format"Static row update mutation part {} shouldn't compare equal with an existing, non-static row mutation part {}",
                                                   mutation_fragment_v2::printer(*_schema, *_update), mutation_fragment_v2::printer(*_schema, *_existing)));
             }
             generate_update(std::move(*_update).as_static_row(), _update_partition_tombstone, { std::move(*_existing).as_static_row() }, _existing_partition_tombstone);
@@ -2556,7 +2556,7 @@ future<> view_builder::mark_view_build_started(sstring ks_name, sstring view_nam
     co_await write_view_build_status(
         [this, ks_name, view_name] () -> future<> {
             co_await utils::get_local_injector().inject("view_builder_pause_add_new_view", utils::wait_for_message(5min));
-            const sstring query_string = format("INSERT INTO {}.{} (keyspace_name, view_name, host_id, status) VALUES (?, ?, ?, ?)",
+            const sstring query_string = seastar::format"INSERT INTO {}.{} (keyspace_name, view_name, host_id, status) VALUES (?, ?, ?, ?)",
                     db::system_keyspace::NAME, db::system_keyspace::VIEW_BUILD_STATUS_V2);
             auto host_id = _db.get_token_metadata().get_my_id();
             co_await announce_with_raft(_qp, _group0_client, _as, std::move(query_string),
@@ -2574,7 +2574,7 @@ future<> view_builder::mark_view_build_success(sstring ks_name, sstring view_nam
     co_await write_view_build_status(
         [this, ks_name, view_name] () -> future<> {
             co_await utils::get_local_injector().inject("view_builder_pause_mark_success", utils::wait_for_message(5min));
-            const sstring query_string = format("UPDATE {}.{} SET status = ? WHERE keyspace_name = ? AND view_name = ? AND host_id = ?",
+            const sstring query_string = seastar::format"UPDATE {}.{} SET status = ? WHERE keyspace_name = ? AND view_name = ? AND host_id = ?",
                     db::system_keyspace::NAME, db::system_keyspace::VIEW_BUILD_STATUS_V2);
             auto host_id = _db.get_token_metadata().get_my_id();
             co_await announce_with_raft(_qp, _group0_client, _as, std::move(query_string),
@@ -2591,7 +2591,7 @@ future<> view_builder::mark_view_build_success(sstring ks_name, sstring view_nam
 future<> view_builder::remove_view_build_status(sstring ks_name, sstring view_name) {
     co_await write_view_build_status(
         [this, ks_name, view_name] () -> future<> {
-            const sstring query_string = format("DELETE FROM {}.{} WHERE keyspace_name = ? AND view_name = ?",
+            const sstring query_string = seastar::format"DELETE FROM {}.{} WHERE keyspace_name = ? AND view_name = ?",
                     db::system_keyspace::NAME, db::system_keyspace::VIEW_BUILD_STATUS_V2);
             co_await announce_with_raft(_qp, _group0_client, _as, std::move(query_string),
                     {std::move(ks_name), std::move(view_name)},
@@ -2606,7 +2606,7 @@ future<> view_builder::remove_view_build_status(sstring ks_name, sstring view_na
 static future<std::unordered_map<locator::host_id, sstring>>
 view_status_common(cql3::query_processor& qp, sstring ks_name, sstring cf_name, sstring view_ks_name, sstring view_name, db::consistency_level cl) {
     return qp.execute_internal(
-            format("SELECT host_id, status FROM {}.{} WHERE keyspace_name = ? AND view_name = ?", ks_name, cf_name),
+            seastar::format"SELECT host_id, status FROM {}.{} WHERE keyspace_name = ? AND view_name = ?", ks_name, cf_name),
             cl,
             view_builder_query_state(),
             { std::move(view_ks_name), std::move(view_name) },
@@ -2797,7 +2797,7 @@ future<> view_builder::generate_mutations_on_node_left(replica::database& db, db
 
     auto& qp = sys_ks.query_processor();
 
-    const sstring query_string = format("DELETE FROM {}.{} WHERE keyspace_name = ? AND view_name = ? AND host_id = ?",
+    const sstring query_string = seastar::format"DELETE FROM {}.{} WHERE keyspace_name = ? AND view_name = ? AND host_id = ?",
             db::system_keyspace::NAME, db::system_keyspace::VIEW_BUILD_STATUS_V2);
 
     muts.reserve(muts.size() + db.get_views().size());
@@ -2844,7 +2844,7 @@ future<> view_builder::migrate_to_v2(locator::token_metadata_ptr tmptr, db::syst
     }
 
     auto rows = co_await qp.execute_internal(
-        format("SELECT keyspace_name, view_name, host_id, status, WRITETIME(status) AS ts FROM {}.{}", db::system_distributed_keyspace::NAME, db::system_distributed_keyspace::VIEW_BUILD_STATUS),
+        seastar::format"SELECT keyspace_name, view_name, host_id, status, WRITETIME(status) AS ts FROM {}.{}", db::system_distributed_keyspace::NAME, db::system_distributed_keyspace::VIEW_BUILD_STATUS),
         cl,
         view_builder_query_state(),
         {},
@@ -2904,7 +2904,7 @@ future<> view_builder::migrate_to_v2(locator::token_metadata_ptr tmptr, db::syst
             row_ts,
             std::move(values));
         if (muts.size() != 1) {
-            on_internal_error(vlogger, format("expecting single insert mutation, got {}", muts.size()));
+            on_internal_error(vlogger, seastar::format"expecting single insert mutation, got {}", muts.size()));
         }
         migration_muts.push_back(std::move(muts[0]));
     }
@@ -3093,7 +3093,7 @@ public:
     stop_iteration consume_new_partition(const dht::decorated_key& dk) {
         inject_failure("view_builder_consume_new_partition");
         if (dk.key().is_empty()) {
-            on_internal_error(vlogger, format("Trying to consume empty partition key {}", dk));
+            on_internal_error(vlogger, seastar::format"Trying to consume empty partition key {}", dk));
         }
         _step.current_key = std::move(dk);
         check_for_built_views();

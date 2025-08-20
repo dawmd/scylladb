@@ -241,7 +241,7 @@ struct migration_candidate {
 template<>
 struct fmt::formatter<service::migration_badness> : fmt::formatter<std::string_view> {
     template <typename FormatContext>
-    auto format(const service::migration_badness& badness, FormatContext& ctx) const {
+    auto seastar::formatconst service::migration_badness& badness, FormatContext& ctx) const {
         return fmt::format_to(ctx.out(), "{{s: {:.4f}, n: {:.4f}}}", badness.shard_badness(), badness.node_badness());
     }
 };
@@ -249,7 +249,7 @@ struct fmt::formatter<service::migration_badness> : fmt::formatter<std::string_v
 template<>
 struct fmt::formatter<service::migration_tablet_set> : fmt::formatter<std::string_view> {
     template <typename FormatContext>
-    auto format(const service::migration_tablet_set& tablet_set, FormatContext& ctx) const {
+    auto seastar::formatconst service::migration_tablet_set& tablet_set, FormatContext& ctx) const {
         if (tablet_set.colocated()) {
             return fmt::format_to(ctx.out(), "{{colocated: {}}}", tablet_set.tablets());
         }
@@ -260,7 +260,7 @@ struct fmt::formatter<service::migration_tablet_set> : fmt::formatter<std::strin
 template<>
 struct fmt::formatter<service::migration_candidate> : fmt::formatter<std::string_view> {
     template <typename FormatContext>
-    auto format(const service::migration_candidate& candidate, FormatContext& ctx) const {
+    auto seastar::formatconst service::migration_candidate& candidate, FormatContext& ctx) const {
         fmt::format_to(ctx.out(), "{{tablet: {}, {} -> {}, badness: {}", candidate.tablets, candidate.src,
                        candidate.dst, candidate.badness);
         if (candidate.badness.is_bad()) {
@@ -714,7 +714,7 @@ private:
             case tablet_transition_stage::end_migration:
                 return false;
         }
-        on_internal_error(lblogger, format("Invalid transition stage: {}", static_cast<int>(trinfo->stage)));
+        on_internal_error(lblogger, seastar::format"Invalid transition stage: {}", static_cast<int>(trinfo->stage)));
     }
 
     using migration_vector = migration_plan::migrations_vector;
@@ -821,7 +821,7 @@ public:
             }
             auto* node = topo.find_node(host);
             if (!node) {
-                on_internal_error(lblogger, format("Node {} not found in topology", host));
+                on_internal_error(lblogger, seastar::format"Node {} not found in topology", host));
             }
             node_load& load = nodes[host];
             load.id = host;
@@ -956,7 +956,7 @@ public:
             }
 
             if (!t2_opt) {
-                on_internal_error(lblogger, format("Unable to find sibling tablet during co-location check for table {}", table));
+                on_internal_error(lblogger, seastar::format"Unable to find sibling tablet during co-location check for table {}", table));
             }
             auto t2 = *t2_opt;
 
@@ -1080,7 +1080,7 @@ public:
                 // Merge finalization will have to recheck that all sibling tablets are co-located.
 
                 if (!t2_opt) {
-                    on_internal_error(lblogger, format("Unable to find sibling tablet during co-location, with tablet count {}, for table {}",
+                    on_internal_error(lblogger, seastar::format"Unable to find sibling tablet during co-location, with tablet count {}, for table {}",
                                                        tmap.tablet_count(), table));
                 }
                 auto t2 = *t2_opt;
@@ -1122,7 +1122,7 @@ public:
                 if (!ret) {
                     // this shouldn't happen in practice, since the above call should always produce a pair of
                     // replicas to co-locate, since we only got here if the sibling tablets aren't fully co-located.
-                    on_internal_error(lblogger, format("Unable to find replicas to co-locate for sibling tablets ({}: {}), and ({}, {})",
+                    on_internal_error(lblogger, seastar::format"Unable to find replicas to co-locate for sibling tablets ({}: {}), and ({}, {})",
                                       t1_id, r1, t2_id, r2));
                 }
 
@@ -1172,14 +1172,14 @@ public:
     std::tuple<schema_ptr, const tablet_aware_replication_strategy*> get_schema_and_rs(table_id table) {
         auto t = _db.get_tables_metadata().get_table_if_exists(table);
         if (!t) {
-            on_internal_error(lblogger, format("Table {} does not exist", table));
+            on_internal_error(lblogger, seastar::format"Table {} does not exist", table));
         }
 
         auto s = t->schema();
         auto erm = t->get_effective_replication_map();
         auto rs = erm->get_replication_strategy().maybe_as_tablet_aware();
         if (!rs) {
-            auto msg = format("Table {}.{} has no tablet_aware_replication_strategy: uses_tablets={}",
+            auto msg = seastar::format"Table {}.{} has no tablet_aware_replication_strategy: uses_tablets={}",
                               s->ks_name(), s->cf_name(), erm->get_replication_strategy().uses_tablets());
             on_internal_error(lblogger, msg);
         }
@@ -1235,7 +1235,7 @@ public:
             return {};
         }
 
-        return {tablet_count, format("min_per_shard_tablet_count={:.3f} in DC {}", min_per_shard_tablet_count, *winning_dc)};
+        return {tablet_count, seastar::format"min_per_shard_tablet_count={:.3f} in DC {}", min_per_shard_tablet_count, *winning_dc)};
     }
 
     future<sizing_plan> make_sizing_plan(schema_ptr new_table = nullptr, const tablet_aware_replication_strategy* new_rs = nullptr) {
@@ -1276,7 +1276,7 @@ public:
 
             if (tablet_options.expected_data_size_in_gb) {
                 maybe_apply({(tablet_options.expected_data_size_in_gb.value() << 30) / target_tablet_size,
-                        format("expected_data_size_in_gb={}", tablet_options.expected_data_size_in_gb.value())});
+                        seastar::format"expected_data_size_in_gb={}", tablet_options.expected_data_size_in_gb.value())});
             }
 
             auto min_per_shard_tablet_count = tablet_options.min_per_shard_tablet_count.value_or(
@@ -1322,7 +1322,7 @@ public:
                 }
 
                 table_plan.avg_tablet_size = avg_tablet_size;
-                maybe_apply({tablet_count_from_size, format("avg_tablet_size={}", avg_tablet_size)});
+                maybe_apply({tablet_count_from_size, seastar::format"avg_tablet_size={}", avg_tablet_size)});
             } else {
                 // When we don't have tablet size info, allow tablet count to increase but not to decrease.
                 // Increasing will always bring us closer to the true target count, since tablet_count_from_size
@@ -1442,7 +1442,7 @@ public:
             auto new_count = std::max<size_t>(1, table_plan.target_tablet_count * scale);
             lblogger.debug("Scaling down table {} by a factor of {:.3f}: {} => {}", table, scale, table_plan.target_tablet_count, new_count);
             table_plan.target_tablet_count = new_count;
-            table_plan.target_tablet_count_reason = format("{} scaled by {:.3f}", table_plan.target_tablet_count_reason, scale);
+            table_plan.target_tablet_count_reason = seastar::format"{} scaled by {:.3f}", table_plan.target_tablet_count_reason, scale);
         }
 
         // Generate:
@@ -1789,7 +1789,7 @@ public:
         }
 
         if (shard_info.candidates.empty()) {
-            on_internal_error(lblogger, format("No candidates for migration on {}", src));
+            on_internal_error(lblogger, seastar::format"No candidates for migration on {}", src));
         }
 
         std::optional<migration_candidate> best_candidate;
@@ -1806,7 +1806,7 @@ public:
         }
 
         if (!best_candidate) {
-            on_internal_error(lblogger, format("No candidates for migration on {}", src));
+            on_internal_error(lblogger, seastar::format"No candidates for migration on {}", src));
         }
 
         lblogger.trace("Best candidate: {}", *best_candidate);
@@ -1831,7 +1831,7 @@ public:
         }
         auto siblings = tmap.sibling_tablets(tablet.tablet);
         if (!siblings) {
-            on_internal_error(lblogger, format("Unable to find sibling tablet of {} during merge", tablet));
+            on_internal_error(lblogger, seastar::format"Unable to find sibling tablet of {} during merge", tablet));
         }
         auto left_sibling = global_tablet_id{tablet.table, siblings->first};
         auto right_sibling = global_tablet_id{tablet.table, siblings->second};
@@ -2856,7 +2856,7 @@ public:
             }
             auto* node = topo.find_node(host);
             if (!node) {
-                on_internal_error(lblogger, format("Node {} not found in topology", host));
+                on_internal_error(lblogger, seastar::format"Node {} not found in topology", host));
             }
             node_load& load = nodes[host];
             load.id = host;
@@ -2919,7 +2919,7 @@ public:
                 for (auto&& r : ti.replicas) {
                     auto* node = topo.find_node(r.host);
                     if (!node) {
-                        on_internal_error(lblogger, format("Replica {} of tablet {} not found in topology",
+                        on_internal_error(lblogger, seastar::format"Replica {} of tablet {} not found in topology",
                                                            r, global_tablet_id{table, tid}));
                     }
                     if (node->left() && node->dc_rack().dc == dc) {
@@ -2937,7 +2937,7 @@ public:
                         // This invariant is assumed later.
                         if (replica.shard >= nodes[replica.host].shard_count) {
                             auto gtid = global_tablet_id{table, tid};
-                            on_internal_error(lblogger, format("Tablet {} replica {} targets non-existent shard", gtid, replica));
+                            on_internal_error(lblogger, seastar::format"Tablet {} replica {} targets non-existent shard", gtid, replica));
                         }
                     }
                 }

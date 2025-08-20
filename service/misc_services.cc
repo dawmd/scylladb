@@ -173,7 +173,7 @@ future<lowres_clock::duration> cache_hitrate_calculator::recalculate_hitrates() 
                 if (this_shard_id() == cpuid) {
                     // calculate max difference between old rate and new one for all cfs
                     _diff = std::max(_diff, std::abs(float(cf->get_global_cache_hit_rate()) - rate));
-                    _gstate += format("{}.{}:{:0.6f};", cf->schema()->ks_name(), cf->schema()->cf_name(), rate);
+                    _gstate += seastar::format"{}.{}:{:0.6f};", cf->schema()->ks_name(), cf->schema()->cf_name(), rate);
                 }
                 cf->set_global_cache_hit_rate(cache_temperature(rate));
             });

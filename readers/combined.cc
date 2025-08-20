@@ -899,7 +899,7 @@ class clustering_order_reader_merger {
                 // We assume there are no partition tombstones.
                 // This should have been checked before opening the reader.
                 if (mf->as_partition_start().partition_tombstone()) {
-                    on_internal_error(mrlog, format(
+                    on_internal_error(mrlog, seastar::format
                             "clustering_order_reader_merger: partition tombstone encountered for partition {}."
                             " This reader merger cannot be used for readers that return partition tombstones"
                             " or it would give incorrect results.", mf->as_partition_start().key()));
@@ -956,7 +956,7 @@ class clustering_order_reader_merger {
             bool erase = false;
             if (mf) {
                 if (mf->is_partition_start()) {
-                    on_internal_error(mrlog, format(
+                    on_internal_error(mrlog, seastar::format
                             "clustering_order_reader_merger: double `partition start' encountered"
                             " in partition {} during read.", mf->as_partition_start().key()));
                 }

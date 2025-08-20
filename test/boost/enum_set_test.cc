@@ -21,7 +21,7 @@
 enum class fruit { apple = 3, pear = 7, banana = 8 };
 
 template <> struct fmt::formatter<fruit> : fmt::formatter<string_view> {
-    auto format(fruit f, fmt::format_context& ctx) const {
+    auto seastar::formatfruit f, fmt::format_context& ctx) const {
         std::string_view name;
         using enum fruit;
         switch (f) {

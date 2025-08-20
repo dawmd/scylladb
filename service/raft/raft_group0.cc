@@ -122,7 +122,7 @@ future<> run_op_with_retry(abort_source& as, auto&& op, const sstring op_name,
             const auto elapsed = lowres_clock::now() - start;
             if (elapsed > *max_total_timeout) {
                 on_internal_error(group0_log,
-                        format("{} timed out after retrying for {} seconds", op_name, std::chrono::duration_cast<std::chrono::seconds>(elapsed).count()));
+                        seastar::format"{} timed out after retrying for {} seconds", op_name, std::chrono::duration_cast<std::chrono::seconds>(elapsed).count()));
             }
         }
 
@@ -228,7 +228,7 @@ static future<group0_upgrade_state> send_get_group0_upgrade_state(netw::messagin
     auto state = co_await ser::group0_rpc_verbs::send_get_group0_upgrade_state(&ms, addr, as);
     auto state_int = static_cast<int8_t>(state);
     if (state_int > group0_upgrade_state_last) {
-        on_internal_error(upgrade_log, format(
+        on_internal_error(upgrade_log, seastar::format
             "send_get_group0_upgrade_state: unknown value for `group0_upgrade_state` received from node {}: {}",
             addr, state_int));
     }
@@ -303,7 +303,7 @@ raft_group0::discover_group0(const std::vector<gms::inet_address>& seeds, cql3::
 static constexpr auto DISCOVERY_KEY = "peers";
 
 static future<discovery::peer_list> load_discovered_peers(cql3::query_processor& qp) {
-    static const auto load_cql = format(
+    static const auto load_cql = seastar::format
             "SELECT ip_addr, raft_server_id FROM system.{} WHERE key = '{}'",
             db::system_keyspace::DISCOVERY, DISCOVERY_KEY);
     auto rs = co_await qp.execute_internal(load_cql, cql3::query_processor::cache_internal::yes);
@@ -544,7 +544,7 @@ future<> raft_group0::join_group0(std::vector<gms::inet_address> seeds, shared_p
         if (server && group0_id != g0_info.group0_id) {
             // `server` is not `nullptr` so we finished discovery in an earlier iteration and found a group 0 ID.
             // But in this iteration it's different. That shouldn't be possible.
-            on_internal_error(group0_log, format(
+            on_internal_error(group0_log, seastar::format
                 "The Raft discovery algorithm returned two different group IDs on subsequent runs: {} and {}."
                 " Cannot proceed due to possible inconsistency problems."
                 " If you're bootstrapping a fresh cluster, make sure that every node uses the same seeds configuration, then retry."

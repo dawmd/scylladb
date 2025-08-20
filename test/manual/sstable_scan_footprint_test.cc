@@ -131,7 +131,7 @@ public:
             }
 
             for (const auto& dp : _data_points) {
-                const auto line = format("{},{},{},{},{},{}\n", dp.lsa_used_memory, dp.lsa_free_memory, dp.non_lsa_used_memory, dp.non_lsa_free_memory,
+                const auto line = seastar::format"{},{},{},{},{},{}\n", dp.lsa_used_memory, dp.lsa_free_memory, dp.non_lsa_used_memory, dp.non_lsa_free_memory,
                         dp.reads_memory_consumption, dp.reads);
                 os.write(line.c_str()).get();
             }

@@ -297,7 +297,7 @@ future<> filesystem_storage::check_create_links_replay(const sstable& sst, const
                     }
                     auto same = fut.get();
                     if (!same) {
-                        auto msg = format("Error while linking SSTable: {} to {}: File exists", src, dst);
+                        auto msg = seastar::format"Error while linking SSTable: {} to {}: File exists", src, dst);
                         sstlog.error("{}", msg);
                         return make_exception_future<>(malformed_sstable_exception(msg));
                     }
@@ -554,7 +554,7 @@ class s3_storage : public sstables::storage {
 
     table_id owner() const {
         if (std::holds_alternative<sstring>(_location)) {
-            on_internal_error(sstlog, format("Storage holds {} prefix, but registry owner is expected", std::get<sstring>(_location)));
+            on_internal_error(sstlog, seastar::format"Storage holds {} prefix, but registry owner is expected", std::get<sstring>(_location)));
         }
         return std::get<table_id>(_location);
     }
@@ -599,10 +599,10 @@ sstring s3_storage::make_s3_object_name(const sstable& sst, component_type type)
 
     return std::visit(overloaded_functor {
         [&] (const sstring& prefix) -> sstring {
-            return format("/{}/{}/{}", _bucket, prefix, sst.component_basename(type));
+            return seastar::format"/{}/{}/{}", _bucket, prefix, sst.component_basename(type));
         },
         [&] (const table_id& owner) -> sstring {
-            return format("/{}/{}/{}", _bucket, sst.generation(), sstable_version_constants::get_component_map(sst.get_version()).at(type));
+            return seastar::format"/{}/{}/{}", _bucket, sst.generation(), sstable_version_constants::get_component_map(sst.get_version()).at(type));
         }
     }, _location);
 }
@@ -725,7 +725,7 @@ future<> s3_storage::atomic_delete_complete(atomic_delete_context ctx) const {
 }
 
 future<> s3_storage::remove_by_registry_entry(entry_descriptor desc) {
-    auto prefix = format("/{}/{}", _bucket, desc.generation);
+    auto prefix = seastar::format"/{}/{}", _bucket, desc.generation);
     std::vector<sstring> components;
 
     try {
@@ -777,7 +777,7 @@ future<lw_shared_ptr<const data_dictionary::storage_options>> init_table_storage
     for (const auto& dd : mgr.config().data_file_directories()) {
         auto uuid_sstring = s.id().to_sstring();
         boost::erase_all(uuid_sstring, "-");
-        auto dir = format("{}/{}/{}-{}", dd, s.ks_name(), s.cf_name(), uuid_sstring);
+        auto dir = seastar::format"{}/{}/{}-{}", dd, s.ks_name(), s.cf_name(), uuid_sstring);
         dirs.emplace_back(std::move(dir));
     }
     co_await coroutine::parallel_for_each(dirs, [] (sstring dir) -> future<> {
@@ -822,7 +822,7 @@ future<> init_keyspace_storage(const sstables_manager& mgr, const data_dictionar
         [&mgr, &ks_name] (const data_dictionary::storage_options::local&) -> future<> {
             const auto& data_dirs = mgr.config().data_file_directories();
             if (data_dirs.size() > 0) {
-                auto dir = format("{}/{}", data_dirs[0], ks_name);
+                auto dir = seastar::format"{}/{}", data_dirs[0], ks_name);
                 co_await io_check([&dir] { return touch_directory(dir); });
             }
         },

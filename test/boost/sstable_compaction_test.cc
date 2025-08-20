@@ -5601,7 +5601,7 @@ SEASTAR_TEST_CASE(test_print_shared_sstables_vector) {
 
         std::string msg = seastar::format("{}", ssts);
         for (const auto& sst : ssts) {
-            auto gen_str = format("{}", sst->generation());
+            auto gen_str = seastar::format"{}", sst->generation());
             BOOST_REQUIRE(msg.find(gen_str) != std::string::npos);
         }
     });

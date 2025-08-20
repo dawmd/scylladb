@@ -71,7 +71,7 @@ future<> modify_tags(service::migration_manager& mm, sstring ks, sstring cf,
             auto m = co_await service::prepare_column_family_update_announcement(mm.get_storage_proxy(),
                 builder.build(), std::vector<view_ptr>(), group0_guard.write_timestamp());
             try {
-                co_await mm.announce(std::move(m), std::move(group0_guard), format("Modify tags for {} table", cf));
+                co_await mm.announce(std::move(m), std::move(group0_guard), seastar::format"Modify tags for {} table", cf));
                 break;
             }  catch (const service::group0_concurrent_modification& ex) {
                 tlogger.info("Failed to modify tags for table {} due to concurrent schema modifications. {}.",

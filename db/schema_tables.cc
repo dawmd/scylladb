@@ -1871,7 +1871,7 @@ static void make_update_indices_mutations(
             view = db.find_schema(old_table->ks_name(), secondary_index::index_table_name(name));
             db.get_notifier().before_drop_column_family(*view, mutations, timestamp);
         } catch (const replica::no_such_column_family&) {
-            on_internal_error(slogger, format("Could not find schema for dropped index {}.{}",
+            on_internal_error(slogger, seastar::format"Could not find schema for dropped index {}.{}",
                     old_table->ks_name(), secondary_index::index_table_name(name)));
         }
         make_drop_table_or_view_mutations(views(), view, timestamp, mutations);
@@ -2563,7 +2563,7 @@ view_ptr create_view_from_mutations(const schema_ctxt& ctxt, schema_mutations sm
         if (!ctxt.get_db()) {
             auto ks_name = row.get_nonnull<sstring>("keyspace_name");
             auto cf_name = row.get_nonnull<sstring>("view_name");
-            on_internal_error(slogger, format("No database reference with missing base schema when creating view {}.{} from mutations",
+            on_internal_error(slogger, seastar::format"No database reference with missing base schema when creating view {}.{} from mutations",
                 ks_name, cf_name));
         }
         auto base_id = table_id(row.get_nonnull<utils::UUID>("base_table_id"));
@@ -2774,7 +2774,7 @@ void check_no_legacy_secondary_index_mv_schema(replica::database& db, const view
     // and the column is not computed (which we checked above), then it must be backing an index
     // created before computed columns were introduced.
     if (!base_schema->columns_by_name().contains(first_view_ck.name())) {
-        on_fatal_internal_error(slogger, format(
+        on_fatal_internal_error(slogger, seastar::format
             "Materialized view {}.{}: first clustering key column ({}) is not computed and does not have a corresponding"
             " column in the base table. This materialized view must therefore be a secondary index created"
             " using legacy method (without computed columns) that wasn't migrated properly to new method."
@@ -2804,7 +2804,7 @@ future<schema_mutations> read_table_mutations(distributed<service::storage_proxy
 
 } // namespace legacy
 
-static auto GET_COLUMN_MAPPING_QUERY = format("SELECT column_name, clustering_order, column_name_bytes, kind, position, type FROM system.{} WHERE cf_id = ? AND schema_version = ?",
+static auto GET_COLUMN_MAPPING_QUERY = seastar::format"SELECT column_name, clustering_order, column_name_bytes, kind, position, type FROM system.{} WHERE cf_id = ? AND schema_version = ?",
     db::schema_tables::SCYLLA_TABLE_SCHEMA_HISTORY);
 
 future<column_mapping> get_column_mapping(db::system_keyspace& sys_ks, ::table_id table_id, table_schema_version version) {
@@ -2819,7 +2819,7 @@ future<column_mapping> get_column_mapping(db::system_keyspace& sys_ks, ::table_i
         // then it means it's way too old and been cleaned up already.
         // Fail the whole learn stage in this case.
         co_await coroutine::return_exception(std::runtime_error(
-            format("Failed to look up column mapping for schema version {}",
+            seastar::format"Failed to look up column mapping for schema version {}",
                 version)));
     }
     std::vector<column_definition>  static_columns, regular_columns;
@@ -2860,7 +2860,7 @@ future<bool> column_mapping_exists(db::system_keyspace& sys_ks, table_id table_i
 
 future<> drop_column_mapping(db::system_keyspace& sys_ks, table_id table_id, table_schema_version version) {
     const static sstring DEL_COLUMN_MAPPING_QUERY =
-        format("DELETE FROM system.{} WHERE cf_id = ? and schema_version = ?",
+        seastar::format"DELETE FROM system.{} WHERE cf_id = ? and schema_version = ?",
             db::schema_tables::SCYLLA_TABLE_SCHEMA_HISTORY);
     co_await sys_ks._qp.execute_internal(
         DEL_COLUMN_MAPPING_QUERY,

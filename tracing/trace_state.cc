@@ -157,7 +157,7 @@ void trace_state::build_parameters_map() {
             // BATCH
             for (size_t i = 0; i < prepared_statements.size(); ++i) {
                 auto& stmt_info = prepared_statements[i];
-                build_parameters_map_for_one_prepared(stmt_info.statement, stmt_info.query_option_names, stmt_info.query_option_values, format("param[{:d}]", i));
+                build_parameters_map_for_one_prepared(stmt_info.statement, stmt_info.query_option_names, stmt_info.query_option_values, seastar::format"param[{:d}]", i));
             }
         }
     }
@@ -273,7 +273,7 @@ sstring trace_state::raw_value_to_sstring(const cql3::raw_value_view& v, bool is
         }
 
         if (str_rep.size() > max_val_bytes) {
-            return format("{}...", str_rep.substr(0, max_val_bytes));
+            return seastar::format"{}...", str_rep.substr(0, max_val_bytes));
         } else {
             return str_rep;
         }

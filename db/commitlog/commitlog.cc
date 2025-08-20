@@ -2341,7 +2341,7 @@ future<db::commitlog::segment_manager::sseg_ptr> db::commitlog::segment_manager:
                     }
                     auto s = co_await f.dma_write(max_size - rem, std::move(v));
                     if (!s) [[unlikely]] {
-                        on_internal_error(clogger, format("dma_write returned 0: max_size={} rem={} iovec.n={}", max_size, rem, n));
+                        on_internal_error(clogger, seastar::format"dma_write returned 0: max_size={} rem={} iovec.n={}", max_size, rem, n));
                     }
                     rem -= s;
                 }
@@ -2569,7 +2569,7 @@ template <>
 struct fmt::formatter<db::commitlog::segment::cf_mark> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
     template <typename FormatContext>
-    auto format(const db::commitlog::segment::cf_mark& m, FormatContext& ctx) const {
+    auto seastar::formatconst db::commitlog::segment::cf_mark& m, FormatContext& ctx) const {
         return fmt::format_to(ctx.out(), "{}", fmt::join(m.s._cf_dirty | std::views::keys, ", "));
     }
 };
@@ -2752,7 +2752,7 @@ void db::commitlog::segment_manager::abort_recycled_list(std::exception_ptr ep) 
 template <>
 struct fmt::formatter<db::commitlog::segment_manager::named_file> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const db::commitlog::segment_manager::named_file& f, fmt::format_context& ctx) const {
+    auto seastar::formatconst db::commitlog::segment_manager::named_file& f, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "{} ({})", f.name(), f.known_size());
     }
 };
@@ -2760,7 +2760,7 @@ struct fmt::formatter<db::commitlog::segment_manager::named_file> {
 template <>
 struct fmt::formatter<db::commitlog::segment_manager::dispose_mode> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(db::commitlog::segment_manager::dispose_mode mode, fmt::format_context& ctx) const {
+    auto seastar::formatdb::commitlog::segment_manager::dispose_mode mode, fmt::format_context& ctx) const {
         using enum db::commitlog::segment_manager::dispose_mode;
         string_view name;
         switch (mode) {
@@ -2776,7 +2776,7 @@ struct fmt::formatter<db::commitlog::segment_manager::dispose_mode> {
 template <typename T>
 struct fmt::formatter<db::commitlog::segment_manager::byte_flow<T>> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(db::commitlog::segment_manager::byte_flow<T> f, fmt::format_context& ctx) const {
+    auto seastar::formatdb::commitlog::segment_manager::byte_flow<T> f, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "[written={}, released={}, flush_req={}]",
                               f.bytes_written, f.bytes_released, f.bytes_flush_requested);
     }
@@ -2787,7 +2787,7 @@ using file_to_dispose_t = std::pair<db::commitlog::segment_manager::named_file,
 template <>
 struct fmt::formatter<file_to_dispose_t> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const file_to_dispose_t& p, fmt::format_context& ctx) const {
+    auto seastar::formatconst file_to_dispose_t& p, fmt::format_context& ctx) const {
         auto& [file, mode] = p;
         return fmt::format_to(ctx.out(), "{} ({})", file, mode);
     }

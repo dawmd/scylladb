@@ -35,7 +35,7 @@ public:
         return *this;
     }
 
-    std::string format() const {
+    std::string seastar::format) const {
         return seastar::format("{}.{}", key, sub_key);
     }
 
@@ -102,7 +102,7 @@ public:
     test_data& operator=(const test_data& other) = delete;
     test_data& operator=(test_data&& other) = delete;
 
-    std::string format() const { return _key.format(); }
+    std::string seastar::format) const { return _key.format(); }
 
     struct compare {
         compound_key::compare kcmp;

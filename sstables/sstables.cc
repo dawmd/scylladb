@@ -2159,7 +2159,7 @@ future<> sstable::generate_summary() {
 
 bool sstable::is_shared() const {
     if (_shards.empty()) {
-        on_internal_error(sstlog, format("Shards weren't computed for SSTable: {}", get_filename()));
+        on_internal_error(sstlog, seastar::format"Shards weren't computed for SSTable: {}", get_filename()));
     }
     return _shards.size() > 1;
 }
@@ -2207,7 +2207,7 @@ std::optional<bool> sstable::originated_on_this_node() const {
         // Scylla always fills in originating host id when writing
         // sstables, so an ME-and-up sstable that does not have it is
         // invalid
-        on_internal_error(sstlog, format("No originating host id in SSTable: {}. Load foreign SSTables via the upload dir instead.", get_filename()));
+        on_internal_error(sstlog, seastar::format"No originating host id in SSTable: {}. Load foreign SSTables via the upload dir instead.", get_filename()));
     }
 
     auto local_host_id = _manager.get_local_host_id();
@@ -2242,7 +2242,7 @@ void sstable::validate_originating_host_id() const {
         // (or generated and written to) system.local, but some system
         // sstable reads must happen before the bootstrap process gets
         // there, if that's not the case, it's a sign of bug.
-        auto msg = format("Unknown local host id while validating SSTable: {}", get_filename());
+        auto msg = seastar::format"Unknown local host id while validating SSTable: {}", get_filename());
         if (is_system_keyspace(_schema->ks_name())) {
             sstlog.trace("{}", msg);
         } else {
@@ -2492,7 +2492,7 @@ future<input_stream<char>> sstable::data_stream(uint64_t pos, size_t len,
 
     file f = make_tracked_file(_data_file, permit);
     if (trace_state) {
-        f = tracing::make_traced_file(std::move(f), std::move(trace_state), format("{}:", get_filename()));
+        f = tracing::make_traced_file(std::move(f), std::move(trace_state), seastar::format"{}:", get_filename()));
     }
 
     std::optional<uint32_t> digest;
@@ -3394,7 +3394,7 @@ static future<int> remove_dir(fs::path dir, bool recursive) {
 future<> remove_table_directory_if_has_no_snapshots(fs::path table_dir) {
     // Be paranoid about risky paths
     if (table_dir == "" || table_dir == "/") {
-        on_internal_error_noexcept(sstlog, format("Invalid table directory for removal: {}", table_dir));
+        on_internal_error_noexcept(sstlog, seastar::format"Invalid table directory for removal: {}", table_dir));
         abort();
     }
 

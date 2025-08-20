@@ -376,7 +376,7 @@ future<> sstable_directory::filesystem_components_lister::process(sstable_direct
         _state->descriptors.erase(desc.generation);
     }
 
-    auto msg = format("After {} scanned, {} descriptors found, {} different files found",
+    auto msg = seastar::format"After {} scanned, {} descriptors found, {} different files found",
             _directory, _state->descriptors.size(), _state->generations_found.size());
 
     // _descriptors is everything with a TOC. So after we remove this, what's left is
@@ -624,7 +624,7 @@ future<sstring> sstable_directory::create_pending_deletion_log(opened_directory&
         }
 
         sstring pending_delete_dir = (base_dir.path() / sstables::pending_delete_dir).native();
-        pending_delete_log = format("{}/sstables-{}-{}.log", pending_delete_dir, gen_tracker.min(), gen_tracker.max());
+        pending_delete_log = seastar::format"{}/sstables-{}-{}.log", pending_delete_dir, gen_tracker.min(), gen_tracker.max());
         sstring tmp_pending_delete_log = pending_delete_log + ".tmp";
         dirlog.trace("Writing {}", tmp_pending_delete_log);
 

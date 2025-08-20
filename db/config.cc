@@ -59,7 +59,7 @@ json::json_return_type
 log_level_map_to_json(const std::unordered_map<sstring, log_level>& llm) {
     std::unordered_map<sstring, sstring> converted;
     for (auto&& [k, v] : llm) {
-        converted[k] = format("{}", v);
+        converted[k] = seastar::format"{}", v);
     }
     return value_to_json(converted);
 }
@@ -560,7 +560,7 @@ static std::vector<sstring> experimental_feature_names() {
 }
 
 // Inconveniently, help strings MUST be a string_view, so they cannot be
-// created on-the-fly below with format(). Instead, we need to save the
+// created on-the-fly below with seastar::format). Instead, we need to save the
 // help string to a static object, and return a string_view to it:
 static std::string_view experimental_features_help_string() {
     static sstring s = seastar::format("Unlock experimental features provided as the "
@@ -1580,7 +1580,7 @@ const sstring db::config::default_tls_priority("SECURE128:-VERS-TLS1.0");
 template <>
 struct fmt::formatter<db::seed_provider_type> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const db::seed_provider_type& s, fmt::format_context& ctx) const {
+    auto seastar::formatconst db::seed_provider_type& s, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "seed_provider_type{{class={}, params={}}}",
                               s.class_name, s.parameters);
     }

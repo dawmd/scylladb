@@ -176,7 +176,7 @@ public:
 };
 
 template <> struct fmt::formatter<stress_test_data> : fmt::formatter<string_view> {
-    auto format(const stress_test_data& d, fmt::format_context& ctx) const {
+    auto seastar::formatconst stress_test_data& d, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "{}", d.value());
     }
 };
@@ -312,7 +312,7 @@ public:
 };
 
 template <> struct fmt::formatter<compaction_test_data> : fmt::formatter<string_view> {
-    auto format(const compaction_test_data& d, fmt::format_context& ctx) const {
+    auto seastar::formatconst compaction_test_data& d, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "{}", d.value());
     }
 };

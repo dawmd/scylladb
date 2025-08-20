@@ -125,7 +125,7 @@ std::vector<::shared_ptr<index_target>> create_index_statement::validate_while_e
 
         if (cd == nullptr) {
             throw exceptions::invalid_request_exception(
-                    format("No column definition found for column {}", target->column_name()));
+                    seastar::format"No column definition found for column {}", target->column_name()));
         }
 
         if (!db.features().secondary_indexes_on_static_columns && cd->is_static()) {
@@ -153,7 +153,7 @@ std::vector<::shared_ptr<index_target>> create_index_statement::validate_while_e
 
         if (cd->kind == column_kind::partition_key && cd->is_on_all_components()) {
             throw exceptions::invalid_request_exception(
-                    format("Cannot create secondary index on partition key column {}",
+                    seastar::format"Cannot create secondary index on partition key column {}",
                             target->column_name()));
         }
 
@@ -165,7 +165,7 @@ std::vector<::shared_ptr<index_target>> create_index_statement::validate_while_e
                 }
                 if (is_local_index) {
                     throw exceptions::invalid_request_exception(
-                            format("Local secondary index on collection column {} is not implemented yet.", target->column_name()));
+                            seastar::format"Local secondary index on collection column {} is not implemented yet.", target->column_name()));
                 }
                 validate_not_full_index(*target);
                 validate_for_collection(*target, *cd);
@@ -237,7 +237,7 @@ void create_index_statement::validate_for_frozen_collection(const index_target& 
 {
     if (target.type != index_target::target_type::full) {
         throw exceptions::invalid_request_exception(
-                format("Cannot create index on {} of frozen collection column {}",
+                seastar::format"Cannot create index on {} of frozen collection column {}",
                         target_type_name(target.type),
                         target.column_name()));
     }
@@ -306,7 +306,7 @@ void create_index_statement::validate_is_values_index_if_target_column_not_colle
     if (!cd->type->is_collection()
             && target.type != index_target::target_type::regular_values) {
         throw exceptions::invalid_request_exception(
-                format("Cannot create index on {} of column {}; only non-frozen collections support {} indexes",
+                seastar::format"Cannot create index on {} of column {}; only non-frozen collections support {} indexes",
                        target_type_name(target.type),
                        target.column_name(),
                        target_type_name(target.type)));
@@ -319,7 +319,7 @@ void create_index_statement::validate_target_column_is_map_if_index_involves_key
             || target.type == index_target::target_type::keys_and_values) {
         if (!is_map) {
             throw exceptions::invalid_request_exception(
-                    format("Cannot create index on {} of column {} with non-map type",
+                    seastar::format"Cannot create index on {} of column {} with non-map type",
                            target_type_name(target.type), target.column_name()));
         }
     }
@@ -371,7 +371,7 @@ std::optional<create_index_statement::base_schema_with_new_index> create_index_s
             return {};
         } else {
             throw exceptions::invalid_request_exception(
-                    format("Index {} is a duplicate of existing index {}", index.name(), existing_index.value().name()));
+                    seastar::format"Index {} is a duplicate of existing index {}", index.name(), existing_index.value().name()));
         }
     }
     auto index_table_name = secondary_index::index_table_name(accepted_name);

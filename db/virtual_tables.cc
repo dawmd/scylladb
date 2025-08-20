@@ -475,18 +475,18 @@ public:
     future<> execute(std::function<void(mutation)> mutation_sink) override {
         co_await add_partition(mutation_sink, "gossip_active", [this] () -> future<sstring> {
             return _ss.is_gossip_running().then([] (bool running){
-                return format("{}", running);
+                return seastar::format"{}", running);
             });
         });
         co_await add_partition(mutation_sink, "load", [this] () -> future<sstring> {
             return map_reduce_tables<int64_t>([] (replica::table& tbl) {
                 return tbl.get_stats().live_disk_space_used;
             }).then([] (int64_t load) {
-                return format("{}", load);
+                return seastar::format"{}", load);
             });
         });
-        add_partition(mutation_sink, "uptime", format("{} seconds", std::chrono::duration_cast<std::chrono::seconds>(engine().uptime()).count()));
-        add_partition(mutation_sink, "trace_probability", format("{:.2}", tracing::tracing::get_local_tracing_instance().get_trace_probability()));
+        add_partition(mutation_sink, "uptime", seastar::format"{} seconds", std::chrono::duration_cast<std::chrono::seconds>(engine().uptime()).count()));
+        add_partition(mutation_sink, "trace_probability", seastar::format"{:.2}", tracing::tracing::get_local_tracing_instance().get_trace_probability()));
         co_await add_partition(mutation_sink, "memory", [this] () {
             struct stats {
                 // take the pre-reserved memory into account, as seastar only returns
@@ -506,9 +506,9 @@ public:
                 return stats{s.total_memory(), s.free_memory()};
             }, stats::reduce, stats{}).then([] (stats s) {
                 return std::vector<std::pair<sstring, sstring>>{
-                        {"total", format("{}", s.total)},
-                        {"used", format("{}", s.total - s.free)},
-                        {"free", format("{}", s.free)}};
+                        {"total", seastar::format"{}", s.total)},
+                        {"used", seastar::format"{}", s.total - s.free)},
+                        {"free", seastar::format"{}", s.free)}};
             });
         });
         co_await add_partition(mutation_sink, "memtable", [this] () {
@@ -528,10 +528,10 @@ public:
                 return stats{s.total_space(), s.free_space(), partition_count};
             }, stats::reduce).then([] (stats s) {
                 return std::vector<std::pair<sstring, sstring>>{
-                        {"memory_total", format("{}", s.total)},
-                        {"memory_used", format("{}", s.total - s.free)},
-                        {"memory_free", format("{}", s.free)},
-                        {"entries", format("{}", s.entries)}};
+                        {"memory_total", seastar::format"{}", s.total)},
+                        {"memory_used", seastar::format"{}", s.total - s.free)},
+                        {"memory_free", seastar::format"{}", s.free)},
+                        {"entries", seastar::format"{}", s.entries)}};
             });
         });
         co_await add_partition(mutation_sink, "cache", [this] () {
@@ -570,16 +570,16 @@ public:
                 return res;
             }, stats{}, stats::reduce).then([] (stats s) {
                 return std::vector<std::pair<sstring, sstring>>{
-                        {"memory_total", format("{}", s.total)},
-                        {"memory_used", format("{}", s.total - s.free)},
-                        {"memory_free", format("{}", s.free)},
-                        {"entries", format("{}", s.entries)},
-                        {"hits", format("{}", s.hits)},
-                        {"misses", format("{}", s.misses)},
-                        {"hit_rate_total", format("{:.2}", static_cast<double>(s.hits) / static_cast<double>(s.hits + s.misses))},
-                        {"hit_rate_recent", format("{:.2}", s.hits_moving_average.mean_rate)},
-                        {"requests_total", format("{}", s.hits + s.misses)},
-                        {"requests_recent", format("{}", static_cast<uint64_t>(s.requests_moving_average.mean_rate))}};
+                        {"memory_total", seastar::format"{}", s.total)},
+                        {"memory_used", seastar::format"{}", s.total - s.free)},
+                        {"memory_free", seastar::format"{}", s.free)},
+                        {"entries", seastar::format"{}", s.entries)},
+                        {"hits", seastar::format"{}", s.hits)},
+                        {"misses", seastar::format"{}", s.misses)},
+                        {"hit_rate_total", seastar::format"{:.2}", static_cast<double>(s.hits) / static_cast<double>(s.hits + s.misses))},
+                        {"hit_rate_recent", seastar::format"{:.2}", s.hits_moving_average.mean_rate)},
+                        {"requests_total", seastar::format"{}", s.hits + s.misses)},
+                        {"requests_recent", seastar::format"{}", static_cast<uint64_t>(s.requests_moving_average.mean_rate))}};
             });
         });
         co_await add_partition(mutation_sink, "incremental_backup_enabled", [this] () {

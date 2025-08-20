@@ -605,7 +605,7 @@ generate_base_key_from_index_pk(const partition_key& index_pk, const std::option
         } else {
             if (!view_col->is_clustering_key()) {
                 throw std::runtime_error(
-                        format("Base primary key column {} is not a primary key column in the index (kind: {})",
+                        seastar::format"Base primary key column {} is not a primary key column in the index (kind: {})",
                                 view_col->name_as_text(), to_sstring(view_col->kind)));
             }
             if (!index_ck) {
@@ -2439,7 +2439,7 @@ void select_statement::verify_ordering_is_valid(const prepared_orderings_type& o
             bool is_cur_column_reversed = are_column_select_results_reversed(*cur_ck_column, orderings_iterator->second);
             if (is_cur_column_reversed != is_reversed) {
                 throw exceptions::invalid_request_exception(
-                    format("Unsupported order by relation - only reversing all columns is supported, "
+                    seastar::format"Unsupported order by relation - only reversing all columns is supported, "
                            "but column {} has opposite ordering", cur_ck_column->name_as_text()));
             }
             orderings_iterator++;

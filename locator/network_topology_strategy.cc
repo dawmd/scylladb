@@ -291,7 +291,7 @@ void network_topology_strategy::validate_options(const gms::feature_service& fs,
 
 effective_replication_map_ptr network_topology_strategy::make_replication_map(table_id table, token_metadata_ptr tm) const {
     if (!uses_tablets()) {
-        on_internal_error(rslogger, format("make_replication_map() called for table {} but replication strategy not configured to use tablets", table));
+        on_internal_error(rslogger, seastar::format"make_replication_map() called for table {} but replication strategy not configured to use tablets", table));
     }
     return do_make_replication_map(table, shared_from_this(), std::move(tm), _rep_factor);
 }
@@ -488,7 +488,7 @@ future<tablet_replica_set> network_topology_strategy::add_tablets_in_dc(schema_p
         co_await coroutine::maybe_yield();
         if (candidate_rack == candidate_racks.end()) {
             on_internal_error(tablet_logger,
-                    format("allocate_replica {}.{} tablet_id={}: ran out of candidates for allocating tablet replicas in dc={} allocated={} rf={}: remaining={}",
+                    seastar::format"allocate_replica {}.{} tablet_id={}: ran out of candidates for allocating tablet replicas in dc={} allocated={} rf={}: remaining={}",
                             s->ks_name(), s->cf_name(), tb.id, dc, dc_node_count, dc_rf, remaining));
         }
         replicas.emplace_back(allocate_replica(candidate_rack));

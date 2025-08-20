@@ -54,7 +54,7 @@ using namespace std::chrono_literals;
 template <>
 struct fmt::formatter<s3::tag> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-    auto format(const s3::tag& tag, fmt::format_context& ctx) const {
+    auto seastar::formatconst s3::tag& tag, fmt::format_context& ctx) const {
         return fmt::format_to(ctx.out(), "<Tag><Key>{}</Key><Value>{}</Value></Tag>",
                               tag.key, tag.value);
     }

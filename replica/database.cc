@@ -334,7 +334,7 @@ database::read_concurrency_sem() {
         // 2. So the series containing those changes will be backportable without causing too harsh regressions (aborts) on one hand and without forcing
         //    extensive changes on the other hand.
         // Follow Up: uncomment this line and run extensive testing. Handle every case of abort.
-        // seastar::on_internal_error(dblog, format("Tried to run a user query in a wrong scheduling group (scheduling group: '{}')", current_scheduling_group().name()));
+        // seastar::on_internal_error(dblog, seastar::format"Tried to run a user query in a wrong scheduling group (scheduling group: '{}')", current_scheduling_group().name()));
         sem = _reader_concurrency_semaphores_group.get_or_null(_default_read_concurrency_group);
         if (!sem) {
             // If we got here - the initialization went very wrong and we can't do anything about it.
@@ -468,7 +468,7 @@ const data_dictionary::user_types_storage& database::user_types() const noexcept
 locator::static_effective_replication_map_ptr keyspace::get_static_effective_replication_map() const {
     // FIXME: Examine all users.
     if (get_replication_strategy().is_per_table()) {
-        on_internal_error(dblog, format("Tried to obtain per-keyspace effective replication map of {} but it's per-table", _metadata->name()));
+        on_internal_error(dblog, seastar::format"Tried to obtain per-keyspace effective replication map of {} but it's per-table", _metadata->name()));
     }
     return _effective_replication_map;
 }
@@ -1210,7 +1210,7 @@ future<> database::cleanup_drop_table_on_all_shards(sharded<database>& sharded_d
     constexpr db_clock::time_point truncated_at(std::chrono::seconds(253402214400));
     std::optional<sstring> snapshot_name_opt;
     if (with_snapshot) {
-        snapshot_name_opt = format("pre-drop-{}", db_clock::now().time_since_epoch().count());
+        snapshot_name_opt = seastar::format"pre-drop-{}", db_clock::now().time_since_epoch().count());
     }
     auto f = co_await coroutine::as_future(truncate_table_on_all_shards(sharded_db, sys_ks, table_shards, truncated_at, with_snapshot, std::move(snapshot_name_opt)));
     co_await smp::invoke_on_all([&] {
@@ -2033,7 +2033,7 @@ public:
 static std::exception_ptr wrap_commitlog_add_error(const schema_ptr& s, const frozen_mutation& m, std::exception_ptr eptr) {
     // it is tempting to do a full pretty print here, but the mutation is likely
     // humungous if we got an error, so just tell us where and pk...
-    auto commitlog_error_message = format("Could not write mutation {}:{} ({}) to commitlog", s->ks_name(), s->cf_name(), m.key());
+    auto commitlog_error_message = seastar::format"Could not write mutation {}:{} ({}) to commitlog", s->ks_name(), s->cf_name(), m.key());
     if (is_timeout_exception(eptr)) {
         return make_nested_exception_ptr(wrapped_timed_out_error(std::move(commitlog_error_message)), std::move(eptr));
     }
@@ -2095,14 +2095,14 @@ future<> database::do_apply_many(const utils::chunked_vector<frozen_mutation>& m
             cl = cf.commitlog();
         } else if (cl != cf.commitlog()) {
             auto&& first_cf = find_column_family(muts[0].column_family_id());
-            on_internal_error(dblog, format("Cannot apply atomically across commitlog domains: {}.{}, {}.{}",
+            on_internal_error(dblog, seastar::format"Cannot apply atomically across commitlog domains: {}.{}, {}.{}",
                               cf.schema()->ks_name(), cf.schema()->cf_name(),
                               first_cf.schema()->ks_name(), first_cf.schema()->cf_name()));
         }
 
         auto m_shards = cf.shard_for_writes(dht::get_token(*s, muts[i].key()));
         if (std::ranges::find(m_shards, this_shard_id()) == std::ranges::end(m_shards)) {
-            on_internal_error(dblog, format("Must call apply() on the owning shard ({} not in {})", this_shard_id(), m_shards));
+            on_internal_error(dblog, seastar::format"Must call apply() on the owning shard ({} not in {})", this_shard_id(), m_shards));
         }
 
         dblog.trace("apply [{}/{}]: {}", i, muts.size() - 1, muts[i].pretty_printer(s));
@@ -2246,7 +2246,7 @@ future<> database::apply(schema_ptr s, const frozen_mutation& m, tracing::trace_
         return make_exception_future<>(timed_out_error{});
     }
     if (!s->is_synced()) {
-        on_internal_error(dblog, format("attempted to apply mutation using not synced schema of {}.{}, version={}", s->ks_name(), s->cf_name(), s->version()));
+        on_internal_error(dblog, seastar::format"attempted to apply mutation using not synced schema of {}.{}, version={}", s->ks_name(), s->cf_name(), s->version()));
     }
     return _apply_stage(this, std::move(s), seastar::cref(m), std::move(tr_state), timeout, sync, rate_limit_info);
 }
@@ -2256,7 +2256,7 @@ future<> database::apply_hint(schema_ptr s, const frozen_mutation& m, tracing::t
         dblog.trace("apply hint {}", m.pretty_printer(s));
     }
     if (!s->is_synced()) {
-        on_internal_error(dblog, format("attempted to apply hint using not synced schema of {}.{}, version={}", s->ks_name(), s->cf_name(), s->version()));
+        on_internal_error(dblog, seastar::format"attempted to apply hint using not synced schema of {}.{}, version={}", s->ks_name(), s->cf_name(), s->version()));
     }
     return with_scheduling_group(_dbcfg.streaming_scheduling_group, [this, s = std::move(s), &m, tr_state = std::move(tr_state), timeout] () mutable {
         return _apply_stage(this, std::move(s), seastar::cref(m), std::move(tr_state), timeout, db::commitlog::force_sync::no, std::monostate{});
@@ -2775,7 +2775,7 @@ future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, s
     if (with_snapshot) {
         auto truncated_at = truncated_at_opt.value_or(db_clock::now());
         auto name = snapshot_name_opt.value_or(
-            format("{:d}-{}", truncated_at.time_since_epoch().count(), cf.schema()->cf_name()));
+            seastar::format"{:d}-{}", truncated_at.time_since_epoch().count(), cf.schema()->cf_name()));
         co_await table::snapshot_on_all_shards(sharded_db, table_shards, name);
     }
 
@@ -2865,7 +2865,7 @@ std::pair<sstring, table_id> parse_table_directory_name(const sstring& directory
     constexpr size_t uuid_size = 32;
     ssize_t pos = directory_name.size() - uuid_size - 1;
     if (pos <= 0 || directory_name[pos] != '-') {
-        on_internal_error(dblog, format("table directory entry name '{}' is invalid: no '-' separator found at pos {}", directory_name, pos));
+        on_internal_error(dblog, seastar::format"table directory entry name '{}' is invalid: no '-' separator found at pos {}", directory_name, pos));
     }
     return std::make_pair(directory_name.substr(0, pos), table_id(utils::UUID(directory_name.substr(pos + 1))));
 }
@@ -3125,7 +3125,7 @@ void database::tables_metadata::remove_table(database& db, table& cf) noexcept {
         auto& ks = db.find_keyspace(s->ks_name());
         remove_table_helper(db, ks, cf, s);
     } catch (...) {
-        on_fatal_internal_error(dblog, format("tables_metadata::remove_cf: {}", std::current_exception()));
+        on_fatal_internal_error(dblog, seastar::format"tables_metadata::remove_cf: {}", std::current_exception()));
     }
 }
 

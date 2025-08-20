@@ -34,7 +34,7 @@ static sstring report_zeroed_4k_aligned_blocks(const temporary_buffer<int8_t>& b
         auto begin = buf.get() + off;
         auto end = begin + len;
         if (std::ranges::all_of(begin, end, [](auto byte) { return byte == 0; })) {
-            report += format("{:d}, ", off);
+            report += seastar::format"{:d}, ", off);
         }
     }
     return report;

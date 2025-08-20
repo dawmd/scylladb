@@ -727,7 +727,7 @@ struct from_lua_visitor {
         for (size_t i = 0; i < num_elements; ++i) {
             if (!opt_elements[i]) {
                 throw exceptions::invalid_request_exception(
-                        format("key {} missing in sequence of size {}", i + 1, num_elements));
+                        seastar::format"key {} missing in sequence of size {}", i + 1, num_elements));
             }
             elements.push_back(*opt_elements[i]);
         }
@@ -764,7 +764,7 @@ struct from_lua_visitor {
         for (size_t i = 0; i < num_elements; ++i) {
             if (utils::multiprecision_int(i + 1) != pairs[i].first) {
                 throw exceptions::invalid_request_exception(
-                        format("key {} missing in sequence of size {}", i + 1, num_elements));
+                        seastar::format"key {} missing in sequence of size {}", i + 1, num_elements));
             }
             elements.push_back(pairs[i].second);
         }
@@ -801,7 +801,7 @@ struct from_lua_visitor {
         for (size_t i = 0; i < num_fields; ++i) {
             if (!opt_elements[i]) {
                 throw exceptions::invalid_request_exception(
-                        format("key {} missing in udt {}", t.field_name_as_string(i), t.get_name_as_string()));
+                        seastar::format"key {} missing in udt {}", t.field_name_as_string(i), t.get_name_as_string()));
             }
             elements.push_back(*opt_elements[i]);
         }
@@ -926,7 +926,7 @@ static bytes_opt convert_return(lua_slice_state &l, const data_type& return_type
     int num_return_vals = lua_gettop(l);
     if (num_return_vals != 1) {
         throw exceptions::invalid_request_exception(
-            format("{} values returned, expected {}", num_return_vals, 1));
+            seastar::format"{} values returned, expected {}", num_return_vals, 1));
     }
 
     // FIXME: It should be possible to avoid creating the data_value,

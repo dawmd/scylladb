@@ -1664,7 +1664,7 @@ std::strong_ordering gossiper::compare_endpoint_startup(locator::host_id addr1, 
     auto ep1 = get_endpoint_state_ptr(addr1);
     auto ep2 = get_endpoint_state_ptr(addr2);
     if (!ep1 || !ep2) {
-        auto err = format("Can not get endpoint_state for {} or {}", addr1, addr2);
+        auto err = seastar::format"Can not get endpoint_state for {} or {}", addr1, addr2);
         logger.warn("{}", err);
         throw std::runtime_error(err);
     }
@@ -1924,7 +1924,7 @@ future<> gossiper::apply_new_states(endpoint_state local_state, const endpoint_s
             auto remote_gen = remote_state.get_heart_beat_state().get_generation();
             auto local_gen = local_state.get_heart_beat_state().get_generation();
             if(remote_gen != local_gen) {
-                auto err = format("Remote generation {} != local generation {}", remote_gen, local_gen);
+                auto err = seastar::format"Remote generation {} != local generation {}", remote_gen, local_gen);
                 logger.warn("{}", err);
                 throw std::runtime_error(err);
             }
@@ -1957,7 +1957,7 @@ future<> gossiper::apply_new_states(endpoint_state local_state, const endpoint_s
     try {
         co_await do_on_change_notifications(addr, host_id, changed, pid);
     } catch (...) {
-        auto msg = format("Gossip change listener failed: {}", std::current_exception());
+        auto msg = seastar::format"Gossip change listener failed: {}", std::current_exception());
         if (_abort_source.abort_requested()) {
             logger.warn("{}. Ignored", msg);
         } else {
@@ -2145,7 +2145,7 @@ future<> gossiper::do_shadow_round(std::unordered_set<gms::inet_address> nodes, 
 
                 utils::get_local_injector().inject("stop_during_gossip_shadow_round", [] { std::raise(SIGSTOP); });
             } catch (seastar::rpc::unknown_verb_error&) {
-                auto err = format("Node {} does not support get_endpoint_states verb", node);
+                auto err = seastar::format"Node {} does not support get_endpoint_states verb", node);
                 logger.error("{}", err);
                 throw std::runtime_error{err};
             } catch (seastar::rpc::timeout_error&) {
@@ -2206,13 +2206,13 @@ future<> gossiper::add_saved_endpoint(locator::host_id host_id, gms::loaded_endp
     }
     const auto& ep = st.endpoint;
     if (!host_id) {
-        on_internal_error(logger, format("Attempt to add {} with null host_id as saved endpoint", ep));
+        on_internal_error(logger, seastar::format"Attempt to add {} with null host_id as saved endpoint", ep));
     }
     if (ep == inet_address{}) {
-        on_internal_error(logger, format("Attempt to add {} with null inet_address as saved endpoint", host_id));
+        on_internal_error(logger, seastar::format"Attempt to add {} with null inet_address as saved endpoint", host_id));
     }
     if (ep == get_broadcast_address()) {
-        on_internal_error(logger, format("Attempt to add {} with broadcast_address {} as saved endpoint", host_id, ep));
+        on_internal_error(logger, seastar::format"Attempt to add {} with broadcast_address {} as saved endpoint", host_id, ep));
     }
 
     auto permit = co_await lock_endpoint(host_id, pid);
