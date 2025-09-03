@@ -875,8 +875,12 @@ maintenance_socket: ignore
 # The `tablets` option cannot be changed using `ALTER KEYSPACE`.
 tablets_mode_for_new_keyspaces: enabled
 
-# Enforce RF-rack-valid keyspaces.
-rf_rack_valid_keyspaces: false
+# Enforce RF-rack-valid keyspaces. When enabled, Scylla will not allow for
+# tablet-based keyspaces whose replication factor in one of the data centers
+# is not equal to 0, 1, or the number of racks in that data center.
+# See also: https://docs.scylladb.com/manual/stable/reference/glossary.html#term-RF-rack-valid-keyspace.
+#
+# rf_rack_valid_keyspaces: false
 
 #
 # Alternator options
