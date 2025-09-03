@@ -3536,6 +3536,17 @@ $ scylla sstable validate /path/to/md-123456-big-Data.db /path/to/md-123457-big-
         dbcfg.enable_cache(false);
         dbcfg.volatile_system_keyspace_for_testing(true);
 
+        // Assume that if the option is not specified, it should be set to true.
+        // It's in contrast to the behavior of Scylla (where the default value of
+        // the option is `false`), but it's necessary to make sure we enable it
+        // in our testing.
+        if (!dbcfg.rf_rack_valid_keyspaces.is_set()) {
+            sst_log.info("The configuration option `rf_rack_valid_keyspaces` is not set to any value. "
+                    "The tool will assume it should be turned on. To avoid that, explicitly provide the "
+                    "right value of the option in `scylla.yaml`.");
+            dbcfg.rf_rack_valid_keyspaces(true);
+        }
+
         {
             unsigned schema_sources = 0;
             schema_sources += !app_config["schema-file"].defaulted();
