@@ -64,8 +64,13 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
 @pytest.fixture
 async def four_nodes_cluster(manager: ManagerClient) -> None:
     LOGGER.info("Booting initial 4-node cluster.")
-    for _ in range(4):
-        server = await manager.server_add(config={"rf_rack_valid_keyspaces": False})
+    servers = await manager.servers_add(4, property_file=[
+        {"dc": "dc1", "rack": "rack1"},
+        {"dc": "dc1", "rack": "rack2"},
+        {"dc": "dc1", "rack": "rack3"},
+        {"dc": "dc1", "rack": "rack3"}
+    ])
+    for server in servers:
         await manager.api.enable_injection(
             node_ip=server.ip_addr,
             injection="raft_server_set_snapshot_thresholds",
@@ -90,8 +95,6 @@ async def test_random_failures(manager: ManagerClient,
         " and CLUSTER_EVENTS_COUNT to %s",
         TESTS_COUNT, TESTS_SHUFFLE_SEED, ERROR_INJECTIONS_COUNT, CLUSTER_EVENTS_COUNT,
     )
-
-    rf_rack_cfg = {"rf_rack_valid_keyspaces": False}
 
     table = await random_tables.add_table(ncolumns=5)
     await table.insert_seq()

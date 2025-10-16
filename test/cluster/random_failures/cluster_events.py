@@ -338,6 +338,15 @@ async def execute_lwt_transaction(manager: ManagerClient,
 async def init_tablet_transfer(manager: ManagerClient,
                                random_tables: RandomTables,
                                error_injection: str) -> AsyncIterator[None]:
+    servers = await manager.running_servers()
+
+    target_rack = "rack3"
+    viable_targets = [server for server in servers if server.rack == target_rack]
+
+    if len(viable_targets) <= 1:
+        LOGGER.info(f"Cannot perform a tablet migration because rack='{target_rack}' has only {len(viable_targets)} node(s)")
+        return
+
     await manager.cql.run_async(
         "CREATE KEYSPACE test"
         " WITH replication = { 'class': 'NetworkTopologyStrategy', 'replication_factor': 3 } AND"
@@ -348,10 +357,7 @@ async def init_tablet_transfer(manager: ManagerClient,
         *[manager.cql.run_async(f"INSERT INTO test.test (pk, c) VALUES ({k}, {k})") for k in range(256)]
     )
 
-    servers = await manager.running_servers()
-    host_ids = set()
     for s in servers:
-        host_ids.add(await manager.get_host_id(s.server_id))
         await manager.api.disable_tablet_balancing(node_ip=s.ip_addr)
 
     replicas = await get_all_tablet_replicas(
@@ -365,8 +371,13 @@ async def init_tablet_transfer(manager: ManagerClient,
 
     assert len(replicas) == 1 and len(replicas[0].replicas) == 3
 
-    old_host, old_shard = replicas[0].replicas[0]
-    new_host = (host_ids - {r[0] for r in replicas[0].replicas}).pop()
+    viable_host_ids = [await manager.get_host_id(server) for server in viable_targets]
+    target = next(replica for replica in replicas[0].replicas if replica[0] in viable_host_ids)
+
+    old_host, old_shard = target
+    new_host = next(host_id for host_id in viable_host_ids if host_id != old_host)
+
+    assert new_host is not None
 
     yield
 
@@ -459,7 +470,7 @@ async def add_new_node(manager: ManagerClient,
     yield
 
     LOGGER.info("Add a new node to the cluster")
-    await manager.server_add(config={"rf_rack_valid_keyspaces": False}, timeout=TOPOLOGY_TIMEOUT)
+    await manager.server_add(property_file={"dc": "dc1", "rack": "rack3"}, timeout=TOPOLOGY_TIMEOUT)
 
     yield
 
@@ -487,8 +498,17 @@ async def decommission_node(manager: ManagerClient,
     yield
 
     LOGGER.info("Decommission a node")
+
+    servers = await manager.running_servers()
+
+    target_rack = "rack3"
+    viable_targets = [server for server in servers if server.rack == target_rack]
+
+    # We must preserver RF-rack-validity, so each rack must still have at least one node
+    assert len(viable_targets) > 1
+
     await manager.decommission_node(
-        server_id=(await manager.running_servers())[1].server_id,
+        server_id=viable_targets[-1].server_id,
         timeout=TOPOLOGY_TIMEOUT,
     )
 
@@ -517,19 +537,29 @@ async def remove_node(manager: ManagerClient,
                       error_injection: str) -> AsyncIterator[None]:
     running_servers = await manager.running_servers()
 
+    target_rack = "rack3"
+    viable_targets = [server for server in running_servers if server.rack == target_rack]
+
+    # We must preserver RF-rack-validity, so each rack must still have at least one node left.
+    assert len(viable_targets) > 1
+
+    # These are different nodes.
+    coordinator = viable_targets[0]
+    target = viable_targets[-1]
+
     LOGGER.info("Kill a node")
-    await manager.server_stop(server_id=running_servers[1].server_id)
+    await manager.server_stop(server_id=target.server_id)
     await manager.server_not_sees_other_server(
-        server_ip=running_servers[0].ip_addr,
-        other_ip=running_servers[1].ip_addr,
+        server_ip=coordinator.ip_addr,
+        other_ip=target.ip_addr,
     )
 
     yield
 
     LOGGER.info("Remove the dead node")
     await manager.remove_node(
-        initiator_id=running_servers[0].server_id,
-        server_id=running_servers[1].server_id,
+        initiator_id=coordinator.server_id,
+        server_id=target.server_id,
         wait_removed_dead=False,
         timeout=TOPOLOGY_TIMEOUT,
     )
@@ -615,13 +645,8 @@ CLUSTER_EVENTS: tuple[ClusterEventType, ...] = (
     add_new_table,
     drop_table,
 
-    # FIXME: We omit creating or dropping indexes because the random_failures
-    # tests still haven't been adjusted to work with `rf_rack_valid_keyspaces`.
-    # That option is a requirement for using materialized views
-    # in tablet-based keyspaces, so let's skip them.
-    #
-    # add_index,
-    # drop_index,
+    add_index,
+    drop_index,
 
     add_new_keyspace,
     drop_keyspace,
