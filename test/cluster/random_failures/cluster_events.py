@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import asyncio
 import logging
+import random
 import time
 from shutil import rmtree
 from typing import TYPE_CHECKING
@@ -52,6 +53,14 @@ def deselect_for(reason: str, error_injections: list[str] | None = None) -> Call
         return fn
     return add_deselected_metadata
 
+async def select_most_occupied_rack(manager: ManagerClient):
+    servers = await manager.running_servers()
+    racks = {"rack1": 0, "rack2": 0, "rack3": 0}
+    for server in servers:
+        assert server.rack in racks
+        racks[server.rack] += 1
+    candidate = max(racks, key=lambda rack: racks[rack])
+    return racks[candidate]
 
 # Each cluster event is an async generator which has 2 yields and should be used in the following way:
 #
@@ -340,7 +349,7 @@ async def init_tablet_transfer(manager: ManagerClient,
                                error_injection: str) -> AsyncIterator[None]:
     servers = await manager.running_servers()
 
-    target_rack = "rack3"
+    target_rack = await select_most_occupied_rack(manager)
     viable_targets = [server for server in servers if server.rack == target_rack]
 
     if len(viable_targets) <= 1:
@@ -469,8 +478,12 @@ async def add_new_node(manager: ManagerClient,
                        error_injection: str) -> AsyncIterator[None]:
     yield
 
-    LOGGER.info("Add a new node to the cluster")
-    await manager.server_add(property_file={"dc": "dc1", "rack": "rack3"}, timeout=TOPOLOGY_TIMEOUT)
+    rack_id = random.randint([1, 3])
+    rack = f"rack{rack_id}"
+
+    LOGGER.info(f"Add a new node to the cluster (to {rack})")
+
+    await manager.server_add(property_file={"dc": "dc1", "rack": rack}, timeout=TOPOLOGY_TIMEOUT)
 
     yield
 
@@ -501,7 +514,7 @@ async def decommission_node(manager: ManagerClient,
 
     servers = await manager.running_servers()
 
-    target_rack = "rack3"
+    target_rack = await select_most_occupied_rack(manager)
     viable_targets = [server for server in servers if server.rack == target_rack]
 
     # We must preserver RF-rack-validity, so each rack must still have at least one node
@@ -537,7 +550,7 @@ async def remove_node(manager: ManagerClient,
                       error_injection: str) -> AsyncIterator[None]:
     running_servers = await manager.running_servers()
 
-    target_rack = "rack3"
+    target_rack = await select_most_occupied_rack(manager)
     viable_targets = [server for server in running_servers if server.rack == target_rack]
 
     # We must preserver RF-rack-validity, so each rack must still have at least one node left.
