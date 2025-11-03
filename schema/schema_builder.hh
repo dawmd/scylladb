@@ -52,6 +52,8 @@ public:
 
     static int register_static_configurator(static_configurator&& configurator);
 
+    void overwrite_properties(schema::properties);
+
     schema_builder& set_uuid(const table_id& id) {
         _raw._id = id;
         return *this;
