@@ -2076,6 +2076,9 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
 
                 start_auth_service(maintenance_auth_service, stop_maintenance_auth_service, "maintenance auth service");
                 start_cql(*cql_maintenance_server_ctl, stop_maintenance_cql, "maintenance native server");
+
+                utils::get_local_injector().inject("pause_after_setting_up_maintenance_socket",
+                        utils::wait_for_message(5min)).get();
             }
 
             checkpoint(stop_signal, "starting REST API");

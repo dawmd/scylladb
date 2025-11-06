@@ -288,7 +288,9 @@ public:
     template <typename Func, typename Ret = std::invoke_result_t<Func>>
     requires std::invocable<Func>
     futurize_t<Ret> with_user_service_level(const std::optional<auth::authenticated_user>& usr, Func&& func) {
-        SCYLLA_ASSERT(_auth_integration != nullptr);
+        if (_auth_integration == nullptr) {
+            return with_scheduling_group(get_default_scheduling_group(), std::forward<Func>(func));
+        }
         return _auth_integration->with_user_service_level(usr, std::forward<Func>(func));
     }
 

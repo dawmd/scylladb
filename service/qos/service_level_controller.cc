@@ -511,7 +511,9 @@ future<std::optional<service_level_options>> service_level_controller::auth_inte
 }
 
 future<std::optional<service_level_options>> service_level_controller::find_effective_service_level(const sstring& role_name) {
-    SCYLLA_ASSERT(_auth_integration != nullptr);
+    if (_auth_integration == nullptr) {
+        return make_ready_future<std::optional<service_level_options>>(std::nullopt);
+    }
     return _auth_integration->find_effective_service_level(role_name);
 }
 
@@ -527,7 +529,9 @@ std::optional<service_level_options> service_level_controller::auth_integration:
 }
 
 std::optional<service_level_options> service_level_controller::find_cached_effective_service_level(const sstring& role_name) {
-    SCYLLA_ASSERT(_auth_integration != nullptr);
+    if (_auth_integration == nullptr) {
+        return std::nullopt;
+    }
     return _auth_integration->find_cached_effective_service_level(role_name);
 }
 
@@ -641,7 +645,9 @@ future<scheduling_group> service_level_controller::auth_integration::get_user_sc
 }
 
 future<scheduling_group> service_level_controller::get_user_scheduling_group(const std::optional<auth::authenticated_user>& usr) {
-    SCYLLA_ASSERT(_auth_integration != nullptr);
+    if (_auth_integration == nullptr) {
+        return make_ready_future<scheduling_group>(get_default_scheduling_group());
+    }
     return _auth_integration->get_user_scheduling_group(usr);
 }
 
@@ -1180,7 +1186,9 @@ future<std::vector<cql3::description>> service_level_controller::auth_integratio
 }
 
 future<std::vector<cql3::description>> service_level_controller::describe_service_levels() {
-    SCYLLA_ASSERT(_auth_integration != nullptr);
+    if (_auth_integration == nullptr) {
+        throw std::runtime_error("Describing service levels requires that `auth_integration` has been registered, but it has not");
+    }
 
     std::vector<cql3::description> created_service_levels_descs = co_await describe_created_service_levels();
     std::vector<cql3::description> attached_service_levels_descs = co_await _auth_integration->describe_attached_service_levels();
