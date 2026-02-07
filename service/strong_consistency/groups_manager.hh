@@ -15,6 +15,7 @@
 
 namespace service::strong_consistency {
 
+class coordinator;
 class raft_server;
 
 /// A sharded service (currently pinned to shard 0) responsible for the lifecycle and access
@@ -61,6 +62,8 @@ class groups_manager : public peering_sharded_service<groups_manager> {
         std::optional<leader_info> leader_info = std::nullopt;
         condition_variable leader_info_cond = condition_variable();
         future<> leader_info_updater = make_ready_future<>();
+
+        abort_source as;
     };
 
     netw::messaging_service& _ms;
@@ -118,6 +121,9 @@ public:
 /// the shutdown sequence will wait until this handle is destroyed, preventing use-after-free
 /// errors during ongoing operations.
 class raft_server {
+private:
+    friend class coordinator;
+
 private:
     groups_manager::raft_group_state& _state;
     gate::holder _holder;
