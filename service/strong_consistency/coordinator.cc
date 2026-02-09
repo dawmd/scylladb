@@ -86,6 +86,10 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         const dht::token& token,
         mutation_gen&& mutation_gen)
 {
+    constexpr size_t max_attempt_count = 3;
+    size_t attempt_count = 1;
+
+    while (true) {
     auto op_result = co_await create_operation_ctx(*schema, token);
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
         co_return *redirect;
@@ -133,8 +137,27 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
                 // Either situation is within expectations.
                 logger.debug("mutate(): add_entry, operation aborted {}, table {}.{}, tablet {}, term {}",
                     ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
-                // No matter which case it is, ???
-                continue;
+                // No matter which case it is, the effective replication map might've
+                // changed, so we need to obtain a fresh context for this operation.
+                //
+                // Trying to simply retry the operation in the next iteration
+                // would likely produce the same result; we might actually get
+                // stuck in a deadlock.
+                //
+                // Note that we rely on the fact that 
+                if (attempt_count > max_attempt_count) {
+                    // There's nothing we can do at this point.
+                    logger.warn("mutate(): add_entry, operation was retried {} times and failed, "
+                        "table {}.{}, tablet {}, term {}",
+                        attempt_count, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
+                    
+                    // FIXME: use a dedicated ERROR_CODE instead of SERVER_ERROR
+                    throw exceptions::server_exception(
+                        "The outcome of this statement is unknown. It may or may not have been applied. "
+                        "Retrying the statement may be necessary.");
+                }
+                ++attempt_count;
+                break;
             } else if (try_catch<raft::stopped_error>(ex)) {
                 // Holding raft_server.holder guarantees that the raft::server is not
                 // aborted until the holder is released.
@@ -160,6 +183,7 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
             // We know nothing about other errors, let the cql server convert them to SERVER_ERROR.
             throw;
         }
+    }
     }
 }
 
