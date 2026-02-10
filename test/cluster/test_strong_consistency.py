@@ -19,6 +19,11 @@ import uuid
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_CONFIG = {'experimental_features': ['strongly-consistent-tables']}
+DEFAULT_CMDLINE = [
+        '--logger-log-level', 'sc_groups_manager=debug',
+        '--logger-log-level', 'sc_coordinator=debug'
+    ]
 
 async def wait_for_leader(manager: ManagerClient, s: ServerInfo, group_id: str):
     async def get_leader_host_id():
@@ -31,13 +36,8 @@ async def wait_for_leader(manager: ManagerClient, s: ServerInfo, group_id: str):
 async def test_basic_write_read(manager: ManagerClient):
 
     logger.info("Bootstrapping cluster")
-    config = {
-        'experimental_features': ['strongly-consistent-tables']
-    }
-    cmdline = [
-        '--logger-log-level', 'sc_groups_manager=debug',
-        '--logger-log-level', 'sc_coordinator=debug'
-    ]
+    config = DEFAULT_CONFIG
+    cmdline = DEFAULT_CMDLINE
     servers = await manager.servers_add(3, config=config, cmdline=cmdline, auto_rack_dc='my_dc')
     (cql, hosts) = await manager.get_ready_cql(servers)
 
@@ -95,15 +95,7 @@ async def test_basic_write_read(manager: ManagerClient):
 @pytest.mark.asyncio
 @pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
 async def test_timed_out_read(manager: ManagerClient):
-    config = {
-        "experimental_features": ["strongly-consistent-tables"]
-    }
-    cmdline = [
-        "--logger-log-level", "sc_groups_manager=debug",
-        "--logger-log-level", "sc_coordinator=debug"
-    ]
-
-    s1 = await manager.server_add(config=config, cmdline=cmdline)
+    s1 = await manager.server_add(config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE)
     cql, _ = await manager.get_ready_cql([s1])
 
     log = await manager.server_open_log(s1.server_id)
@@ -129,6 +121,66 @@ async def test_timed_out_read(manager: ManagerClient):
         # Sanity check: Nothing broke and we can still read from the table.
         res = await cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
         assert res[0].v == 13
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_aborted_read(manager: ManagerClient):
+    s1 = await manager.server_add(config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE)
+    cql, _ = await manager.get_ready_cql([s1])
+
+    log = await manager.server_open_log(s1.server_id)
+    mark = await log.mark()
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+        await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)")
+        await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier", one_shot=False)
+
+        fut = cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
+        await log.wait_for("sc_coordinator_wait_before_query_read_barrier", from_mark=mark, timeout=10)
+
+        await cql.run_async(f"DROP TABLE {table}")
+
+        # Sanity check: The table was really dropped and we can no longer read from it.
+        with pytest.raises(InvalidRequest, match="unconfigured table"):
+            await cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
+
+        await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier")
+        with pytest.raises(Exception, match="The query was aborted due to internal reasons"):
+            await fut
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_read_when_shutting_down(manager: ManagerClient):
+    s1, s2 = await manager.servers_add(2, config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE, auto_rack_dc="dc1")
+    cql, _ = await manager.get_ready_cql([s1])
+
+    log = await manager.server_open_log(s1.server_id)
+    mark = await log.mark()
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+        await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)")
+        await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier", one_shot=False)
+
+        fut = cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
+        await log.wait_for("sc_coordinator_wait_before_query_read_barrier", from_mark=mark, timeout=10)
+
+        await cql.run_async(f"DROP TABLE {table}")
+        await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier")
+
+        with pytest.raises(Exception, match="The query was aborted due to internal reasons"):
+            await fut
+
+        # Sanity check: Nothing broke and we can still read from the table.
+        with pytest.raises(InvalidRequest, match="unconfigured table"):
+            await cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
 
 @pytest.mark.asyncio
 async def test_abort_raft_operations(manager: ManagerClient):
