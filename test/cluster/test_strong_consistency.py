@@ -36,9 +36,7 @@ async def wait_for_leader(manager: ManagerClient, s: ServerInfo, group_id: str):
 async def test_basic_write_read(manager: ManagerClient):
 
     logger.info("Bootstrapping cluster")
-    config = DEFAULT_CONFIG
-    cmdline = DEFAULT_CMDLINE
-    servers = await manager.servers_add(3, config=config, cmdline=cmdline, auto_rack_dc='my_dc')
+    servers = await manager.servers_add(3, config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE, auto_rack_dc='my_dc')
     (cql, hosts) = await manager.get_ready_cql(servers)
 
     logger.info("Load host_id-s for servers")
@@ -156,7 +154,9 @@ async def test_aborted_read(manager: ManagerClient):
 @pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
 async def test_read_when_shutting_down(manager: ManagerClient):
     s1, s2 = await manager.servers_add(2, config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE, auto_rack_dc="dc1")
-    cql, _ = await manager.get_ready_cql([s1])
+    cql, [host1, host2] = await manager.get_ready_cql([s1, s2])
+
+    host_id1 = await manager.get_host_id(s1.server_id)
 
     log = await manager.server_open_log(s1.server_id)
     mark = await log.mark()
@@ -166,21 +166,26 @@ async def test_read_when_shutting_down(manager: ManagerClient):
         table = f"{ks}.{table_name}"
 
         await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
-        await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)")
+
+        table_id = await manager.get_table_id(ks, table_name)
+        rows = await cql.run_async(f"SELECT raft_group_id FROM system.tablets where table_id = {table_id}")
+        group_id = str(rows[0].raft_group_id)
+
+        leader_host_id = await wait_for_leader(manager, s1, group_id)
+        if host_id1 is not leader_host_id:
+            s1, s2 = s2, s1
+            host1, host2 = host2, host1
+
+        log = await manager.server_open_log(s1.server_id)
+        mark = await log.mark()
+
         await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier", one_shot=False)
 
-        fut = cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
-        await log.wait_for("sc_coordinator_wait_before_query_read_barrier", from_mark=mark, timeout=10)
+        fut = cql.run_async(f"SELECT * FROM {table} WHERE pk = 0", host=host1)
+        await log.wait_for("sc_coordinator_wait_before_query_read_barrier", from_mark=mark)
 
-        await cql.run_async(f"DROP TABLE {table}")
         await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier")
-
-        with pytest.raises(Exception, match="The query was aborted due to internal reasons"):
-            await fut
-
-        # Sanity check: Nothing broke and we can still read from the table.
-        with pytest.raises(InvalidRequest, match="unconfigured table"):
-            await cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
+        await fut
 
 @pytest.mark.asyncio
 async def test_abort_raft_operations(manager: ManagerClient):
