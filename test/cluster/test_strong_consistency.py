@@ -93,6 +93,44 @@ async def test_basic_write_read(manager: ManagerClient):
     await gather_safely(*[manager.server_stop_gracefully(s.server_id) for s in servers])
 
 @pytest.mark.asyncio
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_timed_out_read(manager: ManagerClient):
+    config = {
+        "experimental_features": ["strongly-consistent-tables"]
+    }
+    cmdline = [
+        "--logger-log-level", "sc_groups_manager=debug",
+        "--logger-log-level", "sc_coordinator=debug"
+    ]
+
+    s1 = await manager.server_add(config=config, cmdline=cmdline)
+    cql, _ = await manager.get_ready_cql([s1])
+
+    log = await manager.server_open_log(s1.server_id)
+    mark = await log.mark()
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+        await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)")
+        await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier", one_shot=False)
+
+        fut = cql.run_async(f"SELECT * FROM {table} WHERE pk = 0 USING TIMEOUT 1s")
+        await log.wait_for("sc_coordinator_wait_before_query_read_barrier", from_mark=mark, timeout=10)
+
+        await asyncio.sleep(1)
+        await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier")
+
+        with pytest.raises(Exception, match="Operation timed out"):
+            await fut
+
+        # Sanity check: Nothing broke and we can still read from the table.
+        res = await cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
+        assert res[0].v == 13
+
+@pytest.mark.asyncio
 async def test_abort_raft_operations(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     config = {
@@ -124,11 +162,18 @@ async def test_abort_raft_operations(manager: ManagerClient):
 
         await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier", one_shot=False)
 
+        async def f():
+            await asyncio.sleep(30)
+            await manager.server_stop(s1.server_id)
+
+        t = asyncio.create_task(f())
+
         fut = cql.run_async(f"SELECT * FROM {table} WHERE pk = 0 USING TIMEOUT 10s")
         await log.wait_for("sc_coordinator_wait_before_query_read_barrier", from_mark=mark, timeout=10)
         # assert False
 
         await cql.run_async(f"DROP TABLE {table}")
-        await manager.api.disable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier")
+        # await manager.api.disable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier")
+        await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier")
         await fut
-        
+        await t

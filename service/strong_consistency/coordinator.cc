@@ -7,6 +7,7 @@
  */
 
 #include "coordinator.hh"
+#include "exceptions/exceptions.hh"
 #include "schema/schema.hh"
 #include "replica/database.hh"
 #include "locator/tablet_replication_strategy.hh"
@@ -194,13 +195,10 @@ auto coordinator::query(schema_ptr schema,
         db::timeout_clock::time_point timeout
     ) -> future<query_result_type>
 {
-    logger.info("Entered query of coordinator!!! HAHA");
     auto op_result = co_await create_operation_ctx(*schema, ranges[0].start()->value().token());
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
-        logger.info("Entered query of coordinator!!! REDIRECT HAHA");
         co_return *redirect;
     }
-    logger.info("Entered query of coordinator!!! HAHA 2");
     auto& op = get<operation_ctx>(op_result);
     auto& group_state = op.raft_server._state;
 
@@ -212,8 +210,20 @@ auto coordinator::query(schema_ptr schema,
     co_await utils::get_local_injector().inject("sc_coordinator_wait_before_query_read_barrier",
             utils::wait_for_message(5min));
 
-    co_await op.raft_server.server().read_barrier(&aoe.abort_source());
-    SCYLLA_ASSERT(false);
+    try {
+        co_await op.raft_server.server().read_barrier(&aoe.abort_source());
+    } catch (const raft::request_aborted& ex) {
+        logger.debug("query(): read_barrier aborted [table {}.{}, tablet {}]. Command: {}. Reason: {}",
+            schema->ks_name(), schema->cf_name(), op.tablet_id, cmd, ex);
+
+        if (timeout > db::timeout_clock::now()) {
+            throw exceptions::server_exception("The query was aborted due to internal reasons. "
+                "Try retrying the statement.");
+        } else {
+            // FIXME: Use a dedicated exception type for strongly consistent tables.
+            throw exceptions::server_exception("Operation timed out");
+        }
+    }
 
     auto [result, cache_temp] = co_await _db.query(schema, cmd,
         query::result_options::only_result(), ranges, trace_state, timeout);
