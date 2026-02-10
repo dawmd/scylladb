@@ -13,6 +13,8 @@
 #include "service/strong_consistency/coordinator.hh"
 #include "cql3/statements/strong_consistency/statement_helpers.hh"
 
+static logging::logger slogger{"sc_select_statement"};
+
 namespace cql3::statements::strong_consistency {
 
 using result_message = cql_transport::messages::result_message;
@@ -21,6 +23,7 @@ future<::shared_ptr<result_message>> select_statement::do_execute(query_processo
         service::query_state& state, 
         const query_options& options) const
 {
+    slogger.info("ENTERED SC SELECT");
     const auto key_ranges = _restrictions->get_partition_key_ranges(options);
     if (key_ranges.size() != 1 || !query::is_single_partition(key_ranges[0])) {
         throw exceptions::invalid_request_exception("Strongly consistent queries can only target a single partition");

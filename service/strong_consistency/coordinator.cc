@@ -14,6 +14,7 @@
 #include "service/strong_consistency/groups_manager.hh"
 #include "idl/strong_consistency/state_machine.dist.hh"
 #include "idl/strong_consistency/state_machine.dist.impl.hh"
+#include "utils/error_injection.hh"
 
 namespace service::strong_consistency {
 
@@ -93,6 +94,9 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
     auto& op = get<operation_ctx>(op_result);
 
     while (true) {
+        co_await utils::get_local_injector().inject("sc_coordinator_wait_before_begin_mutate",
+                utils::wait_for_message(5min));
+
         auto disposition = op.raft_server.begin_mutate();
         if (const auto* not_a_leader = get_if<raft::not_a_leader>(&disposition)) {
             const auto leader_host_id = locator::host_id{not_a_leader->leader.uuid()};
@@ -120,6 +124,10 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         logger.debug("mutate(): add_entry({}), term {}",
             command.mutation.pretty_printer(schema), term);
         auto& group_state = op.raft_server._state;
+
+        co_await utils::get_local_injector().inject("sc_coordinator_wait_before_adding_entry",
+                utils::wait_for_message(5min));
+
         try {
             co_await op.raft_server.server().add_entry(std::move(raft_cmd),
                 raft::wait_type::committed,
@@ -144,6 +152,10 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
                 // we can do now.
                 //
                 // FIXME: Retry with the new leader.
+                //
+                // ACTUALLY, since Raft is already implemented, chances are that
+                // the new leader has already been elected and everything's OK
+                // with it.
                 throw exceptions::server_exception(
                     "The operation was aborted due to internal reasons. "
                     "Retrying the statement may be necessary.");
@@ -182,10 +194,13 @@ auto coordinator::query(schema_ptr schema,
         db::timeout_clock::time_point timeout
     ) -> future<query_result_type>
 {
+    logger.info("Entered query of coordinator!!! HAHA");
     auto op_result = co_await create_operation_ctx(*schema, ranges[0].start()->value().token());
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
+        logger.info("Entered query of coordinator!!! REDIRECT HAHA");
         co_return *redirect;
     }
+    logger.info("Entered query of coordinator!!! HAHA 2");
     auto& op = get<operation_ctx>(op_result);
     auto& group_state = op.raft_server._state;
 
@@ -194,7 +209,11 @@ auto coordinator::query(schema_ptr schema,
         aoe.abort_source().request_abort();
     });
 
+    co_await utils::get_local_injector().inject("sc_coordinator_wait_before_query_read_barrier",
+            utils::wait_for_message(5min));
+
     co_await op.raft_server.server().read_barrier(&aoe.abort_source());
+    SCYLLA_ASSERT(false);
 
     auto [result, cache_temp] = co_await _db.query(schema, cmd,
         query::result_options::only_result(), ranges, trace_state, timeout);

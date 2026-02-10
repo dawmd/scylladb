@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
 #
 
+import asyncio
 from test.pylib.manager_client import ManagerClient
 from test.pylib.util import gather_safely, wait_for
 from test.cluster.util import new_test_keyspace
@@ -90,3 +91,44 @@ async def test_basic_write_read(manager: ManagerClient):
 
     # To check that the servers can be stopped gracefully. By default the test runner just kills them.
     await gather_safely(*[manager.server_stop_gracefully(s.server_id) for s in servers])
+
+@pytest.mark.asyncio
+async def test_abort_raft_operations(manager: ManagerClient):
+    logger.info("Bootstrapping cluster")
+    config = {
+        "experimental_features": ["strongly-consistent-tables"]
+    }
+    cmdline = [
+        "--logger-log-level", "sc_groups_manager=debug",
+        "--logger-log-level", "sc_coordinator=debug"
+    ]
+
+    s1 = await manager.server_add(config=config, cmdline=cmdline)
+    cql, _ = await manager.get_ready_cql([s1])
+
+    log = await manager.server_open_log(s1.server_id)
+    mark = await log.mark()
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+
+        table_id = await manager.get_table_id(ks, table_name)
+        rows = await cql.run_async(f"SELECT raft_group_id FROM system.tablets WHERE table_id = {table_id}")
+        group_id = str(rows[0].raft_group_id)
+
+        logger.info(f"Get current leader for the group {group_id}")
+        leader_host_id = await wait_for_leader(manager, s1, group_id)
+
+        await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier", one_shot=False)
+
+        fut = cql.run_async(f"SELECT * FROM {table} WHERE pk = 0 USING TIMEOUT 10s")
+        await log.wait_for("sc_coordinator_wait_before_query_read_barrier", from_mark=mark, timeout=10)
+        # assert False
+
+        await cql.run_async(f"DROP TABLE {table}")
+        await manager.api.disable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier")
+        await fut
+        
