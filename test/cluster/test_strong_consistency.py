@@ -242,13 +242,23 @@ async def test_write_when_shutting_down(manager: ManagerClient):
             s1, s2 = s2, s1
             host1, host2 = host2, host1
 
+        async def f():
+            await asyncio.sleep(10)
+            await manager.server_stop_gracefully(s1.server_id, timeout=10)
+            await manager.server_stop_gracefully(s2.server_id, timeout=10)
+            assert False
+
+
         log = await manager.server_open_log(s1.server_id)
         mark = await log.mark()
 
-        await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_adding_entry", one_shot=False)
+        t = asyncio.create_task(f())
+        await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_adding_entry", one_shot=True)
 
         fut = cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)", host=host1)
         await log.wait_for("sc_coordinator_wait_before_adding_entry", from_mark=mark)
 
         await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_adding_entry")
         await fut
+        await t
+        assert False
