@@ -152,6 +152,35 @@ async def test_aborted_read(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_aborted_write(manager: ManagerClient):
+    s1 = await manager.server_add(config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE)
+    cql, _ = await manager.get_ready_cql([s1])
+
+    log = await manager.server_open_log(s1.server_id)
+    mark = await log.mark()
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+        await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_adding_entry", one_shot=False)
+
+        fut = cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)")
+        await log.wait_for("sc_coordinator_wait_before_adding_entry", from_mark=mark, timeout=10)
+
+        await cql.run_async(f"DROP TABLE {table}")
+
+        # Sanity check: The table was really dropped and we can no longer write to it.
+        with pytest.raises(InvalidRequest, match="unconfigured table"):
+            cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 11)")
+
+        await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_adding_entry")
+        with pytest.raises(Exception):
+            await fut
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
 async def test_read_when_shutting_down(manager: ManagerClient):
     s1, s2 = await manager.servers_add(2, config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE, auto_rack_dc="dc1")
     cql, [host1, host2] = await manager.get_ready_cql([s1, s2])
@@ -188,49 +217,38 @@ async def test_read_when_shutting_down(manager: ManagerClient):
         await fut
 
 @pytest.mark.asyncio
-async def test_abort_raft_operations(manager: ManagerClient):
-    logger.info("Bootstrapping cluster")
-    config = {
-        "experimental_features": ["strongly-consistent-tables"]
-    }
-    cmdline = [
-        "--logger-log-level", "sc_groups_manager=debug",
-        "--logger-log-level", "sc_coordinator=debug"
-    ]
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_write_when_shutting_down(manager: ManagerClient):
+    s1, s2 = await manager.servers_add(2, config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE, auto_rack_dc="dc1")
+    cql, [host1, host2] = await manager.get_ready_cql([s1, s2])
 
-    s1 = await manager.server_add(config=config, cmdline=cmdline)
-    cql, _ = await manager.get_ready_cql([s1])
+    host_id1 = await manager.get_host_id(s1.server_id)
 
     log = await manager.server_open_log(s1.server_id)
     mark = await log.mark()
 
-    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
         table_name = "my_table"
         table = f"{ks}.{table_name}"
 
         await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
 
         table_id = await manager.get_table_id(ks, table_name)
-        rows = await cql.run_async(f"SELECT raft_group_id FROM system.tablets WHERE table_id = {table_id}")
+        rows = await cql.run_async(f"SELECT raft_group_id FROM system.tablets where table_id = {table_id}")
         group_id = str(rows[0].raft_group_id)
 
-        logger.info(f"Get current leader for the group {group_id}")
         leader_host_id = await wait_for_leader(manager, s1, group_id)
+        if host_id1 is not leader_host_id:
+            s1, s2 = s2, s1
+            host1, host2 = host2, host1
 
-        await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier", one_shot=False)
+        log = await manager.server_open_log(s1.server_id)
+        mark = await log.mark()
 
-        async def f():
-            await asyncio.sleep(30)
-            await manager.server_stop(s1.server_id)
+        await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_adding_entry", one_shot=False)
 
-        t = asyncio.create_task(f())
+        fut = cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)", host=host1)
+        await log.wait_for("sc_coordinator_wait_before_adding_entry", from_mark=mark)
 
-        fut = cql.run_async(f"SELECT * FROM {table} WHERE pk = 0 USING TIMEOUT 10s")
-        await log.wait_for("sc_coordinator_wait_before_query_read_barrier", from_mark=mark, timeout=10)
-        # assert False
-
-        await cql.run_async(f"DROP TABLE {table}")
-        # await manager.api.disable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier")
-        await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier")
+        await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_adding_entry")
         await fut
-        await t
