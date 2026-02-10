@@ -161,8 +161,6 @@ void groups_manager::schedule_raft_group_deletion(raft::group_id id, raft_group_
         return;
     }
     logger.info("schedule_raft_group_deletion(): group id {}", id);
-    // Q: What if this function is called n times in a row?
-    //    Won't we have an unncessarily long continuation?
     state.server_control_op = futurize_invoke([this, &state, id, g = state.gate](this auto) -> future<> {
         state.as.request_abort();
         co_await state.server_control_op.get_future();
