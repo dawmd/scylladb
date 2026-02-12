@@ -66,6 +66,14 @@ auto coordinator::create_operation_ctx(const schema& schema, const dht::token& t
         co_return need_redirect{target ? *target : tablet_info.replicas.at(0)};
     }
     const auto& raft_info = tablet_map.get_tablet_raft_info(tablet_id);
+    //! Note: `_groups_manager.acquire_server()` ITSELF won't throw anything dangerous,
+    //!       but awaiting the returned future might. However, the gate WILL be held
+    //!       until this future resolves (which is pretty obvious because it's later
+    //!       passed on to the resultant Raft server...).
+    //!
+    //! Q: What can throw here?
+    //! A: The thing that might actually throw something here is `server_control_op`.
+    //!    Remember that the gate IS being held.
     auto raft_server = co_await _groups_manager.acquire_server(raft_info.group_id);
 
     co_return operation_ctx {
@@ -87,6 +95,7 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         const dht::token& token,
         mutation_gen&& mutation_gen)
 {
+    //! Covered above.
     auto op_result = co_await create_operation_ctx(*schema, token);
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
         co_return *redirect;
@@ -148,11 +157,13 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
                 // Unfortunately, without tablet migration, there's very little
                 // we can do now.
                 //
-                // FIXME: Retry with the new leader.
+                //! FIXME: Retry with the new leader.
                 //
                 // ACTUALLY, since Raft is already implemented, chances are that
                 // the new leader has already been elected and everything's OK
                 // with it.
+                //! Q: What do we do here?
+                //! A: ...
                 throw exceptions::server_exception(
                     "The operation was aborted due to internal reasons. "
                     "Retrying the statement may be necessary.");
@@ -179,6 +190,8 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
             }
 
             // We know nothing about other errors, let the cql server convert them to SERVER_ERROR.
+            logger.error("mutate(): add_entry, unknown exception {}, table {}.{}, tablet {}, term {}",
+                ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
             throw;
         }
     }
@@ -191,6 +204,7 @@ auto coordinator::query(schema_ptr schema,
         db::timeout_clock::time_point timeout
     ) -> future<query_result_type>
 {
+    //! Covered above.
     auto op_result = co_await create_operation_ctx(*schema, ranges[0].start()->value().token());
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
         co_return *redirect;
@@ -215,7 +229,7 @@ auto coordinator::query(schema_ptr schema,
             throw exceptions::server_exception("The query was aborted due to internal reasons. "
                 "Try retrying the statement.");
         } else {
-            // FIXME: Use a dedicated exception type for strongly consistent tables.
+            //! FIXME: Use a dedicated exception type for strongly consistent tables.
             throw exceptions::server_exception("Operation timed out");
         }
     }

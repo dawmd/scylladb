@@ -147,6 +147,7 @@ future<> groups_manager::start_raft_group(global_tablet_id tablet,
 
     // initialize the corresponding timer to tick the raft server instance
     auto ticker = std::make_unique<raft_ticker_type>([srv = server.get()] { srv->tick(); });
+    //! This can only throw `seastar::abort_requested_exception`.
     co_await _raft_gr.start_server_for_group(raft_server_for_group {
         .gid = group_id,
         .server = std::move(server),
@@ -166,10 +167,17 @@ void groups_manager::schedule_raft_group_deletion(raft::group_id id, raft_group_
     // Cancel all ongoing Raft operations.
     state.as.request_abort();
 
+    //! acquire_server awaits this future, so any exception thrown by this will affect it.
     state.server_control_op = futurize_invoke([this, &state, id, g = state.gate](this auto) -> future<> {
         co_await state.server_control_op.get_future();
+        //! Q: What does this throw?
+        //! A: Nothing.
         co_await g->close();
+        //! Q: What does this throw?
+        //! A: ...
         co_await _raft_gr.abort_server(id);
+        //! Q: What does this throw?
+        //! A: ...
         co_await std::move(state.leader_info_updater);
 
         _raft_gr.destroy_server(id);
@@ -288,10 +296,14 @@ void groups_manager::update(token_metadata_ptr new_tm) {
 
         logger.info("update(): starting raft server for tablet {}, group id {}", tablet, id);
         state.gate = make_lw_shared<gate>();
+        //! acquire_server awaits this future, so any exception thrown by this will affect it.
         state.server_control_op = futurize_invoke([&state, this, tablet, id, new_tm](this auto) -> future<> {
             co_await state.server_control_op.get_future();
+            //! Q: What does this throw?
+            //! A: ...
             co_await start_raft_group(tablet, id, std::move(new_tm));
             state.server = &_raft_gr.get_server(id);
+            //! This can only throw "unexpected" exceptions, so we should be good.
             state.leader_info_updater = leader_info_updater(state, tablet, id);
             logger.info("update(): raft server for tablet {} and group id {} is started", tablet, id);
         });
@@ -310,6 +322,15 @@ future<raft_server> groups_manager::acquire_server(raft::group_id group_id) {
         on_internal_error(logger, format("raft group {} not found", group_id));
     }
     auto& state = it->second;
+    //! Q: Is it safe to hold the gate like this?
+    //! A: Yes. This is synchronous. The function returns a future, but it doesn't await anything.
+    //!    The holder must be created synchronously. The order of operations doesn't matter in this
+    //!    case either: `get_future()` simply creates a future and returns it, so even if the lambda
+    //!    is created afterwards, we're good. Nothing else happened in between!
+    //!
+    //! Corollary:
+    //!   This function cannot throw anything dangerous to us. Either the gate is already
+    //!   closed, or only the caller will run into something when awaiting it.
     return state.server_control_op.get_future().then([&state, h = state.gate->hold()] mutable {
         return raft_server(state, std::move(h));
     });
