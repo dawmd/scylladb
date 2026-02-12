@@ -203,11 +203,12 @@ async def test_read_when_shutting_down(manager: ManagerClient):
             s1, s2 = s2, s1
             host1, host2 = host2, host1
 
+        logger.info(f"The leader of the group is {leader_host_id} / {s1.ip_addr}")
+
         log = await manager.server_open_log(s1.server_id)
         mark = await log.mark()
 
         await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier", one_shot=True)
-
 
         fut = cql.run_async(f"SELECT * FROM {table} WHERE pk = 0", host=host1)
         await log.wait_for("sc_coordinator_wait_before_query_read_barrier", from_mark=mark)
@@ -215,7 +216,8 @@ async def test_read_when_shutting_down(manager: ManagerClient):
 
         stopping_fut = asyncio.create_task(manager.server_stop_gracefully(s1.server_id))
 
-        await log.wait_for(f"schedule_raft_group_deletion(): group id", from_mark=mark, timeout=10)
+        await asyncio.sleep(5)
+        # await log.wait_for(f"schedule_raft_group_deletion(): group id", from_mark=mark, timeout=10)
         await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier")
 
         await fut

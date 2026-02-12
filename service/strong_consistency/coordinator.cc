@@ -90,6 +90,7 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
 {
     while (true) {
         logger.info("LOOPING 1");
+        //! This can also indirectly block on Raft!
         auto op_result = co_await create_operation_ctx(*schema, token);
         if (const auto* redirect = get_if<need_redirect>(&op_result)) {
             logger.info("REDIRECT");
@@ -101,8 +102,9 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         while (true) {
             logger.info("INNER LOOP");
             co_await utils::get_local_injector().inject("sc_coordinator_wait_before_begin_mutate",
-                    utils::wait_for_message(5min));
-
+                utils::wait_for_message(5min));
+                
+            //! This can also indirectly block on Raft!
             auto disposition = op.raft_server.begin_mutate();
             if (const auto* not_a_leader = get_if<raft::not_a_leader>(&disposition)) {
                 const auto leader_host_id = locator::host_id{not_a_leader->leader.uuid()};
@@ -135,11 +137,13 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
 
             co_await utils::get_local_injector().inject("sc_coordinator_wait_before_adding_entry",
                     utils::wait_for_message(5min));
+            logger.debug("Trying to proceed anyway");
 
             try {
                 co_await op.raft_server.server().add_entry(std::move(raft_cmd),
                     raft::wait_type::committed,
                     &group_state.as);
+                logger.debug("mutate(): add_entry finished, returning monostone");
                 co_return std::monostate{};
             } catch (...) {
                 auto ex = std::current_exception();
@@ -190,6 +194,8 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
                         "Retrying the statement may be necessary.");
                 }
 
+                logger.debug("mutate(): add_entry, unknown exception {}, table {}.{}, tablet {}, term {}",
+                    ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
                 // We know nothing about other errors, let the cql server convert them to SERVER_ERROR.
                 throw;
             }
@@ -204,6 +210,7 @@ auto coordinator::query(schema_ptr schema,
         db::timeout_clock::time_point timeout
     ) -> future<query_result_type>
 {
+    //! This can also indirectly block on Raft!
     auto op_result = co_await create_operation_ctx(*schema, ranges[0].start()->value().token());
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
         co_return *redirect;
@@ -219,9 +226,11 @@ auto coordinator::query(schema_ptr schema,
 
     co_await utils::get_local_injector().inject("sc_coordinator_wait_before_query_read_barrier",
             utils::wait_for_message(5min));
+    logger.info("query(): after the error injection");
 
     try {
         co_await op.raft_server.server().read_barrier(&aoe.abort_source());
+        logger.info("query(): read_barrier finished: ok");
     } catch (const raft::request_aborted& ex) {
         logger.debug("query(): read_barrier aborted [table {}.{}, tablet {}]. Command: {}. Reason: {}",
             schema->ks_name(), schema->cf_name(), op.tablet_id, cmd, ex);
@@ -235,8 +244,10 @@ auto coordinator::query(schema_ptr schema,
         }
     }
 
+    logger.info("Trying query db");
     auto [result, cache_temp] = co_await _db.query(schema, cmd,
         query::result_options::only_result(), ranges, trace_state, timeout);
+    logger.info("Querying db ok");
 
     co_return std::move(result);
 }

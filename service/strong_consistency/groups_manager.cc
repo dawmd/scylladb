@@ -15,6 +15,7 @@
 #include "service/storage_proxy.hh"
 #include "replica/database.hh"
 #include "db/config.hh"
+#include <exception>
 
 namespace service::strong_consistency {
 
@@ -163,10 +164,15 @@ void groups_manager::schedule_raft_group_deletion(raft::group_id id, raft_group_
     logger.info("schedule_raft_group_deletion(): group id {}", id);
     state.server_control_op = futurize_invoke([this, &state, id, g = state.gate](this auto) -> future<> {
         state.as.request_abort();
+        logger.info("schedule rgd: Step 1");
         co_await state.server_control_op.get_future();
+        logger.info("schedule rgd: Step 2");
         co_await g->close();
+        logger.info("schedule rgd: Step 3");
         co_await _raft_gr.abort_server(id);
+        logger.info("schedule rgd: Step 4");
         co_await std::move(state.leader_info_updater);
+        logger.info("schedule rgd: Step 5");
 
         _raft_gr.destroy_server(id);
         logger.info("schedule_raft_group_deletion(): raft server for group id {} is destroyed", id);
@@ -213,6 +219,7 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
         const auto server_id = state.server->id();
 
         while (true) {
+            logger.info("leader_info_updater(): loop start");
             const auto current_term = state.server->get_current_term();
             const auto current_leader = state.server->current_leader();
 
@@ -220,24 +227,37 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
                 logger.debug("leader_info_updater({}-{}): current term {}, running read_barrier()",
                     tablet, gid,
                     current_term);
+                logger.info("leader_info_updater(): Step 1.1");
                 co_await state.server->read_barrier(&state.as);
+                logger.info("leader_info_updater(): Step 1.2");
                 state.leader_info = leader_info {
                     .term = current_term,
                     .last_timestamp = schema->table().get_max_timestamp_for_tablet(tablet.tablet)
                 };
+                logger.info("leader_info_updater(): Step 1.3");
                 logger.debug("leader_info_updater({}-{}): read_barrier() completed, "
                     "new leader term {}, last_timestamp {}",
                     tablet, gid,
                     state.leader_info->term,
                     state.leader_info->last_timestamp);
             } else if (state.leader_info) {
+                logger.info("leader_info_updater(): Step 2.1");
                 logger.debug("leader_info_updater({}-{}): this replica {} is no longer a leader, current leader {}",
                     tablet, gid, server_id, current_leader);
                 state.leader_info = std::nullopt;
             }
             state.leader_info_cond.broadcast();
 
+            logger.info("leader_info_updater(): Step 3");
+            //! HERE!
+            try {
             co_await state.server->wait_for_state_change(&state.as);
+            } catch (...) {
+                logger.error("leader_info_updater(): wait for state change: got unexpected error: {}", std::current_exception());
+                throw;
+            }
+            logger.info("leader_info_updater(): Step 4");
+            logger.info("leader_info_updater(): loop end");
         }
     } catch (const raft::request_aborted&) {
         // thrown from read_barrier() and wait_for_state_change when the tablet leaves this shard
@@ -252,6 +272,9 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
         // thrown from find_schema() and schema->table() when the table is dropped
         logger.debug("leader_info_updater({}-{}): got replica::no_such_column_family {}",
             tablet, gid, std::current_exception());
+    } catch (...) {
+        logger.error("leader_info_updater(): unexpecter error: {}", std::current_exception());
+        throw;
     }
 }
 
@@ -281,9 +304,13 @@ void groups_manager::update(token_metadata_ptr new_tm) {
         logger.info("update(): starting raft server for tablet {}, group id {}", tablet, id);
         state.gate = make_lw_shared<gate>();
         state.server_control_op = futurize_invoke([&state, this, tablet, id, new_tm](this auto) -> future<> {
+            logger.info("update: Step 1");
             co_await state.server_control_op.get_future();
+            logger.info("update: Step 2");
             co_await start_raft_group(tablet, id, std::move(new_tm));
+            logger.info("update: Step 3");
             state.server = &_raft_gr.get_server(id);
+            logger.info("update: Step 4");
             state.leader_info_updater = leader_info_updater(state, tablet, id);
             logger.info("update(): raft server for tablet {} and group id {} is started", tablet, id);
         });
@@ -334,7 +361,15 @@ future<> groups_manager::stop() {
     schedule_raft_groups_deletion(true);
 
     while (!_raft_groups.empty()) {
-        co_await _raft_groups.begin()->second.server_control_op.get_future();
+        logger.info("stop(): looping start");
+        try {
+            co_await _raft_groups.begin()->second.server_control_op.get_future();
+            logger.info("stop(): get future ok");
+        } catch (...) {
+            logger.error("stop(): get future threw: {}", std::current_exception());
+            throw;
+        }
+        logger.info("stop(): looping end");
     }
 
     logger.info("stop() completed");
