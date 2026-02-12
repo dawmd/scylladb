@@ -16,6 +16,7 @@
 #include "idl/strong_consistency/state_machine.dist.hh"
 #include "idl/strong_consistency/state_machine.dist.impl.hh"
 #include "utils/error_injection.hh"
+#include <exception>
 
 namespace service::strong_consistency {
 
@@ -64,14 +65,25 @@ auto coordinator::create_operation_ctx(const schema& schema, const dht::token& t
 
     if (!contains(tablet_info.replicas, this_replica)) {
         const auto* target = find_replica(tablet_info, this_replica.host);
+        logger.info("create_operation_ctx(): FIRST IF: {}", target ? *target : tablet_info.replicas.at(0));
         co_return need_redirect{target ? *target : tablet_info.replicas.at(0)};
     }
+    logger.info("create_operation_ctx(): NOT FIRST IF");
     const auto& raft_info = tablet_map.get_tablet_raft_info(tablet_id);
-    auto raft_server = co_await _groups_manager.acquire_server(raft_info.group_id);
+
+    auto raft_server2 = co_await std::invoke([&] (this auto) -> future<raft_server> {
+    try {
+        co_return co_await _groups_manager.acquire_server(raft_info.group_id);
+    } catch (...) {
+        logger.info("create_operation_ctx(): aqcuire server threw: {}", std::current_exception());
+        throw;
+    }
+    });
+    logger.info("create_operation_ctx(): ACQUIRED SERVER");
 
     co_return operation_ctx {
         .erm = std::move(erm),
-        .raft_server = std::move(raft_server),
+        .raft_server = std::move(raft_server2),
         .tablet_id = tablet_id,
         .raft_info = raft_info,
         .tablet_info = tablet_info
@@ -178,7 +190,7 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
                     // ACTUALLY, since Raft is already implemented, chances are that
                     // the new leader has already been elected and everything's OK
                     // with it.
-                    // break;
+                    break;
                     throw exceptions::server_exception(
                         "The operation was aborted due to internal reasons. "
                         "Retrying the statement may be necessary.");

@@ -3072,6 +3072,11 @@ future<> storage_service::stop_transport() {
             slogger.debug("shutting down migration manager");
             _migration_manager.invoke_on_all(&service::migration_manager::drain).get();
 
+            slogger.info("Shutting down sc groups manager starts");
+            _groups_manager.stop().get();
+            slogger.info("Shutting down sc groups manager finished ");
+            
+            //! Tutaj jest problem! Mamy wciaz aktywne query i nie mozemy tego zakonczyc.
             shutdown_protocol_servers().get();
             slogger.info("Stop transport: shutdown rpc and cql server done");
 

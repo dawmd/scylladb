@@ -107,16 +107,22 @@ future<> migration_manager::drain()
     mlogger.info("stopping migration service");
     _as.request_abort();
 
+    mlogger.info("drain(): step 1");
     co_await uninit_messaging_service();
+    mlogger.info("drain(): step 2");
     try {
         co_await coroutine::parallel_for_each(_schema_pulls, [] (auto&& e) {
             return e.second.join();
         });
+        mlogger.info("drain(): step 3");
     } catch (...) {
         mlogger.error("schema_pull failed: {}", std::current_exception());
     }
+    mlogger.info("drain(): step 4");
     co_await _group0_barrier.join();
+    mlogger.info("drain(): step 5");
     co_await _background_tasks.close();
+    mlogger.info("drain(): step 6");
 }
 
 void migration_manager::init_messaging_service()

@@ -1828,20 +1828,10 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                 client_routes.stop().get();
             });
 
-            checkpoint(stop_signal, "initializing strongly consistent groups manager");
             sharded<service::strong_consistency::groups_manager> groups_manager;
+            checkpoint(stop_signal, "initializing strongly consistent groups manager");
             groups_manager.start(std::ref(messaging), std::ref(raft_gr), std::ref(qp), 
                 std::ref(db), std::ref(feature_service)).get();
-            auto stop_groups_manager = defer_verbose_shutdown("strongly consistent groups manager", [&] {
-                groups_manager.stop().get();
-            });
-
-            checkpoint(stop_signal, "initializing strongly consistent coordinator");
-            sharded<service::strong_consistency::coordinator> sc_coordinator;
-            sc_coordinator.start(std::ref(groups_manager), std::ref(db)).get();
-            auto stop_sc_coordinator = defer_verbose_shutdown("strongly consistent coordinator", [&] {
-                sc_coordinator.stop().get();
-            });
 
             checkpoint(stop_signal, "initializing storage service");
             debug::the_storage_service = &ss;
@@ -1857,6 +1847,17 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                 only_on_shard0(&*disk_space_monitor_shard0),
                 std::ref(groups_manager)
             ).get();
+
+            auto stop_groups_manager = defer_verbose_shutdown("strongly consistent groups manager", [&] {
+                groups_manager.stop().get();
+            });
+
+            checkpoint(stop_signal, "initializing strongly consistent coordinator");
+            sharded<service::strong_consistency::coordinator> sc_coordinator;
+            sc_coordinator.start(std::ref(groups_manager), std::ref(db)).get();
+            auto stop_sc_coordinator = defer_verbose_shutdown("strongly consistent coordinator", [&] {
+                sc_coordinator.stop().get();
+            });
 
             ss.local().set_train_dict_callback([&rpc_dict_training_worker] (std::vector<std::vector<std::byte>> sample) {
                 return rpc_dict_training_worker.submit<std::vector<std::byte>>([sample = std::move(sample)] {
@@ -2517,6 +2518,10 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             sharded<alternator::expiration_service> es;
             std::any stop_expiration_service;
 
+            auto z8 = defer([] {
+                diaglog.info("SHUTDOWN Z8");
+            });
+
             if (cfg->alternator_port() || cfg->alternator_https_port()) {
                 // Start the expiration service on all shards.
                 // Currently we only run it if Alternator is enabled, because
@@ -2534,10 +2539,30 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                 }).get();
             }
 
+            auto Z7 = defer([] {
+                diaglog.info("SHUTDOWN Z7");
+            });
+
             db.invoke_on_all(&replica::database::revert_initial_system_read_concurrency_boost).get();
+
+            auto Z6 = defer([] {
+                diaglog.info("SHUTDOWN Z6");
+            });
             notify_set.notify_all(configurable::system_state::started).get();
+
+            auto Z5 = defer([] {
+                diaglog.info("SHUTDOWN Z5");
+            });
             seastar::set_abort_on_ebadf(cfg->abort_on_ebadf());
+
+            auto z4 = defer([] {
+                diaglog.info("SHUTDOWN Z4");
+            });
             api::set_server_done(ctx).get();
+
+            auto z3 = defer([] {
+                diaglog.info("SHUTDOWN Z3");
+            });
 
             // Create controllers before drain_on_shutdown() below, so that it destructs
             // after drain stops them in stop_transport()
@@ -2545,14 +2570,31 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             // failure drain is called and stops controllers
             cql_transport::controller cql_server_ctl(auth_service, mm_notifier, gossiper, qp, service_memory_limiter, sl_controller, lifecycle_notifier, *cfg, cql_sg_stats_key, maintenance_socket_enabled::no, dbcfg.statement_scheduling_group);
 
+            auto z2 = defer([] {
+                diaglog.info("SHUTDOWN Z2");
+            });
             api::set_server_service_levels(ctx, cql_server_ctl, qp).get();
 
+            auto z1 = defer([] {
+                diaglog.info("SHUTDOWN Z1");
+            });
             alternator::controller alternator_ctl(gossiper, proxy, ss, mm, sys_dist_ks, cdc_generation_service, service_memory_limiter, auth_service, sl_controller, *cfg, dbcfg.statement_scheduling_group);
 
+            auto z0 = defer([] {
+                diaglog.info("SHUTDOWN Z0");
+            });
+            //! To bylo wykonane! Jako ostatnie z init...
+            //! Tutaj sie blokujemy. Dokladnie w tym ponizej...
             // Register at_exit last, so that storage_service::drain_on_shutdown will be called first
             auto do_drain = defer_verbose_shutdown("local storage", [&ss] {
                 ss.local().drain_on_shutdown().get();
             });
+            auto zm1 = defer([] {
+                diaglog.info("SHUTDOWN Z-1");
+            });
+
+            //! At this point, I think, it's impossible for there to be new requests
+            //! coming to this node because we've just shut down the transport controller API.
 
             auth_service.local().ensure_superuser_is_created().get();
             ss.local().register_protocol_server(cql_server_ctl, cfg->start_native_transport()).get();

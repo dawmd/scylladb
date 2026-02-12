@@ -285,3 +285,46 @@ async def test_write_when_shutting_down(manager: ManagerClient):
         # await t
         await stopping_fut
         assert False
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_haha_idk(manager: ManagerClient):
+    cmdline = DEFAULT_CMDLINE + [
+        "--logger-log-level", "storage_service=trace",
+        "--logger-log-level", "migration_manager=trace",
+        "--logger-log-level", "cql_server_controller=trace"]
+    [s1] = await manager.servers_add(1, config=DEFAULT_CONFIG, cmdline=cmdline, auto_rack_dc="dc1")
+    cql, [host1] = await manager.get_ready_cql([s1])
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+
+        table_id = await manager.get_table_id(ks, table_name)
+        rows = await cql.run_async(f"SELECT raft_group_id FROM system.tablets WHERE table_id = {table_id}")
+        group_id = str(rows[0].raft_group_id)
+
+        log = await manager.server_open_log(s1.server_id)
+        mark = await log.mark()
+
+        await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_adding_entry", one_shot=True)
+
+        fut = cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 7)", host=host1)
+        # Wait until it hits the error injection and waits.
+        await log.wait_for("sc_coordinator_wait_before_adding_entry", from_mark=mark)
+
+        mark = await log.mark()
+
+        stopping_fut = asyncio.create_task(manager.server_stop_gracefully(s1.server_id))
+        # Wait until the error injection is triggered.
+        await log.wait_for(rf"schedule_raft_group_deletion\(\): group id {group_id}", from_mark=mark)
+
+        await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_adding_entry")
+
+        res = await fut
+        logger.info(f"RES = {res}")
+        # await t
+        await stopping_fut
+        assert False

@@ -295,13 +295,21 @@ future<> controller::do_start_server() {
 future<> controller::stop_server() {
     SCYLLA_ASSERT(this_shard_id() == 0);
 
+    logger.info("stop_server(): Step 0");
     if (!_stopped) {
+        logger.info("stop_server(): Step 1");
         co_await _ops_sem.wait();
+        logger.info("stop_server(): Step 2");
         _stopped = true;
         _ops_sem.broken();
         _listen_addresses.clear();
+        logger.info("stop_server(): Step 3");
         co_await do_stop_server();
+        logger.info("stop_server(): Step 4");
         co_await _bg_stops.close();
+        logger.info("stop_server(): Step 5");
+    } else {
+        logger.info("stop_server(): Step no-if");
     }
 }
 
