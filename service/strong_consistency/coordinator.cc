@@ -7,6 +7,7 @@
  */
 
 #include "coordinator.hh"
+#include "raft/raft.hh"
 #include "schema/schema.hh"
 #include "replica/database.hh"
 #include "locator/tablet_replication_strategy.hh"
@@ -119,14 +120,43 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
 
         logger.debug("mutate(): add_entry({}), term {}",
             command.mutation.pretty_printer(schema), term);
+
+        auto& group_state = op.raft_server._state;
+        co_await utils::get_local_injector().inject("sc_coordinator_wait_before_adding_entry",
+                utils::wait_for_message(5min));
+
         try {
             co_await op.raft_server.server().add_entry(std::move(raft_cmd),
                 raft::wait_type::committed,
-                nullptr);
+                &group_state.as);
             co_return std::monostate{};
         } catch (...) {
             auto ex = std::current_exception();
-            if (try_catch<raft::request_aborted>(ex) || try_catch<raft::stopped_error>(ex)) {
+            if (try_catch<raft::request_aborted>(ex)) {
+                // The abort_source may be triggered because of the node
+                // shutting down or the group being removed.
+                // Either situation is within expectations.
+                logger.debug("mutate(): add_entry, operation aborted {}, table {}.{}, tablet {}, term {}",
+                    ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
+                // No matter which case it is, the effective replication map might've
+                // changed, so we need to obtain a fresh context for this operation.
+                //
+                // Trying to simply retry the operation in the next iteration
+                // would likely produce the same result; we might actually get
+                // stuck in a deadlock.
+                //
+                // Unfortunately, without tablet migration, there's very little
+                // we can do now.
+                //
+                // FIXME: Retry with the new leader.
+                //
+                // ACTUALLY, since Raft is already implemented, chances are that
+                // the new leader has already been elected and everything's OK
+                // with it.
+                throw exceptions::server_exception(
+                    "The operation was aborted due to internal reasons. "
+                    "Retrying the statement may be necessary.");
+            } else if (try_catch<raft::stopped_error>(ex)) {
                 // Holding raft_server.holder guarantees that the raft::server is not
                 // aborted until the holder is released.
 
@@ -166,8 +196,29 @@ auto coordinator::query(schema_ptr schema,
         co_return *redirect;
     }
     auto& op = get<operation_ctx>(op_result);
+    auto& group_state = op.raft_server._state;
 
-    co_await op.raft_server.server().read_barrier(nullptr);
+    auto aoe = abort_on_expiry(timeout);
+    auto sub = group_state.as.subscribe([&aoe] noexcept {
+        aoe.abort_source().request_abort();
+    });
+
+    co_await utils::get_local_injector().inject("sc_coordinator_wait_before_query_read_barrier",
+            utils::wait_for_message(5min));
+    try {
+        co_await op.raft_server.server().read_barrier(&aoe.abort_source());
+    } catch (const raft::request_aborted& ex) {
+        logger.debug("query(): read_barrier aborted [table {}.{}, tablet {}]. Command: {}. Reason: {}",
+            schema->ks_name(), schema->cf_name(), op.tablet_id, cmd, ex);
+
+        if (timeout > db::timeout_clock::now()) {
+            throw exceptions::server_exception("The query was aborted due to internal reasons. "
+                "Try retrying the statement.");
+        } else {
+            // FIXME: Use a dedicated exception type for strongly consistent tables.
+            throw exceptions::server_exception("Operation timed out");
+        }
+    }
 
     auto [result, cache_temp] = co_await _db.query(schema, cmd,
         query::result_options::only_result(), ranges, trace_state, timeout);

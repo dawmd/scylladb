@@ -15,6 +15,7 @@
 #include "service/storage_proxy.hh"
 #include "replica/database.hh"
 #include "db/config.hh"
+#include <exception>
 
 namespace service::strong_consistency {
 
@@ -70,7 +71,7 @@ raft_server::raft_server(groups_manager::raft_group_state& state, gate::holder h
 auto raft_server::begin_mutate() -> begin_mutate_result {
     const auto leader = _state.server->current_leader();
     if (!leader) {
-        return need_wait_for_leader{_state.server->wait_for_leader(nullptr)};
+        return need_wait_for_leader{_state.server->wait_for_leader(&_state.as)};
     }
     if (leader != _state.server->id()) {
         return raft::not_a_leader{leader};
@@ -161,6 +162,10 @@ void groups_manager::schedule_raft_group_deletion(raft::group_id id, raft_group_
         return;
     }
     logger.info("schedule_raft_group_deletion(): group id {}", id);
+
+    // Cancel all ongoing Raft operations.
+    state.as.request_abort();
+
     state.server_control_op = futurize_invoke([this, &state, id, g = state.gate](this auto) -> future<> {
         co_await state.server_control_op.get_future();
         co_await g->close();
@@ -219,7 +224,7 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
                 logger.debug("leader_info_updater({}-{}): current term {}, running read_barrier()",
                     tablet, gid,
                     current_term);
-                co_await state.server->read_barrier(nullptr);
+                co_await state.server->read_barrier(&state.as);
                 state.leader_info = leader_info {
                     .term = current_term,
                     .last_timestamp = schema->table().get_max_timestamp_for_tablet(tablet.tablet)
@@ -236,10 +241,11 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
             }
             state.leader_info_cond.broadcast();
 
-            co_await state.server->wait_for_state_change(nullptr);
+            co_await state.server->wait_for_state_change(&state.as);
         }
     } catch (const raft::request_aborted&) {
         // thrown from read_barrier() and wait_for_state_change when the tablet leaves this shard
+        // or when stop() has been called
         logger.debug("leader_info_updater({}-{}): got raft::request_aborted {}",
             tablet, gid, std::current_exception());
     } catch (const raft::stopped_error&) {
@@ -250,6 +256,10 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
         // thrown from find_schema() and schema->table() when the table is dropped
         logger.debug("leader_info_updater({}-{}): got replica::no_such_column_family {}",
             tablet, gid, std::current_exception());
+    } catch (...) {
+        logger.error("leader_info_updater({}-{}): got unexpected exception: {}",
+            tablet, gid, std::current_exception());
+        throw;
     }
 }
 
