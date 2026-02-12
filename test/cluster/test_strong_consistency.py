@@ -238,33 +238,50 @@ async def test_write_when_shutting_down(manager: ManagerClient):
         await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
 
         table_id = await manager.get_table_id(ks, table_name)
-        rows = await cql.run_async(f"SELECT raft_group_id FROM system.tablets where table_id = {table_id}")
+        rows = await cql.run_async(f"SELECT raft_group_id FROM system.tablets WHERE table_id = {table_id}")
         group_id = str(rows[0].raft_group_id)
 
         leader_host_id = await wait_for_leader(manager, s1, group_id)
-        if host_id1 is not leader_host_id:
+        if host_id1 != leader_host_id:
             s1, s2 = s2, s1
             host1, host2 = host2, host1
 
-        async def f():
-            await asyncio.sleep(10)
-            await manager.server_stop_gracefully(s1.server_id, timeout=10)
-            await manager.server_stop_gracefully(s2.server_id, timeout=10)
-            assert False
+        await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 7)", host=host1)
+
+        table_id = await manager.get_table_id(ks, table_name)
+        rows = await cql.run_async(f"SELECT raft_group_id FROM system.tablets WHERE table_id = {table_id}")
+        group_id = str(rows[0].raft_group_id)
+
+        leader_host_id = await wait_for_leader(manager, s1, group_id)
+        if host_id1 != leader_host_id:
+            s1, s2 = s2, s1
+            host1, host2 = host2, host1
+
+        # async def f():
+        #     await asyncio.sleep(10)
+        #     await manager.server_stop_gracefully(s1.server_id, timeout=10)
+        #     await manager.server_stop_gracefully(s2.server_id, timeout=10)
+        #     assert False
 
 
         log = await manager.server_open_log(s1.server_id)
         mark = await log.mark()
 
-        t = asyncio.create_task(f())
+        # t = asyncio.create_task(f())
         await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_adding_entry", one_shot=True)
 
-        fut = cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)", host=host1)
+        fut = cql.run_async(f"UPDATE {table} SET v = 13 WHERE pk = 0", host=host1)
         await log.wait_for("sc_coordinator_wait_before_adding_entry", from_mark=mark)
 
+        mark = await log.mark()
+
         stopping_fut = asyncio.create_task(manager.server_stop_gracefully(s1.server_id))
+        await log.wait_for(rf"schedule_raft_group_deletion\(\): group id {group_id}", from_mark=mark)
+
         await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_adding_entry")
 
-        await fut
-        await t
+        res = await fut
+        logger.info(f"RES = {res}")
+        # await t
+        await stopping_fut
         assert False

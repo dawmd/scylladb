@@ -88,21 +88,27 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         const dht::token& token,
         mutation_gen&& mutation_gen)
 {
+    int idx = 0;
     while (true) {
-        logger.info("LOOPING 1");
+        logger.info("mutate(): Loop start");
+        if (idx++ >= 3) {
+            on_internal_error(logger, "Hit the limit of iterations");
+        }
         //! This can also indirectly block on Raft!
+        logger.info("mutate(): Step 1");
         auto op_result = co_await create_operation_ctx(*schema, token);
         if (const auto* redirect = get_if<need_redirect>(&op_result)) {
-            logger.info("REDIRECT");
+            logger.info("mutate(): Step 1: redirect");
             co_return *redirect;
         }
-        logger.info("NOT REDIRECT YET");
+        logger.info("mutate(): Step 2");
         auto& op = get<operation_ctx>(op_result);
 
         while (true) {
-            logger.info("INNER LOOP");
+            logger.info("mutate(): Step 2.1: Inner loop start");
             co_await utils::get_local_injector().inject("sc_coordinator_wait_before_begin_mutate",
                 utils::wait_for_message(5min));
+            logger.info("mutate(): Step 2.2");
                 
             //! This can also indirectly block on Raft!
             auto disposition = op.raft_server.begin_mutate();
@@ -115,14 +121,17 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
                             schema->ks_name(), schema->cf_name(), op.tablet_id, 
                             leader_host_id, op.tablet_info.replicas));
                 }
-                logger.info("INNER REDIRECT 1");
+                logger.info("mutate(): Step 2.2.1: redirect: {}", *target);
                 co_return need_redirect{*target};
             }
+            logger.info("mutate(): Step 2.3");
             if (auto* wait_for_leader = get_if<raft_server::need_wait_for_leader>(&disposition)) {
-                logger.info("INNER IF 2");
+                logger.info("mutate(): Step 2.3.1");
                 co_await std::move(wait_for_leader->future);
+                logger.info("mutate(): Step 2.3.2");
                 continue;
             }
+            logger.info("mutate(): Step 2.4");
             const auto [ts, term] = get<raft_server::timestamp_with_term>(disposition);
 
             const raft_command command {
@@ -137,13 +146,14 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
 
             co_await utils::get_local_injector().inject("sc_coordinator_wait_before_adding_entry",
                     utils::wait_for_message(5min));
-            logger.debug("Trying to proceed anyway");
+            logger.info("mutate(): Step 2.5");
 
             try {
                 co_await op.raft_server.server().add_entry(std::move(raft_cmd),
                     raft::wait_type::committed,
                     &group_state.as);
-                logger.debug("mutate(): add_entry finished, returning monostone");
+                logger.info("mutate(): Step 2.6.1");
+                logger.debug("mutate(): add_entry finished, returning monostate");
                 co_return std::monostate{};
             } catch (...) {
                 auto ex = std::current_exception();
@@ -168,7 +178,7 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
                     // ACTUALLY, since Raft is already implemented, chances are that
                     // the new leader has already been elected and everything's OK
                     // with it.
-                    break;
+                    // break;
                     throw exceptions::server_exception(
                         "The operation was aborted due to internal reasons. "
                         "Retrying the statement may be necessary.");
@@ -199,7 +209,9 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
                 // We know nothing about other errors, let the cql server convert them to SERVER_ERROR.
                 throw;
             }
+            logger.info("mutate(): Step 2.5: Inner loop end");
         }
+        logger.info("mutate(): Step 3: Loop end");
     }
 }
 
@@ -216,7 +228,6 @@ auto coordinator::query(schema_ptr schema,
         co_return *redirect;
     }
     auto& op = get<operation_ctx>(op_result);
-    logger.info("LOOPING");
     auto& group_state = op.raft_server._state;
 
     auto aoe = abort_on_expiry(timeout);
