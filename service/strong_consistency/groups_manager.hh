@@ -56,6 +56,11 @@ class groups_manager : public peering_sharded_service<groups_manager> {
         // before the raft::server has finished initializing, or conversely,
         // when a tablet is migrated back to this node before deinitialization completes.
         // Subsequent operations wait for the previous one to complete.
+        //
+        // Exceptions:
+        // * It only throws unexpected exceptions and those non-Raft-related.
+        //   Most of the work that CAN throw is storage-related.
+        //   At least at first glance...
         shared_future<> server_control_op = make_ready_future<>();
 
         // Populated only when this node thinks it's a tablet raft group leader.
@@ -63,7 +68,11 @@ class groups_manager : public peering_sharded_service<groups_manager> {
         condition_variable leader_info_cond = condition_variable();
         future<> leader_info_updater = make_ready_future<>();
 
-        abort_source as;
+        // Responsbile for controlling the ongoing Raft operations.
+        //
+        // The entity responsible for triggering it is groups_manager.
+        // No other code should trigger it directly.
+        abort_source raft_ops_as;
     };
 
     netw::messaging_service& _ms;
@@ -79,13 +88,34 @@ class groups_manager : public peering_sharded_service<groups_manager> {
         raft::group_id group_id,
         locator::token_metadata_ptr tm);
 
+    // Exceptions:
+    // * No exceptions.
     void schedule_raft_group_deletion(raft::group_id group_id, raft_group_state& group_state);
 
+    // Exceptions:
+    // * No exceptions.
     void schedule_raft_groups_deletion(bool all);
 
+    // Handles most exceptions
     future<> leader_info_updater(raft_group_state& state, locator::global_tablet_id tablet, raft::group_id gid);
 
     future<> wait_for_groups_to_start();
+
+    // Abort all ongoing Raft operations corresponding to a given group ID.
+    //
+    // This function only intitates the aborting procedure. It's not responsible
+    // for handling the subsequent consequences of this action.
+    // The entities responsible for that are the callers of the Raft operations.
+    //
+    // Preconditions:
+    // * The passed group_id corresponds to an existing Raft group
+    //   managed by this groups_manager.
+    // * The group has not been scheduled to be aborted yet, i.e. multiple
+    //   simultaneous abortions of the same group are not permitted.
+    //
+    // Exceptions:
+    // * No exceptions.
+    void abort_raft_group_operations(raft::group_id group_id) noexcept;
 
 public:
     groups_manager(netw::messaging_service& ms, raft_group_registry& raft_gr, 
@@ -99,9 +129,17 @@ public:
     //
     // Note that the method is synchronous: it only initiates these operations
     // and does not wait for their completion.
+    //
+    // Almost noexcept. Doesn't involve any Raft-related exceptions at first glance.
     void update(locator::token_metadata_ptr new_tm);
 
     // The raft_server instance is used to submit write commands and perform read_barrier() before reads.
+    //
+    // Preconditions:
+    // * The group corresponding to the passed group_id must exist.
+    //
+    // Exceptions:
+    // * 
     future<raft_server> acquire_server(raft::group_id group_id);
 
     // Called during node boot. Waits for all raft::server instances corresponding

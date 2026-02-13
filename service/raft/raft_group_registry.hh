@@ -157,6 +157,9 @@ public:
 
     // Find server for group by group id. Throws exception if
     // there is no such group.
+    //! I don't think this description is up-to-date. It doesn't seem
+    //! to be able to throw an exception ever in its current form
+    //! (at least after skimming through it).
     raft::server& get_server(raft::group_id gid);
 
     // Returns a server with timeouts support for group by group id.

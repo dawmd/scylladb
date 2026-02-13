@@ -137,7 +137,7 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         try {
             co_await op.raft_server.server().add_entry(std::move(raft_cmd),
                 raft::wait_type::committed,
-                &group_state.as);
+                &group_state.raft_ops_as);
             co_return std::monostate{};
         } catch (...) {
             auto ex = std::current_exception();
@@ -213,7 +213,7 @@ auto coordinator::query(schema_ptr schema,
     auto& group_state = op.raft_server._state;
 
     auto aoe = abort_on_expiry(timeout);
-    auto sub = group_state.as.subscribe([&aoe] noexcept {
+    auto sub = group_state.raft_ops_as.subscribe([&aoe] noexcept {
         aoe.abort_source().request_abort();
     });
 

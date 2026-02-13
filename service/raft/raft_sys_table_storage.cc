@@ -153,6 +153,7 @@ future<raft::snapshot_descriptor> raft_sys_table_storage::load_snapshot_descript
         .term = raft::term_t(snp_row.get_as<int64_t>("term")),
         .config = std::move(cfg),
         .id = raft::snapshot_id(snapshot_id)};
+    //! We should move this.
     co_return s;
 }
 

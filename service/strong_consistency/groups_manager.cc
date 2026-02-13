@@ -71,7 +71,7 @@ raft_server::raft_server(groups_manager::raft_group_state& state, gate::holder h
 auto raft_server::begin_mutate() -> begin_mutate_result {
     const auto leader = _state.server->current_leader();
     if (!leader) {
-        return need_wait_for_leader{_state.server->wait_for_leader(&_state.as)};
+        return need_wait_for_leader{_state.server->wait_for_leader(&_state.raft_ops_as)};
     }
     if (leader != _state.server->id()) {
         return raft::not_a_leader{leader};
@@ -164,8 +164,7 @@ void groups_manager::schedule_raft_group_deletion(raft::group_id id, raft_group_
     }
     logger.info("schedule_raft_group_deletion(): group id {}", id);
 
-    // Cancel all ongoing Raft operations.
-    state.as.request_abort();
+    abort_raft_group_operations(id);
 
     //! acquire_server awaits this future, so any exception thrown by this will affect it.
     //!
@@ -173,16 +172,23 @@ void groups_manager::schedule_raft_group_deletion(raft::group_id id, raft_group_
     state.server_control_op = futurize_invoke([this, &state, id, g = state.gate](this auto) -> future<> {
         co_await state.server_control_op.get_future();
         //! Q: What does this throw?
-        //! A: Nothing.
+        //! A: Nothing. It's noexcept.
         co_await g->close();
         //! Q: What does this throw?
         //! A: This has nothing to do with the `abort_source`, so we're probably good.
+        //! A: [new] This will virutally never throw. It boils down to setting a bool
+        //!    on each shard and then awaiting a future that already handles ALL
+        //!    exceptions.
         co_await _raft_gr.abort_server(id);
         //! Q: What does this throw?
         //! A: This will never throw. The updater handles all expected types of exceptions,
         //!    including `raft::abort_requested` or whatever it's called.
+        //!
+        //!    It only throw unexpected exceptions.
         co_await std::move(state.leader_info_updater);
 
+        //! Q: What does this throw?
+        //! A: Nothing. It's noexcept. Just not marked as such...
         _raft_gr.destroy_server(id);
         logger.info("schedule_raft_group_deletion(): raft server for group id {} is destroyed", id);
 
@@ -222,6 +228,18 @@ future<> groups_manager::wait_for_groups_to_start() {
     }
 }
 
+void groups_manager::abort_raft_group_operations(raft::group_id group_id) noexcept {
+    logger.debug("Scheduling abortion of Raft operations for group_id={} starts", group_id);
+
+    auto it = _raft_groups.find(group_id);
+    SCYLLA_ASSERT(it != _raft_groups.end());
+
+    raft_group_state& state = it->second;
+    state.raft_ops_as.request_abort();
+
+    logger.debug("Scheduling abortion of Raft operations for group_id={} completed", group_id);
+}
+
 future<> groups_manager::leader_info_updater(raft_group_state& state, global_tablet_id tablet, raft::group_id gid) {
     try {
         const auto schema = _db.find_schema(tablet.table);
@@ -235,7 +253,7 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
                 logger.debug("leader_info_updater({}-{}): current term {}, running read_barrier()",
                     tablet, gid,
                     current_term);
-                co_await state.server->read_barrier(&state.as);
+                co_await state.server->read_barrier(&state.raft_ops_as);
                 state.leader_info = leader_info {
                     .term = current_term,
                     .last_timestamp = schema->table().get_max_timestamp_for_tablet(tablet.tablet)
@@ -252,7 +270,7 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
             }
             state.leader_info_cond.broadcast();
 
-            co_await state.server->wait_for_state_change(&state.as);
+            co_await state.server->wait_for_state_change(&state.raft_ops_as);
         }
     } catch (const raft::request_aborted&) {
         // thrown from read_barrier() and wait_for_state_change when the tablet leaves this shard
@@ -303,8 +321,12 @@ void groups_manager::update(token_metadata_ptr new_tm) {
         state.server_control_op = futurize_invoke([&state, this, tablet, id, new_tm](this auto) -> future<> {
             co_await state.server_control_op.get_future();
             //! Q: What does this throw?
-            //! A: ...
+            //! A: It's a bit complex because it involves IO and several other things.
+            //!    However, looking at it, it doesn't seem to be able to throw
+            //!    anything Raft related. It mostly relies on storage.
             co_await start_raft_group(tablet, id, std::move(new_tm));
+            //! Q: What does this throw?
+            //! A: It seems to be noexcept at first glance.
             state.server = &_raft_gr.get_server(id);
             //! This can only throw "unexpected" exceptions, so we should be good.
             state.leader_info_updater = leader_info_updater(state, tablet, id);
@@ -312,6 +334,7 @@ void groups_manager::update(token_metadata_ptr new_tm) {
         });
     });
 
+    // Noexcept...
     schedule_raft_groups_deletion(false);
 }
 
@@ -334,6 +357,9 @@ future<raft_server> groups_manager::acquire_server(raft::group_id group_id) {
     //! Corollary:
     //!   This function cannot throw anything dangerous to us. Either the gate is already
     //!   closed, or only the caller will run into something when awaiting it.
+    //!
+    //! Q: What does this throw?
+    //! A: It can only throw due to "unrelated" exceptions, mostly related to storage, it seems.
     return state.server_control_op.get_future().then([&state, h = state.gate->hold()] mutable {
         return raft_server(state, std::move(h));
     });
