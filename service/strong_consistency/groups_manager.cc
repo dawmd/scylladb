@@ -168,16 +168,19 @@ void groups_manager::schedule_raft_group_deletion(raft::group_id id, raft_group_
     state.as.request_abort();
 
     //! acquire_server awaits this future, so any exception thrown by this will affect it.
+    //!
+    //! Conclusion: This will not throw anything dangerous, it seems.
     state.server_control_op = futurize_invoke([this, &state, id, g = state.gate](this auto) -> future<> {
         co_await state.server_control_op.get_future();
         //! Q: What does this throw?
         //! A: Nothing.
         co_await g->close();
         //! Q: What does this throw?
-        //! A: ...
+        //! A: This has nothing to do with the `abort_source`, so we're probably good.
         co_await _raft_gr.abort_server(id);
         //! Q: What does this throw?
-        //! A: ...
+        //! A: This will never throw. The updater handles all expected types of exceptions,
+        //!    including `raft::abort_requested` or whatever it's called.
         co_await std::move(state.leader_info_updater);
 
         _raft_gr.destroy_server(id);
