@@ -74,6 +74,8 @@ auto coordinator::create_operation_ctx(const schema& schema, const dht::token& t
     //! Q: What can throw here?
     //! A: The thing that might actually throw something here is `server_control_op`.
     //!    Remember that the gate IS being held.
+    //!
+    //! Note: This CAN get stuck when executed in parallel to removing the Raft group.
     auto raft_server = co_await _groups_manager.acquire_server(raft_info.group_id);
 
     co_return operation_ctx {

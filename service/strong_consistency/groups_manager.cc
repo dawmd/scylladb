@@ -360,6 +360,12 @@ future<raft_server> groups_manager::acquire_server(raft::group_id group_id) {
     //!
     //! Q: What does this throw?
     //! A: It can only throw due to "unrelated" exceptions, mostly related to storage, it seems.
+    //!
+    //! ~~~~~~~~~~~~~~~~~~~~~~
+    //! ~ THIS CAN GET STUCK ~
+    //! ~~~~~~~~~~~~~~~~~~~~~~
+    //! If the Raft group is being removed in parallel to this, we'll get stuck
+    //! awaiting this future.
     return state.server_control_op.get_future().then([&state, h = state.gate->hold()] mutable {
         return raft_server(state, std::move(h));
     });

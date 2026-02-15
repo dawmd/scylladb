@@ -96,7 +96,8 @@ class groups_manager : public peering_sharded_service<groups_manager> {
     // * No exceptions.
     void schedule_raft_groups_deletion(bool all);
 
-    // Handles most exceptions
+    // Exceptions:
+    // * Handles most exceptions...
     future<> leader_info_updater(raft_group_state& state, locator::global_tablet_id tablet, raft::group_id gid);
 
     future<> wait_for_groups_to_start();
@@ -139,7 +140,10 @@ public:
     // * The group corresponding to the passed group_id must exist.
     //
     // Exceptions:
-    // * 
+    // * Unrelated exceptions, mostly due to storage.
+    //
+    // Problems:
+    // * May get stuck if executed in parallel to removing this group.
     future<raft_server> acquire_server(raft::group_id group_id);
 
     // Called during node boot. Waits for all raft::server instances corresponding
