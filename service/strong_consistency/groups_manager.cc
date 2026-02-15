@@ -15,6 +15,7 @@
 #include "service/storage_proxy.hh"
 #include "replica/database.hh"
 #include "db/config.hh"
+#include "utils/error_injection.hh"
 
 namespace service::strong_consistency {
 
@@ -162,10 +163,15 @@ void groups_manager::schedule_raft_group_deletion(raft::group_id id, raft_group_
     }
     logger.info("schedule_raft_group_deletion(): group id {}", id);
     state.server_control_op = futurize_invoke([this, &state, id, g = state.gate](this auto) -> future<> {
+        logger.info("schedule_raft_group_deletion: Step 1");
         co_await state.server_control_op.get_future();
+        logger.info("schedule_raft_group_deletion: Step 2");
         co_await g->close();
+        logger.info("schedule_raft_group_deletion: Step 3");
         co_await _raft_gr.abort_server(id);
+        logger.info("schedule_raft_group_deletion: Step 4");
         co_await std::move(state.leader_info_updater);
+        logger.info("schedule_raft_group_deletion: Step 5");
 
         _raft_gr.destroy_server(id);
         logger.info("schedule_raft_group_deletion(): raft server for group id {} is destroyed", id);
@@ -300,9 +306,11 @@ future<raft_server> groups_manager::acquire_server(raft::group_id group_id) {
         on_internal_error(logger, format("raft group {} not found", group_id));
     }
     auto& state = it->second;
-    return state.server_control_op.get_future().then([&state, h = state.gate->hold()] mutable {
-        return raft_server(state, std::move(h));
-    });
+    auto h = state.gate->hold();
+    co_await utils::get_local_injector().inject("sc_get_stuck", utils::wait_for_message(5min));
+    co_await state.server_control_op.get_future();
+    logger.info("Got future!");
+    co_return raft_server(state, std::move(h));
 }
 
 future<> groups_manager::start() {

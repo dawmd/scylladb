@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
 #
 
+import asyncio
 from test.pylib.manager_client import ManagerClient
 from test.pylib.util import gather_safely, wait_for
 from test.cluster.util import new_test_keyspace
@@ -90,3 +91,57 @@ async def test_basic_write_read(manager: ManagerClient):
 
     # To check that the servers can be stopped gracefully. By default the test runner just kills them.
     await gather_safely(*[manager.server_stop_gracefully(s.server_id) for s in servers])
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode("release", "injections don't work")
+async def test_get_stuck(manager: ManagerClient):
+    logger.info("Bootstrapping cluster")
+    config = {
+        "experimental_features": ["strongly-consistent-tables"]
+    }
+    cmdline = [
+        "--logger-log-level", "sc_groups_manager=debug",
+        "--logger-log-level", "sc_coordinator=debug"
+    ]
+    s1, s2 = await manager.servers_add(2, config=config, cmdline=cmdline, auto_rack_dc="dc1")
+    cql, [host1, host2] = await manager.get_ready_cql([s1, s2])
+
+    host_id1 = await manager.get_host_id(s1.server_id)
+
+    logger.info("Creating a strongly-consistent keyspace")
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "test"
+        table = f"{ks}.{table_name}"
+
+        logger.info(f"Creating table {table}")
+        await cql.run_async(f"CREATE TABLE {table}(pk int PRIMARY KEY, c int)")
+
+        logger.info("Select raft group id for the tablet")
+        table_id = await manager.get_table_id(ks, table_name)
+        rows = await cql.run_async(f"SELECT raft_group_id FROM system.tablets WHERE table_id = {table_id}")
+        group_id = str(rows[0].raft_group_id)
+
+        logger.info(f"Get current leader for the group {group_id}")
+        leader_host_id = await wait_for_leader(manager, s1, group_id)
+
+        if leader_host_id is not host_id1:
+            s1, s2 = s2, s1
+            host1, host2 = host2, host1
+
+        logger.info(f"Leader: host ID={leader_host_id}, IP={host1.address}, server ID={s1.server_id}")
+
+        log = await manager.server_open_log(s1.server_id)
+        mark = await log.mark()
+
+        await manager.api.enable_injection(host1.address, "sc_get_stuck", one_shot=True)
+
+        fut =  cql.run_async(f"INSERT INTO {table}(pk, c) VALUES (10, 20)", host=host1)
+        await log.wait_for("sc_get_stuck")
+
+        await cql.run_async(f"DROP TABLE {table}")
+        await log.wait_for("schedule_raft_group_deletion: Step 2", from_mark=mark, timeout=10)
+
+        await manager.api.message_injection(host1.address, "sc_get_stuck")
+        await manager.api.disable_injection(host1.address, "sc_get_stuck")
+
+        await asyncio.wait_for(fut, timeout=10)
