@@ -97,7 +97,14 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         const dht::token& token,
         mutation_gen&& mutation_gen)
 {
-    //! Covered above.
+    //! Covered above. Ignoring `acquire_server` potentially getting stuck,
+    //! we can assume either:
+    //!
+    //! (A) This will always succeed or throw an unrelated exception.
+    //!     We can then pass it to the user as a server error or whatever.
+    //! (B) This will always succeed.
+    //!
+    //! In either case, we're fine and can move forward.
     auto op_result = co_await create_operation_ctx(*schema, token);
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
         co_return *redirect;
