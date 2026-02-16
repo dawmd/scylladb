@@ -3093,6 +3093,7 @@ future<> storage_service::stop_transport() {
 
 future<> storage_service::drain_on_shutdown() {
     SCYLLA_ASSERT(this_shard_id() == 0);
+    _groups_manager.schedule_groups_removal();
     return (_operation_mode == mode::DRAINING || _operation_mode == mode::DRAINED) ?
         _drain_finished.get_future() : do_drain();
 }

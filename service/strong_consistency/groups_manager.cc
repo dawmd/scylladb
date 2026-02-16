@@ -194,6 +194,8 @@ void groups_manager::schedule_raft_group_deletion(raft::group_id id, raft_group_
         // gone really wrong. It shouldn't happen under normal circumstances.
         co_await state.server_control_op.get_future();
 
+        logger.debug("schedule_raft_group_deletion(): starting removing raft server for group id {}", id);
+
         // The removal operation only starts at this point,
         // so we can't request aborting the Raft operation before
         // this point.
@@ -406,6 +408,10 @@ future<> groups_manager::stop() {
     }
 
     logger.info("stop() completed");
+}
+
+void groups_manager::schedule_groups_removal() {
+    schedule_raft_groups_deletion(true);
 }
 
 }

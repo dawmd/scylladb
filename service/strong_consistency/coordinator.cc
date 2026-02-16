@@ -146,6 +146,8 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
             command.mutation.pretty_printer(schema), term);
 
         auto& group_state = op.raft_server._state;
+        co_await utils::get_local_injector().inject("sc_coordinator_wait_before_adding_entry",
+                utils::wait_for_message(5min));
 
         try {
             co_await op.raft_server.server().add_entry(std::move(raft_cmd),
@@ -223,6 +225,9 @@ auto coordinator::query(schema_ptr schema,
     auto sub = group_state.raft_ops_as.subscribe([&] noexcept {
         aoe.abort_source().request_abort_ex(group_state.raft_ops_as.abort_requested_exception_ptr());
     });
+
+    co_await utils::get_local_injector().inject("sc_coordinator_wait_before_query_read_barrier",
+        utils::wait_for_message(5min));
 
     try {
         co_await op.raft_server.server().read_barrier(&aoe.abort_source());

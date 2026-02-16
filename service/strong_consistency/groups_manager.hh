@@ -154,6 +154,13 @@ public:
 
     // Called during node shutdown. Waits for all raft::server instances to stop.
     future<> stop();
+
+    // This is a temporary solution before we have tablet migrations
+    // for strongly consistent tablets.
+    //
+    // It should only be called at shutdown to cancel all remaining
+    // ongoing Raft operations and prevent getting stuck.
+    void schedule_groups_removal();
 };
 
 /// A temporary, RAII-style handle to an active Raft group server instance,
