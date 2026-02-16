@@ -1,5 +1,8 @@
 #include <fmt/std.h>
+#include "raft/raft.hh"
 #include "replication.hh"
+#include "seastar/core/abort_source.hh"
+#include "seastar/testing/thread_test_case.hh"
 #include "utils/error_injection.hh"
 #include <seastar/util/defer.hh>
 
@@ -67,4 +70,63 @@ SEASTAR_THREAD_TEST_CASE(test_release_memory_if_add_entry_throws) {
     cluster.add_entries(1, 0).get();
     cluster.read(read_value{0, 1}).get();
 #endif
+}
+
+// This test considers the simplest case of aborting operations on raft::server.
+// It verifies the following things:
+//
+// * Triggering the passed abort_source does abort the operation.
+// * The corresponding futures throw raft::request_aborted.
+//
+// We only cover the tests that aren't responsible for changing the state.
+SEASTAR_THREAD_TEST_CASE(test_aborting_raft_operations) {
+    const size_t command_size = sizeof(size_t);
+    raft_cluster<std::chrono::steady_clock> cluster(
+            test_case {
+                .nodes = 3,
+                .config = std::vector<raft::server::configuration>({
+                    raft::server::configuration {
+                        .snapshot_threshold_log_size = 0,
+                        .snapshot_trailing_size = 0,
+                        .max_log_size = command_size,
+                        .max_command_size = command_size
+                    }
+                })
+            },
+            ::apply_changes,
+            0,
+            0,
+            0, false, tick_delay, rpc_config{});
+    cluster.start_all().get();
+    auto stop = defer([&cluster] { cluster.stop_all().get(); });
+
+    const size_t server_id = 0;
+    auto& server = cluster.get_server(server_id);
+
+    // The operations below, e.g. read_barrier, need to go through the leader.
+    // We lose the leadership and isolate server 0 so that the corresponding
+    // futures don't resolve immediately. Thanks to this, aborting the operations
+    // will result in an exception as intended.
+    //
+    // Note that the isolated part of the cluster holds the quorum, so we won't
+    // be able to make progress.
+    cluster.elect_new_leader(1).get();
+    cluster.isolate(::isolate {.id = server_id}).get();
+
+    auto do_test = [&server] <typename Func> (Func func) {
+        abort_source as;
+        as.request_abort();
+        auto fut = std::invoke(func, server, &as);
+        BOOST_CHECK_THROW((void) fut.get(), raft::request_aborted);
+    };
+
+    do_test(&raft::server::read_barrier);
+    do_test(&raft::server::wait_for_state_change);
+
+    // TODO: These do not work out of the box. Extend the test to handle them too.
+    // do_test(&raft::server::wait_for_leader);
+    // do_test(&raft::server::trigger_snapshot);
+
+    // For a clean shutdown.
+    cluster.connect_all();
 }
