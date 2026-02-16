@@ -179,12 +179,15 @@ void groups_manager::schedule_raft_group_deletion(raft::group_id id, raft_group_
         //! A: [new] This will virutally never throw. It boils down to setting a bool
         //!    on each shard and then awaiting a future that already handles ALL
         //!    exceptions.
+
+        // This doesn't throw. All exceptions are handled by the callee.
         co_await _raft_gr.abort_server(id);
         //! Q: What does this throw?
         //! A: This will never throw. The updater handles all expected types of exceptions,
         //!    including `raft::abort_requested` or whatever it's called.
         //!
         //!    It only throw unexpected exceptions.
+        // This can only throw critical, unexpected exceptions.
         co_await std::move(state.leader_info_updater);
 
         //! Q: What does this throw?
@@ -326,7 +329,7 @@ void groups_manager::update(token_metadata_ptr new_tm) {
             //!    anything Raft related. It mostly relies on storage.
             co_await start_raft_group(tablet, id, std::move(new_tm));
             //! Q: What does this throw?
-            //! A: It seems to be noexcept at first glance.
+            //! A: `raft_group_not_found` if the group is not found. No other exceptions.
             state.server = &_raft_gr.get_server(id);
             //! This can only throw "unexpected" exceptions, so we should be good.
             state.leader_info_updater = leader_info_updater(state, tablet, id);

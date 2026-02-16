@@ -148,7 +148,7 @@ public:
     // Destroys the server for the given group and removes it from the registry.
     // The server must be aborted before this function is called, see the abort_server function.
     // No further access to this server must occur after this point.
-    void destroy_server(raft::group_id gid);
+    void destroy_server(raft::group_id gid) noexcept;
 
     // Must not be called before `start`.
     const raft::server_id& get_my_raft_id();

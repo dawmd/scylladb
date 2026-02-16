@@ -63,16 +63,16 @@ class groups_manager : public peering_sharded_service<groups_manager> {
         //   At least at first glance...
         shared_future<> server_control_op = make_ready_future<>();
 
-        // Populated only when this node thinks it's a tablet raft group leader.
-        std::optional<leader_info> leader_info = std::nullopt;
-        condition_variable leader_info_cond = condition_variable();
-        future<> leader_info_updater = make_ready_future<>();
-
-        // Responsbile for controlling the ongoing Raft operations.
+        // Responsible for controlling the ongoing Raft operations.
         //
         // The entity responsible for triggering it is groups_manager.
         // No other code should trigger it directly.
         abort_source raft_ops_as;
+
+        // Populated only when this node thinks it's a tablet raft group leader.
+        std::optional<leader_info> leader_info = std::nullopt;
+        condition_variable leader_info_cond = condition_variable();
+        future<> leader_info_updater = make_ready_future<>();
     };
 
     netw::messaging_service& _ms;
@@ -84,6 +84,8 @@ class groups_manager : public peering_sharded_service<groups_manager> {
     locator::token_metadata_ptr _pending_tm = nullptr;
     bool _started = false;
 
+    //! Q: What does this throw?
+    //! A: Only exceptions related to IO, etc.
     future<> start_raft_group(locator::global_tablet_id tablet,
         raft::group_id group_id,
         locator::token_metadata_ptr tm);

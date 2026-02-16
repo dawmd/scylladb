@@ -242,7 +242,7 @@ future<> raft_group_registry::uninit_rpc_verbs() {
     ).discard_result();
 }
 
-void raft_group_registry::destroy_server(raft::group_id gid) {
+void raft_group_registry::destroy_server(raft::group_id gid) noexcept {
     const auto it = _servers.find(gid);
     if (it == _servers.end()) {
         on_internal_error(rslog, format("destroy_server(): no server for group {}", gid));

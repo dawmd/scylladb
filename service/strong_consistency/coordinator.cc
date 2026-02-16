@@ -41,10 +41,10 @@ struct coordinator::operation_ctx {
 /// the passed schema and token.
 ///
 /// Preconditions:
-/// * ?
+/// * The Raft group corresponding to the tablet must exist on groups_manager.
 ///
 /// Exceptions:
-/// * ?
+/// * None.
 auto coordinator::create_operation_ctx(const schema& schema, const dht::token& token) 
     -> future<value_or_redirect<operation_ctx>>
 {
