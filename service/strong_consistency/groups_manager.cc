@@ -70,7 +70,7 @@ raft_server::raft_server(groups_manager::raft_group_state& state, gate::holder h
 auto raft_server::begin_mutate() -> begin_mutate_result {
     const auto leader = _state.server->current_leader();
     if (!leader) {
-        return need_wait_for_leader{_state.server->wait_for_leader(nullptr)};
+        return need_wait_for_leader{_state.server->wait_for_leader(&_state.raft_ops_as)};
     }
     if (leader != _state.server->id()) {
         return raft::not_a_leader{leader};
@@ -269,7 +269,7 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
                 logger.debug("leader_info_updater({}-{}): current term {}, running read_barrier()",
                     tablet, gid,
                     current_term);
-                co_await state.server->read_barrier(nullptr);
+                co_await state.server->read_barrier(&state.raft_ops_as);
                 state.leader_info = leader_info {
                     .term = current_term,
                     .last_timestamp = schema->table().get_max_timestamp_for_tablet(tablet.tablet)
@@ -286,7 +286,7 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
             }
             state.leader_info_cond.broadcast();
 
-            co_await state.server->wait_for_state_change(nullptr);
+            co_await state.server->wait_for_state_change(&state.raft_ops_as);
         }
     } catch (const raft::request_aborted&) {
         // thrown from read_barrier() and wait_for_state_change when the tablet leaves this shard

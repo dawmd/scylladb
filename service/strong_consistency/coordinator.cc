@@ -7,6 +7,7 @@
  */
 
 #include "coordinator.hh"
+#include "exceptions/exceptions.hh"
 #include "schema/schema.hh"
 #include "replica/database.hh"
 #include "locator/tablet_replication_strategy.hh"
@@ -115,7 +116,22 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
             co_return need_redirect{*target};
         }
         if (auto* wait_for_leader = get_if<raft_server::need_wait_for_leader>(&disposition)) {
-            co_await std::move(wait_for_leader->future);
+            try {
+                co_await std::move(wait_for_leader->future);
+            } catch (const raft::request_aborted& ex) {
+                // This can only happen when the Raft group started being removed.
+                //
+                // Unfortunately, for the time being, we cannot tell if it's because
+                // the tablet is migrated, or because e.g. the table has been dropped.
+                // If we retry the operation, we might very well end up in a deadlock.
+                // To avoid that, we throw an exception.
+                //
+                // FIXME: Design something better once we have more information.
+                logger.debug("mutate(): wait_for_leader, operation aborted {}, table {}.{}, tablet {}",
+                    ex, schema->ks_name(), schema->cf_name(), op.tablet_id);
+                throw exceptions::server_exception("Raft group is being removed. "
+                    "Retry the operation");
+            }
             continue;
         }
         const auto [ts, term] = get<raft_server::timestamp_with_term>(disposition);
@@ -128,14 +144,40 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
 
         logger.debug("mutate(): add_entry({}), term {}",
             command.mutation.pretty_printer(schema), term);
+
+        auto& group_state = op.raft_server._state;
+
         try {
             co_await op.raft_server.server().add_entry(std::move(raft_cmd),
                 raft::wait_type::committed,
-                nullptr);
+                &group_state.raft_ops_as);
             co_return std::monostate{};
         } catch (...) {
             auto ex = std::current_exception();
-            if (try_catch<raft::request_aborted>(ex) || try_catch<raft::stopped_error>(ex)) {
+            if (try_catch<raft::request_aborted>(ex)) {
+                logger.debug("mutate(): add_entry, got raft::request_aborted {}, table {}.{}, tablet {}, term {}",
+                    ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
+                // According to the description of raft_server::add_entry,
+                // this can only happen if the passed abort_source has been
+                // triggered:
+                //
+                // ```
+                // raft::request_aborted
+                //     Thrown if abort is requested before the operation finishes.
+                // ```
+                //
+                // This means that the Raft group is being removed from this
+                // replica's groups_manager.
+                //
+                // Unfortunately, for the time being, we cannot tell if it's because
+                // the tablet is being migrated, or because e.g. the table has been
+                // dropped. If we retry the operation, we might very well end up in
+                // a deadlock. To avoid that, we throw an exception.
+                //
+                // FIXME: Design something better once we have more information.
+                throw exceptions::server_exception("Raft group is being removed. "
+                    "Retry the operation");
+            } else if (try_catch<raft::stopped_error>(ex)) {
                 // Holding raft_server.holder guarantees that the raft::server is not
                 // aborted until the holder is released.
 
@@ -175,8 +217,46 @@ auto coordinator::query(schema_ptr schema,
         co_return *redirect;
     }
     auto& op = get<operation_ctx>(op_result);
+    auto& group_state = op.raft_server._state;
 
-    co_await op.raft_server.server().read_barrier(nullptr);
+    auto aoe = abort_on_expiry(timeout);
+    auto sub = group_state.raft_ops_as.subscribe([&] noexcept {
+        aoe.abort_source().request_abort_ex(group_state.raft_ops_as.abort_requested_exception_ptr());
+    });
+
+    try {
+        co_await op.raft_server.server().read_barrier(&aoe.abort_source());
+    } catch (const raft::request_aborted& ex) {
+        // According to the description of raft_server::add_entry,
+        // this can only happen if the passed abort_source has been
+        // triggered:
+        //
+        // ```
+        // raft::request_aborted
+        //     Thrown if abort is requested before the operation finishes.
+        // ```
+        //
+        // This means that the Raft group is being removed from this
+        // replica's groups_manager.
+        //
+        // Unfortunately, for the time being, we cannot tell if it's because
+        // the tablet is being migrated, or because e.g. the table has been
+        // dropped. If we retry the operation, we might very well end up in
+        // a deadlock. To avoid that, we throw an exception.
+        //
+        // FIXME: Design something better once we have more information.
+        logger.debug("query(): read_barrier [table {}.{}, tablet {}] aborted. Command: {}. Reason: {}",
+            schema->ks_name(), schema->cf_name(), op.tablet_id, cmd, ex);
+        throw exceptions::server_exception("Raft group is being removed. "
+            "Retry the operation");
+    } catch (const seastar::timed_out_error&) {
+        // FIXME: Use something better than seastar::timed_out_error.
+        throw;
+    } catch (...) {
+        logger.error("query() read barrier [table {}.{}, tablet {}], unexpected exception. Command: {}, Exception: {}",
+            schema->ks_name(), schema->cf_name(), op.tablet_id, cmd, std::current_exception());
+        throw;
+    }
 
     auto [result, cache_temp] = co_await _db.query(schema, cmd,
         query::result_options::only_result(), ranges, trace_state, timeout);
