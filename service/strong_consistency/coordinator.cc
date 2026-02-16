@@ -37,6 +37,14 @@ struct coordinator::operation_ctx {
     const locator::tablet_info& tablet_info;
 };
 
+/// Create a context object for an operation on the tablet corresponding to
+/// the passed schema and token.
+///
+/// Preconditions:
+/// * ?
+///
+/// Exceptions:
+/// * ?
 auto coordinator::create_operation_ctx(const schema& schema, const dht::token& token) 
     -> future<value_or_redirect<operation_ctx>>
 {
@@ -76,6 +84,16 @@ auto coordinator::create_operation_ctx(const schema& schema, const dht::token& t
     //!    Remember that the gate IS being held.
     //!
     //! Note: This CAN get stuck when executed in parallel to removing the Raft group.
+    //!       [Update] It's not that clear to be honest. My reproducer wasn't correct,
+    //!       and the new one seems to not work either because the table doesn't exist
+    //!       anymore when we enter this function (or even before that), so we don't
+    //!       come here. Maybe the implementation is correct and just not described. 
+    //!
+    //! Q: Do we have a guarantee that the raft group exists if we've come this far
+    //!    and not scheduled a redirect?
+    //! A: I'm not sure, but I think either way it's acceptable for now. We're still
+    //!    building the module. HOWEVER, we should definitely highlight it, even
+    //!    if just to avoid forgetting about it later on.
     auto raft_server = co_await _groups_manager.acquire_server(raft_info.group_id);
 
     co_return operation_ctx {
