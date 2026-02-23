@@ -165,7 +165,7 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         } catch (...) {
             auto ex = std::current_exception();
             if (try_catch<raft::stopped_error>(ex)) {
-                logger.debug("mutate(): add_entry, got raft::request_aborted {}, table {}.{}, tablet {}, term {}",
+                logger.debug("mutate(): add_entry, got raft::stopped_error {}, table {}.{}, tablet {}, term {}",
                     ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
                 // According to the description of raft_server::add_entry,
                 // this can only happen if the passed abort_source has been
@@ -189,12 +189,16 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
                 throw exceptions::server_exception("Raft group is being removed. "
                     "Retry the operation");
             } else if (try_catch<raft::request_aborted>(ex)) {
-                // Holding raft_server.holder guarantees that the raft::server is not
-                // aborted until the holder is released.
-
-                on_internal_error(logger,
-                    format("mutate(): add_entry, unexpected exception {}, table {}.{}, tablet {}, term {}", 
-                        ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term));
+                logger.debug("mutate(): add_entry, got raft::request_aborted {}, table {}.{}, tablet {}, term {}",
+                    ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
+                // If the main abort_source hasn't been triggered yet,
+                // that means the request hit a timeout.
+                //
+                // FIXME: Use a better exception type. The existing exceptions::read_timeout_exception
+                // doesn't fit strong consistency that well.
+                co_return coroutine::return_exception(exceptions::server_exception(
+                    ::format("Operation timed out for {}.{}", schema->ks_name(), schema->cf_name())
+                ));
             } else if (try_catch<raft::not_a_leader>(ex) || try_catch<raft::dropped_entry>(ex)) {
                 logger.debug("mutate(): add_entry, got retriable error {}, table {}.{}, tablet {}, term {}",
                     ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
