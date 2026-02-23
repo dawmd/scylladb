@@ -8,9 +8,11 @@
 
 #include "coordinator.hh"
 #include "exceptions/exceptions.hh"
+#include "raft/raft.hh"
 #include "schema/schema.hh"
 #include "replica/database.hh"
 #include "locator/tablet_replication_strategy.hh"
+#include "seastar/core/abort_source.hh"
 #include "service/strong_consistency/state_machine.hh"
 #include "service/strong_consistency/groups_manager.hh"
 #include "idl/strong_consistency/state_machine.dist.hh"
@@ -48,7 +50,7 @@ struct coordinator::operation_ctx {
 // Exceptions:
 // * If this function throws an exception, it's critical and unexpected.
 //   Under normal circumstances, it shouldn't throw any exceptions.
-auto coordinator::create_operation_ctx(const schema& schema, const dht::token& token) 
+auto coordinator::create_operation_ctx(const schema& schema, const dht::token& token, abort_source& as) 
     -> future<value_or_redirect<operation_ctx>>
 {
     auto erm = schema.table().get_effective_replication_map();
@@ -77,7 +79,7 @@ auto coordinator::create_operation_ctx(const schema& schema, const dht::token& t
         co_return need_redirect{target ? *target : tablet_info.replicas.at(0)};
     }
     const auto& raft_info = tablet_map.get_tablet_raft_info(tablet_id);
-    auto raft_server = co_await _groups_manager.acquire_server(raft_info.group_id);
+    auto raft_server = co_await _groups_manager.acquire_server(raft_info.group_id, as);
 
     co_return operation_ctx {
         .erm = std::move(erm),
@@ -96,16 +98,20 @@ coordinator::coordinator(groups_manager& groups_manager, replica::database& db)
 
 future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         const dht::token& token,
-        mutation_gen&& mutation_gen)
+        mutation_gen&& mutation_gen,
+        typename timeout_clock::time_point timeout)
 {
-    auto op_result = co_await create_operation_ctx(*schema, token);
+    auto aoe = abort_on_expiry<timeout_clock>(timeout);
+    auto sub = _as.subscribe([&aoe] noexcept { aoe.abort_source().request_abort(); });
+
+    auto op_result = co_await create_operation_ctx(*schema, token, aoe.abort_source());
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
         co_return *redirect;
     }
     auto& op = get<operation_ctx>(op_result);
 
     while (true) {
-        auto disposition = op.raft_server.begin_mutate();
+        auto disposition = op.raft_server.begin_mutate(aoe.abort_source());
         if (const auto* not_a_leader = get_if<raft::not_a_leader>(&disposition)) {
             const auto leader_host_id = locator::host_id{not_a_leader->leader.uuid()};
             const auto* target = find_replica(op.tablet_info, leader_host_id);
@@ -148,18 +154,17 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         logger.debug("mutate(): add_entry({}), term {}",
             command.mutation.pretty_printer(schema), term);
 
-        auto& group_state = op.raft_server._state;
         co_await utils::get_local_injector().inject("sc_coordinator_wait_before_adding_entry",
                 utils::wait_for_message(5min));
 
         try {
             co_await op.raft_server.server().add_entry(std::move(raft_cmd),
                 raft::wait_type::committed,
-                &group_state.raft_ops_as);
+                &aoe.abort_source());
             co_return std::monostate{};
         } catch (...) {
             auto ex = std::current_exception();
-            if (try_catch<raft::request_aborted>(ex)) {
+            if (try_catch<raft::stopped_error>(ex)) {
                 logger.debug("mutate(): add_entry, got raft::request_aborted {}, table {}.{}, tablet {}, term {}",
                     ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
                 // According to the description of raft_server::add_entry,
@@ -183,7 +188,7 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
                 // FIXME: Use a better exception type and error message.
                 throw exceptions::server_exception("Raft group is being removed. "
                     "Retry the operation");
-            } else if (try_catch<raft::stopped_error>(ex)) {
+            } else if (try_catch<raft::request_aborted>(ex)) {
                 // Holding raft_server.holder guarantees that the raft::server is not
                 // aborted until the holder is released.
 
@@ -218,20 +223,16 @@ auto coordinator::query(schema_ptr schema,
         db::timeout_clock::time_point timeout
     ) -> future<query_result_type>
 {
-    auto op_result = co_await create_operation_ctx(*schema, ranges[0].start()->value().token());
+    auto aoe = abort_on_expiry<timeout_clock>(timeout);
+    auto sub = _as.subscribe([&] noexcept { aoe.abort_source().request_abort(); });
+
+    auto op_result = co_await create_operation_ctx(*schema, ranges[0].start()->value().token(), aoe.abort_source());
+
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
         co_return *redirect;
     }
-    auto& op = get<operation_ctx>(op_result);
-    auto& group_state = op.raft_server._state;
 
-    auto aoe = abort_on_expiry(timeout);
-    // If the abort_source passed to the read_barrier below gets triggered,
-    // the exception thrown will always be raft::request_aborted with its
-    // custom (and informative) message. There's no point in setting any
-    // other exception or error message here. We cannot differentiate a timeout
-    // from the Raft group being removed anyway (at least at this stage).
-    auto sub = group_state.raft_ops_as.subscribe([&] noexcept { aoe.abort_source().request_abort(); });
+    auto& op = get<operation_ctx>(op_result);
 
     co_await utils::get_local_injector().inject("sc_coordinator_wait_before_query_read_barrier",
         utils::wait_for_message(5min));
@@ -239,43 +240,29 @@ auto coordinator::query(schema_ptr schema,
     try {
         co_await op.raft_server.server().read_barrier(&aoe.abort_source());
     } catch (const raft::request_aborted& ex) {
-        // According to the description of raft_server::add_entry,
-        // this can only happen if the passed abort_source has been
-        // triggered:
+        // If the main abort_source hasn't been triggered yet,
+        // that means the request hit a timeout.
         //
-        // ```
-        // raft::request_aborted
-        //     Thrown if abort is requested before the operation finishes.
-        // ```
+        // FIXME: Use a better exception type. The existing exceptions::read_timeout_exception
+        // doesn't fit strong consistency that well.
+        co_return coroutine::return_exception(exceptions::server_exception(
+            ::format("Operation timed out for {}.{}", schema->ks_name(), schema->cf_name())
+        ));
+    } catch (const raft::stopped_error& ex) {
+        // If the abort_source has been triggered, that means that the Raft
+        // group is being removed from this replica's groups_manager.
         //
-        // Unfortunately, this also means that both timing out and
-        // the Raft group being removed will have the same result.
-        // That's why we need this if-else statement here.
-        if (!group_state.raft_ops_as.abort_requested()) {
-            // If the main abort_source hasn't been triggered yet,
-            // that means the request hit a timeout.
-            //
-            // FIXME: Use a better exception type. The existing exceptions::read_timeout_exception
-            // doesn't fit strong consistency that well.
-            co_return coroutine::return_exception(exceptions::server_exception(
-                ::format("Operation timed out for {}.{}", schema->ks_name(), schema->cf_name())
-            ));
-        } else {
-            // If the abort_source has been triggered, that means that the Raft
-            // group is being removed from this replica's groups_manager.
-            //
-            // Unfortunately, for the time being, we cannot tell if it's because
-            // the tablet is being migrated or because e.g. the table has been
-            // dropped. If we retry the operation, we might very well end up in
-            // a deadlock. To avoid that, we throw an exception.
-            //
-            // FIXME: Design something better once we have more information.
-            logger.debug("query(): read_barrier [table {}.{}, tablet {}] aborted. Command: {}. Reason: {}",
-                schema->ks_name(), schema->cf_name(), op.tablet_id, cmd, ex);
-            // FIXME: Use a better exception type and error message.
-            co_return coroutine::return_exception(exceptions::server_exception("Raft group is being removed. "
-                "Retry the operation"));
-        }
+        // Unfortunately, for the time being, we cannot tell if it's because
+        // the tablet is being migrated or because e.g. the table has been
+        // dropped. If we retry the operation, we might very well end up in
+        // a deadlock. To avoid that, we throw an exception.
+        //
+        // FIXME: Design something better once we have more information.
+        logger.debug("query(): read_barrier [table {}.{}, tablet {}] aborted. Command: {}. Reason: {}",
+            schema->ks_name(), schema->cf_name(), op.tablet_id, cmd, ex);
+        // FIXME: Use a better exception type and error message.
+        co_return coroutine::return_exception(exceptions::server_exception("Raft group is being removed. "
+            "Retry the operation"));
     } catch (...) {
         logger.error("query() read barrier [table {}.{}, tablet {}], unexpected exception. Command: {}, Exception: {}",
             schema->ks_name(), schema->cf_name(), op.tablet_id, cmd, std::current_exception());
@@ -287,5 +274,11 @@ auto coordinator::query(schema_ptr schema,
 
     co_return std::move(result);
 }
+
+// abort_source::subscription coordinator::get_subscription(abort_source& as,
+//         typename timeout_clock::time_point timeout
+// ) {
+//     return 
+// }
 
 }

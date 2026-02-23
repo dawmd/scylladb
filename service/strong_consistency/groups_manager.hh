@@ -84,7 +84,7 @@ class groups_manager : public peering_sharded_service<groups_manager> {
         //
         // Invariants:
         // * Triggered iff the Raft group is being removed.
-        abort_source raft_ops_as;
+        // abort_source raft_ops_as;
 
         // Populated only when this node thinks it's a tablet raft group leader.
         std::optional<leader_info> leader_info = std::nullopt;
@@ -109,8 +109,6 @@ private:
     future<> start_raft_group(locator::global_tablet_id tablet,
         raft::group_id group_id,
         locator::token_metadata_ptr tm);
-
-    void abort_raft_group_operations(raft::group_id group_id) noexcept;
 
     void schedule_raft_group_deletion(raft::group_id group_id, raft_group_state& group_state);
 
@@ -144,9 +142,10 @@ public:
     // * The group corresponding to the passed group_id must exist.
     //
     // Exceptions:
+    // * raft::request_aborted ...
     // * If this function throws an exception, it's critical and unexpected.
     //   Under normal circumstances, it shouldn't throw any exceptions.
-    future<raft_server> acquire_server(raft::group_id group_id);
+    future<raft_server> acquire_server(raft::group_id group_id, abort_source&);
 
     // Called during node boot. Waits for all raft::server instances corresponding
     // to the latest group0 state to start.
@@ -173,9 +172,6 @@ public:
 /// the shutdown sequence will wait until this handle is destroyed, preventing use-after-free
 /// errors during ongoing operations.
 class raft_server {
-private:
-    friend class coordinator;
-
 private:
     groups_manager::raft_group_state& _state;
     gate::holder _holder;
@@ -204,7 +200,7 @@ public:
     //      the corresponding future may throw an exception if the Raft
     //      group started being removed before the operation finishes.
     // * No other exceptions.
-    begin_mutate_result begin_mutate();
+    begin_mutate_result begin_mutate(abort_source&);
 };
 
 }

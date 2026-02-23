@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "db/timeout_clock.hh"
 #include "mutation/mutation.hh"
 #include "query/query-result.hh"
 
@@ -22,25 +23,36 @@ template <typename T = std::monostate>
 using value_or_redirect = std::variant<T, need_redirect>;
 
 class coordinator : public peering_sharded_service<coordinator> {
+private:
+    using timeout_clock = db::timeout_clock;
+
+private:
     groups_manager& _groups_manager;
     replica::database& _db;
 
-    struct operation_ctx;
-    future<value_or_redirect<operation_ctx>> create_operation_ctx(const schema& schema, const dht::token& token);
+    abort_source _as;
 public:
     coordinator(groups_manager& groups_manager, replica::database& db);
 
     using mutation_gen = noncopyable_function<mutation(api::timestamp_type)>;
     future<value_or_redirect<>> mutate(schema_ptr schema, 
         const dht::token& token,
-        mutation_gen&& mutation_gen);
+        mutation_gen&& mutation_gen,
+        typename timeout_clock::time_point timeout);
 
     using query_result_type = value_or_redirect<lw_shared_ptr<query::result>>;
     future<query_result_type> query(schema_ptr schema,
         const query::read_command& cmd,
         const dht::partition_range_vector& ranges,
         tracing::trace_state_ptr trace_state,
-        db::timeout_clock::time_point timeout);
+        typename timeout_clock::time_point timeout);
+
+private:
+    struct operation_ctx;
+    future<value_or_redirect<operation_ctx>> create_operation_ctx(const schema& schema,
+        const dht::token& token, abort_source&);
+
+    // abort_source::subscription get_subscription(abort_source&);
 };
 
 }

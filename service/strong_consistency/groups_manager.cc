@@ -8,6 +8,7 @@
 
 #include "groups_manager.hh"
 
+#include "seastar/core/abort_source.hh"
 #include "service/strong_consistency/state_machine.hh"
 #include "gms/feature_service.hh"
 #include "service/raft/raft_rpc.hh"
@@ -67,10 +68,10 @@ raft_server::raft_server(groups_manager::raft_group_state& state, gate::holder h
 {
 }
 
-auto raft_server::begin_mutate() -> begin_mutate_result {
+auto raft_server::begin_mutate(abort_source& as) -> begin_mutate_result {
     const auto leader = _state.server->current_leader();
     if (!leader) {
-        return need_wait_for_leader{_state.server->wait_for_leader(&_state.raft_ops_as)};
+        return need_wait_for_leader{_state.server->wait_for_leader(&as)};
     }
     if (leader != _state.server->id()) {
         return raft::not_a_leader{leader};
@@ -156,30 +157,6 @@ future<> groups_manager::start_raft_group(global_tablet_id tablet,
     });
 }
 
-// Abort all ongoing Raft operations corresponding to a given group ID.
-//
-// This function only intitates the aborting procedure. It's not responsible
-// for handling the subsequent consequences of this action.
-// The entities responsible for that are the callers of the Raft operations.
-//
-// Preconditions:
-// * The passed group_id corresponds to an existing Raft group
-//   managed by this groups_manager.
-//
-// Exceptions:
-// * The function doesn't throw any exceptions.
-void groups_manager::abort_raft_group_operations(raft::group_id group_id) noexcept {
-    logger.debug("Scheduling abortion of Raft operations for group_id={} starts", group_id);
-
-    auto it = _raft_groups.find(group_id);
-    SCYLLA_ASSERT(it != _raft_groups.end());
-
-    raft_group_state& state = it->second;
-    state.raft_ops_as.request_abort();
-
-    logger.debug("Scheduling abortion of Raft operations for group_id={} completed", group_id);
-}
-
 // Conditionally schedule a group removal.
 //
 // Exceptions:
@@ -196,13 +173,12 @@ void groups_manager::schedule_raft_group_deletion(raft::group_id id, raft_group_
 
         logger.debug("schedule_raft_group_deletion(): starting removing raft server for group id {}", id);
 
-        // The removal operation only starts at this point,
-        // so we can't request aborting the Raft operation before
-        // this point.
-        state.raft_ops_as.request_abort();
-
-        co_await g->close();
+        // This will cancel all ongoing Raft operations for this group.
         co_await _raft_gr.abort_server(id);
+        // We can only close the gate now. This will wait for all ongoing
+        // operations to release their raft_servers.
+        co_await g->close();
+
         co_await std::move(state.leader_info_updater);
 
         _raft_gr.destroy_server(id);
@@ -271,7 +247,8 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
                 logger.debug("leader_info_updater({}-{}): current term {}, running read_barrier()",
                     tablet, gid,
                     current_term);
-                co_await state.server->read_barrier(&state.raft_ops_as);
+                // OK because ...
+                co_await state.server->read_barrier(nullptr);
                 state.leader_info = leader_info {
                     .term = current_term,
                     .last_timestamp = schema->table().get_max_timestamp_for_tablet(tablet.tablet)
@@ -288,7 +265,8 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
             }
             state.leader_info_cond.broadcast();
 
-            co_await state.server->wait_for_state_change(&state.raft_ops_as);
+            // OK because ...
+            co_await state.server->wait_for_state_change(nullptr);
         }
     } catch (const raft::request_aborted&) {
         // thrown from read_barrier() and wait_for_state_change when the tablet leaves this shard
@@ -303,9 +281,8 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
         logger.debug("leader_info_updater({}-{}): got replica::no_such_column_family {}",
             tablet, gid, std::current_exception());
     } catch (...) {
-        logger.error("leader_info_updater({}-{}): got unexpected exception {}",
-            tablet, gid, std::current_exception());
-        throw;
+        on_internal_error(logger, ::format("leader_info_updater({}-{}): unexpected exception: {}",
+            tablet, gid, std::current_exception()));
     }
 }
 
@@ -336,22 +313,6 @@ void groups_manager::update(token_metadata_ptr new_tm) {
         state.gate = make_lw_shared<gate>();
         state.server_control_op = futurize_invoke([&state, this, tablet, id, new_tm](this auto) -> future<> {
             co_await state.server_control_op.get_future();
-
-            // We can only replace the abort source with a new one now.
-            //
-            // The previous operation in the chain state.server_control_op
-            // might've been a removal of the group.
-            // In that case, the abort source must stay alive until all of
-            // the operations have finished. That corresponds to the future
-            // above being resolved.
-            //
-            // Note that no operations on the Raft log will be initiated before
-            // `state.server_control_op` has resolved. It's protected by
-            // `groups_manager::`acquire_server`. Thanks to this, it doesn't
-            // matter that there's a gap between this instruction and
-            // reconstructing the gate above.
-            state.raft_ops_as = abort_source{};
-
             co_await start_raft_group(tablet, id, std::move(new_tm));
             state.server = &_raft_gr.get_server(id);
             state.leader_info_updater = leader_info_updater(state, tablet, id);
@@ -362,7 +323,7 @@ void groups_manager::update(token_metadata_ptr new_tm) {
     schedule_raft_groups_deletion(false);
 }
 
-future<raft_server> groups_manager::acquire_server(raft::group_id group_id) {
+future<raft_server> groups_manager::acquire_server(raft::group_id group_id, abort_source& as) {
     if (this_shard_id() != 0 || !_features.strongly_consistent_tables) {
         on_internal_error(logger, "strongly consistent tables are not enabled on this shard");
     }
@@ -372,7 +333,7 @@ future<raft_server> groups_manager::acquire_server(raft::group_id group_id) {
         on_internal_error(logger, format("raft group {} not found", group_id));
     }
     auto& state = it->second;
-    return state.server_control_op.get_future().then([&state, h = state.gate->hold()] mutable {
+    return state.server_control_op.get_future(as).then([&state, h = state.gate->hold()] mutable {
         return raft_server(state, std::move(h));
     });
 }
