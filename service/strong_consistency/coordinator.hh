@@ -34,6 +34,8 @@ private:
 public:
     coordinator(groups_manager& groups_manager, replica::database& db);
 
+    void abort_operations() noexcept;
+
     using mutation_gen = noncopyable_function<mutation(api::timestamp_type)>;
     future<value_or_redirect<>> mutate(schema_ptr schema, 
         const dht::token& token,

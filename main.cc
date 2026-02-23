@@ -2545,6 +2545,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             alternator::controller alternator_ctl(gossiper, proxy, ss, mm, sys_dist_ks, cdc_generation_service, service_memory_limiter, auth_service, sl_controller, *cfg, dbcfg.statement_scheduling_group);
 
             // Register at_exit last, so that storage_service::drain_on_shutdown will be called first
+            //! The shutdown hangs here!
             auto do_drain = defer_verbose_shutdown("local storage", [&ss] {
                 ss.local().drain_on_shutdown().get();
             });
@@ -2562,8 +2563,9 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             // To avoid ending up in a deadlock, we schedule removals of strongly consistent Raft
             // groups here. This way, all requests should finish relatively quickly, and we'll
             // be able to complete the shutdown.
-            auto schedule_sc_groups_removal = defer([&groups_manager] {
-                groups_manager.invoke_on_all(&service::strong_consistency::groups_manager::schedule_groups_removal).get();
+            //! Here?
+            auto sc_abort_ops = defer([&sc_coordinator] {
+                sc_coordinator.invoke_on_all(&service::strong_consistency::coordinator::abort_operations).get();
             });
 
             auth_service.local().ensure_superuser_is_created().get();

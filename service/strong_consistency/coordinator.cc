@@ -96,6 +96,10 @@ coordinator::coordinator(groups_manager& groups_manager, replica::database& db)
 {
 }
 
+void coordinator::abort_operations() noexcept {
+    _as.request_abort();
+}
+
 future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         const dht::token& token,
         mutation_gen&& mutation_gen,

@@ -371,8 +371,4 @@ future<> groups_manager::stop() {
     logger.info("stop() completed");
 }
 
-void groups_manager::schedule_groups_removal() {
-    schedule_raft_groups_deletion(true);
-}
-
 }
