@@ -17,6 +17,8 @@
 #include "replica/database.hh"
 #include "db/config.hh"
 
+#include <seastar/core/abort_source.hh>
+
 namespace service::strong_consistency {
 
 using namespace locator;
@@ -68,10 +70,10 @@ raft_server::raft_server(groups_manager::raft_group_state& state, gate::holder h
 {
 }
 
-auto raft_server::begin_mutate() -> begin_mutate_result {
+auto raft_server::begin_mutate(abort_source& as, db::timeout_clock::time_point timeout) -> begin_mutate_result {
     const auto leader = _state.server->current_leader();
     if (!leader) {
-        return need_wait_for_leader{_state.server->wait_for_leader(nullptr)};
+        return need_wait_for_leader{_state.server->wait_for_leader(&as)};
     }
     if (leader != _state.server->id()) {
         return raft::not_a_leader{leader};
@@ -86,7 +88,7 @@ auto raft_server::begin_mutate() -> begin_mutate_result {
         // after every state change wake-up. This ensures we will not deadlock,
         // even if the raft server state changes again (e.g., we lose leadership)
         // before the updater gets a chance to run.
-        return need_wait_for_leader{_state.leader_info_cond.wait()};
+        return need_wait_for_leader{_state.leader_info_cond.wait(timeout)};
     }
     const auto new_ts = std::max(api::new_timestamp(), _state.leader_info->last_timestamp + 1);
     _state.leader_info->last_timestamp = new_ts;
@@ -296,7 +298,7 @@ void groups_manager::update(token_metadata_ptr new_tm) {
     schedule_raft_groups_deletion(false);
 }
 
-future<raft_server> groups_manager::acquire_server(raft::group_id group_id) {
+future<raft_server> groups_manager::acquire_server(raft::group_id group_id, abort_source& as) {
     if (!_features.strongly_consistent_tables) {
         on_internal_error(logger, "strongly consistent tables are not enabled on this shard");
     }
@@ -306,7 +308,7 @@ future<raft_server> groups_manager::acquire_server(raft::group_id group_id) {
         on_internal_error(logger, format("raft group {} not found", group_id));
     }
     auto& state = it->second;
-    return state.server_control_op.get_future().then([&state, h = state.gate->hold()] mutable {
+    return state.server_control_op.get_future(as).then([&state, h = state.gate->hold()] mutable {
         return raft_server(state, std::move(h));
     });
 }

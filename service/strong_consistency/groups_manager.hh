@@ -110,7 +110,7 @@ public:
     void update(locator::token_metadata_ptr new_tm);
 
     // The raft_server instance is used to submit write commands and perform read_barrier() before reads.
-    future<raft_server> acquire_server(raft::group_id group_id);
+    future<raft_server> acquire_server(raft::group_id group_id, abort_source& as);
 
     // Called during node boot. Waits for all raft::server instances corresponding
     // to the latest group0 state to start.
@@ -152,7 +152,9 @@ public:
         future<> future;
     };
     using begin_mutate_result = std::variant<timestamp_with_term, raft::not_a_leader, need_wait_for_leader>;
-    begin_mutate_result begin_mutate();
+    // When we reach the specified timeout, the abort source should be triggered too.
+    // Passing the timeout alone may not be enough if the abort source is not triggered.
+    begin_mutate_result begin_mutate(abort_source&, db::timeout_clock::time_point timeout);
 };
 
 }
