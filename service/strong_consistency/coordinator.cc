@@ -87,6 +87,14 @@ auto coordinator::create_operation_ctx(const schema& schema, const dht::token& t
         // FIXME: Use a better exception type.
         co_return coroutine::return_exception(exceptions::server_exception(
             "Operation timed out."));
+    } catch (const raft::stopped_error& ex) {
+        // If the server has been stopped, it means that the Raft group
+        // has been removed.
+        logger.debug("create_operation_ctx(): acquire_server, operation aborted {}, table {}.{}, tablet {}",
+            ex, schema.ks_name(), schema.cf_name(), tablet_id);
+        // FIXME: Use a better exception type.
+        co_return coroutine::return_exception(exceptions::server_exception(
+            "Raft group is being removed. Retry the operation."));
     }
 }
 
@@ -136,6 +144,14 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
                 // FIXME: Use a better exception type.
                 co_return coroutine::return_exception(exceptions::server_exception(
                     "Operation timed out."));
+            } catch (const raft::stopped_error& ex) {
+                // If the server has been stopped, it means that the Raft group
+                // has been removed.
+                logger.debug("mutate(): wait_for_leader, operation aborted {}, table {}.{}",
+                    ex, schema->ks_name(), schema->cf_name());
+                // FIXME: Use a better exception type.
+                co_return coroutine::return_exception(exceptions::server_exception(
+                    "Raft group is being removed. Retry the operation."));
             }
             continue;
         }
@@ -168,12 +184,13 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
                 co_return coroutine::return_exception(exceptions::server_exception(
                     "Operation timed out."));
             } else if(try_catch<raft::stopped_error>(ex)) {
-                // Holding raft_server.holder guarantees that the raft::server is not
-                // aborted until the holder is released.
-
-                on_internal_error(logger,
-                    format("mutate(): add_entry, unexpected exception {}, table {}.{}, tablet {}, term {}", 
-                        ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term));
+                // If the server has been stopped, it means that the Raft group
+                // has been removed.
+                logger.debug("mutate(): add_entry, operation aborted {}, table {}.{}, tablet {}, term {}",
+                    ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
+                // FIXME: Use a better exception type.
+                co_return coroutine::return_exception(exceptions::server_exception(
+                    "Raft group is being removed. Retry the operation."));
             } else if (try_catch<raft::not_a_leader>(ex) || try_catch<raft::dropped_entry>(ex)) {
                 logger.debug("mutate(): add_entry, got retriable error {}, table {}.{}, tablet {}, term {}",
                     ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
@@ -223,6 +240,14 @@ auto coordinator::query(schema_ptr schema,
         // FIXME: Use a better exception type.
         co_return coroutine::return_exception(exceptions::server_exception(
             "Operation timed out."));
+    } catch (const raft::stopped_error& ex) {
+        // If the server has been stopped, it means that the Raft group
+        // has been removed.
+        logger.debug("create_operation_ctx(): acquire_server, operation aborted {}, table {}.{}",
+            ex, schema->ks_name(), schema->cf_name());
+        // FIXME: Use a better exception type.
+        co_return coroutine::return_exception(exceptions::server_exception(
+            "Raft group is being removed. Retry the operation."));
     }
 
     auto [result, cache_temp] = co_await _db.query(schema, cmd,

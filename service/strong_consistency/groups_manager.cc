@@ -163,8 +163,17 @@ void groups_manager::schedule_raft_group_deletion(raft::group_id id, raft_group_
     logger.info("schedule_raft_group_deletion(): group id {}", id);
     state.server_control_op = futurize_invoke([this, &state, id, g = state.gate](this auto) -> future<> {
         co_await state.server_control_op.get_future();
-        co_await g->close();
+
+        // Step 1. Block all new user operations.
+        future<> gate_fut = g->close();
+        // Step 2. Abort all ongoing user operations. Coordinator will
+        //         handle the exceptions, and it will know that the Raft
+        //         group is being removed.
         co_await _raft_gr.abort_server(id);
+        logger.debug("schedule_raft_group_deletion(): raft server for group id {} aborted", id);
+        // Step 3. Wait for all ongoing operations to complete.
+        co_await std::move(gate_fut);
+
         co_await std::move(state.leader_info_updater);
 
         _raft_gr.destroy_server(id);
@@ -219,6 +228,10 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
                 logger.debug("leader_info_updater({}-{}): current term {}, running read_barrier()",
                     tablet, gid,
                     current_term);
+                // We intentionally pass nullptr here. If the tablet is leaving this node,
+                // the Raft server will be aborted and the loop will break.
+                // The same will happen when the node is shutting down.
+                // There's no reason to abort this operation in any other case.
                 co_await state.server->read_barrier(nullptr);
                 state.leader_info = leader_info {
                     .term = current_term,
@@ -236,6 +249,10 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
             }
             state.leader_info_cond.broadcast();
 
+            // We intentionally pass nullptr here. If the tablet is leaving this node,
+            // the Raft server will be aborted and the loop will break.
+            // The same will happen when the node is shutting down.
+            // There's no reason to abort this operation in any other case.
             co_await state.server->wait_for_state_change(nullptr);
         }
     } catch (const raft::request_aborted&) {

@@ -185,3 +185,92 @@ async def test_timed_out_write(manager: ManagerClient, error_injection_name: str
 
         # Sanity check: Nothing broke and we can still write to the table.
         await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 7)")
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_aborted_read(manager: ManagerClient):
+    """
+    A simple test verifying that pending reads to a strongly consistent
+    table are canceled if the table has been dropped in the meantime.
+
+    The test focuses on a Raft operation as being the potential reason
+    for the read to get stuck or being slow enough that the table can
+    be dropped during its execution.
+    """
+
+    s1 = await manager.server_add(config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE)
+    cql, _ = await manager.get_ready_cql([s1])
+
+    log = await manager.server_open_log(s1.server_id)
+    mark = await log.mark()
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+        await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)")
+        await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier", one_shot=True)
+
+        fut = cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
+        await log.wait_for("sc_coordinator_wait_before_query_read_barrier", from_mark=mark)
+
+        mark = await log.mark()
+
+        await cql.run_async(f"DROP TABLE {table}")
+
+        # Sanity check: The table was really dropped and we can no longer read from it.
+        with pytest.raises(InvalidRequest, match="unconfigured table"):
+            await cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
+
+        # Wait for the Raft group to be removed. This should happen almost immediately
+        # after dropping the table, but let's avoid any potential casue of flakiness.
+        await log.wait_for(r"schedule_raft_group_deletion\(\): raft server for group id \S+ aborted", from_mark=mark)
+
+        await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier")
+        with pytest.raises(Exception, match="Raft group is being removed. Retry the operation"):
+            await fut
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_aborted_write(manager: ManagerClient):
+    """
+    A simple test verifying that pending writes to a strongly consistent
+    table are canceled if the table has been dropped in the meantime.
+
+    The test focuses on a Raft operation as being the potential reason
+    for the write to get stuck or being slow enough that the table can
+    be dropped during its execution.
+    """
+
+    s1 = await manager.server_add(config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE)
+    cql, _ = await manager.get_ready_cql([s1])
+
+    log = await manager.server_open_log(s1.server_id)
+    mark = await log.mark()
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+        await manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_add_entry", one_shot=True)
+
+        fut = cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)")
+        await log.wait_for("sc_coordinator_wait_before_add_entry", from_mark=mark)
+
+        mark = await log.mark()
+
+        await cql.run_async(f"DROP TABLE {table}")
+
+        # Sanity check: The table was really dropped and we can no longer write to it.
+        with pytest.raises(InvalidRequest, match="unconfigured table"):
+            await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 11)")
+
+        # Wait for the Raft group to be removed. This should happen almost immediately
+        # after dropping the table, but let's avoid any potential casue of flakiness.
+        await log.wait_for(r"schedule_raft_group_deletion\(\): raft server for group id \S+ aborted", from_mark=mark)
+
+        await manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_add_entry")
+        with pytest.raises(Exception, match="Raft group is being removed. Retry the operation"):
+            await fut
