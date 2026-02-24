@@ -253,6 +253,9 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
         // thrown from find_schema() and schema->table() when the table is dropped
         logger.debug("leader_info_updater({}-{}): got replica::no_such_column_family {}",
             tablet, gid, std::current_exception());
+    } catch (...) {
+        on_internal_error(logger, ::format("leader_info_updater({}-{}): unexpected exception: {}",
+            tablet, gid, std::current_exception()));
     }
 }
 
