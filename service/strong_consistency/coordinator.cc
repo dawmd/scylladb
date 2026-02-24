@@ -15,6 +15,7 @@
 #include "locator/tablet_replication_strategy.hh"
 #include "service/strong_consistency/state_machine.hh"
 #include "service/strong_consistency/groups_manager.hh"
+#include "utils/error_injection.hh"
 #include "idl/strong_consistency/state_machine.dist.hh"
 #include "idl/strong_consistency/state_machine.dist.impl.hh"
 
@@ -93,6 +94,9 @@ auto coordinator::create_operation_ctx(const schema& schema, const dht::token& t
     }
     const auto& raft_info = tablet_map.get_tablet_raft_info(tablet_id);
 
+    co_await utils::get_local_injector().inject("sc_coordinator_wait_before_acquire_server",
+            utils::wait_for_message(5min));
+
     auto raft_server = co_await _groups_manager.acquire_server(raft_info.group_id, as);
 
     co_return operation_ctx {
@@ -125,6 +129,9 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         auto& op = get<operation_ctx>(op_result);
 
         while (true) {
+            co_await utils::get_local_injector().inject("sc_coordinator_wait_before_begin_mutate",
+                utils::wait_for_message(5min));
+
             auto disposition = op.raft_server.begin_mutate(aoe.abort_source(), timeout);
             if (const auto* not_a_leader = get_if<raft::not_a_leader>(&disposition)) {
                 const auto leader_host_id = locator::host_id{not_a_leader->leader.uuid()};
@@ -151,6 +158,10 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
 
             logger.debug("mutate(): add_entry({}), term {}",
                 command.mutation.pretty_printer(schema), term);
+
+            co_await utils::get_local_injector().inject("sc_coordinator_wait_before_add_entry",
+                utils::wait_for_message(5min));
+
             try {
                 co_await op.raft_server.server().add_entry(std::move(raft_cmd),
                     raft::wait_type::committed,
@@ -223,6 +234,9 @@ auto coordinator::query(schema_ptr schema,
             co_return *redirect;
         }
         auto& op = get<operation_ctx>(op_result);
+
+        co_await utils::get_local_injector().inject("sc_coordinator_wait_before_query_read_barrier",
+            utils::wait_for_message(5min));
 
         co_await op.raft_server.server().read_barrier(&aoe.abort_source());
 

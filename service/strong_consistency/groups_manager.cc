@@ -225,6 +225,10 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
                     tablet, gid,
                     current_term);
                 co_await state.server->read_barrier(nullptr);
+
+                co_await utils::get_local_injector().inject("sc_leader_info_updater_wait_before_setting_leader_info",
+                    utils::wait_for_message(5min));
+
                 state.leader_info = leader_info {
                     .term = current_term,
                     .last_timestamp = schema->table().get_max_timestamp_for_tablet(tablet.tablet)
