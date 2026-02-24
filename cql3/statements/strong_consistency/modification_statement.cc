@@ -48,6 +48,8 @@ future<shared_ptr<result_message>> modification_statement::execute_without_check
     }
 
     auto [coordinator, holder] = qp.acquire_strongly_consistent_coordinator();
+    const auto timeout = db::timeout_clock::now() + _statement->get_timeout(qs.get_client_state(), options);
+
     const auto mutate_result = co_await coordinator.get().mutate(_statement->s,
         keys[0].start()->value().token(),
         [&](api::timestamp_type ts) {
@@ -61,7 +63,7 @@ future<shared_ptr<result_message>> modification_statement::execute_without_check
                     raw_cql_statement, muts.size()));
             }
             return std::move(*muts.begin());
-        });
+        }, timeout);
 
     using namespace service::strong_consistency;
     if (const auto* redirect = get_if<need_redirect>(&mutate_result)) {
