@@ -30,7 +30,9 @@ private:
     replica::database& _db;
 
     struct operation_ctx;
-    future<value_or_redirect<operation_ctx>> create_operation_ctx(const schema& schema, const dht::token& token);
+    future<value_or_redirect<operation_ctx>> create_operation_ctx(const schema& schema,
+        const dht::token& token,
+        abort_source& as);
 public:
     coordinator(groups_manager& groups_manager, replica::database& db);
 

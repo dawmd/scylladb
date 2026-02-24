@@ -36,7 +36,7 @@ struct coordinator::operation_ctx {
     const locator::tablet_info& tablet_info;
 };
 
-auto coordinator::create_operation_ctx(const schema& schema, const dht::token& token) 
+auto coordinator::create_operation_ctx(const schema& schema, const dht::token& token, abort_source& as)
     -> future<value_or_redirect<operation_ctx>>
 {
     auto erm = schema.table().get_effective_replication_map();
@@ -65,15 +65,25 @@ auto coordinator::create_operation_ctx(const schema& schema, const dht::token& t
         co_return need_redirect{target ? *target : tablet_info.replicas.at(0)};
     }
     const auto& raft_info = tablet_map.get_tablet_raft_info(tablet_id);
-    auto raft_server = co_await _groups_manager.acquire_server(raft_info.group_id);
 
-    co_return operation_ctx {
-        .erm = std::move(erm),
-        .raft_server = std::move(raft_server),
-        .tablet_id = tablet_id,
-        .raft_info = raft_info,
-        .tablet_info = tablet_info
-    };
+    try {
+        auto raft_server = co_await _groups_manager.acquire_server(raft_info.group_id, as);
+
+        co_return operation_ctx {
+            .erm = std::move(erm),
+            .raft_server = std::move(raft_server),
+            .tablet_id = tablet_id,
+            .raft_info = raft_info,
+            .tablet_info = tablet_info
+        };
+    } catch (const raft::request_aborted& ex) {
+        // The request could only be aborted if we hit the timeout.
+        logger.debug("create_operation_ctx(): acquire_server, operation aborted {}, table {}.{}, tablet {}",
+            ex, schema.ks_name(), schema.cf_name(), tablet_id);
+        // FIXME: Use a better exception type.
+        co_return coroutine::return_exception(exceptions::server_exception(
+            "Operation timed out."));
+    }
 }
 
 coordinator::coordinator(groups_manager& groups_manager, replica::database& db)
@@ -87,14 +97,17 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         mutation_gen&& mutation_gen,
         timeout_clock::time_point timeout)
 {
-    auto op_result = co_await create_operation_ctx(*schema, token);
+    auto aoe = abort_on_expiry<timeout_clock>(timeout);
+
+    // Potential exceptions are handled by the callee.
+    auto op_result = co_await create_operation_ctx(*schema, token, aoe.abort_source());
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
         co_return *redirect;
     }
     auto& op = get<operation_ctx>(op_result);
 
     while (true) {
-        auto disposition = op.raft_server.begin_mutate();
+        auto disposition = op.raft_server.begin_mutate(aoe.abort_source());
         if (const auto* not_a_leader = get_if<raft::not_a_leader>(&disposition)) {
             const auto leader_host_id = locator::host_id{not_a_leader->leader.uuid()};
             const auto* target = find_replica(op.tablet_info, leader_host_id);
@@ -107,7 +120,16 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
             co_return need_redirect{*target};
         }
         if (auto* wait_for_leader = get_if<raft_server::need_wait_for_leader>(&disposition)) {
-            co_await std::move(wait_for_leader->future);
+            try {
+                co_await std::move(wait_for_leader->future);
+            } catch (const raft::request_aborted& ex) {
+                // The request could only be aborted if we hit the timeout.
+                logger.debug("mutate(): wait_for_leader, operation timed out {}, table {}.{}, tablet {}",
+                    ex, schema->ks_name(), schema->cf_name(), op.tablet_id);
+                // FIXME: Use a better exception type.
+                co_return coroutine::return_exception(exceptions::server_exception(
+                    "Operation timed out."));
+            }
             continue;
         }
         const auto [ts, term] = get<raft_server::timestamp_with_term>(disposition);
@@ -123,11 +145,18 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         try {
             co_await op.raft_server.server().add_entry(std::move(raft_cmd),
                 raft::wait_type::committed,
-                nullptr);
+                &aoe.abort_source());
             co_return std::monostate{};
         } catch (...) {
             auto ex = std::current_exception();
-            if (try_catch<raft::request_aborted>(ex) || try_catch<raft::stopped_error>(ex)) {
+            if (try_catch<raft::request_aborted>(ex)) {
+                // The request could only be aborted if we hit the timeout.
+                logger.debug("mutate(): add_entry, operation timed out {}, table {}.{}, tablet {}, term {}",
+                    ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
+                // FIXME: Use a better exception type.
+                co_return coroutine::return_exception(exceptions::server_exception(
+                    "Operation timed out."));
+            } else if(try_catch<raft::stopped_error>(ex)) {
                 // Holding raft_server.holder guarantees that the raft::server is not
                 // aborted until the holder is released.
 
@@ -162,13 +191,25 @@ auto coordinator::query(schema_ptr schema,
         timeout_clock::time_point timeout
     ) -> future<query_result_type>
 {
-    auto op_result = co_await create_operation_ctx(*schema, ranges[0].start()->value().token());
+    auto aoe = abort_on_expiry<timeout_clock>(timeout);
+
+    // Potential exceptions are handled by the callee.
+    auto op_result = co_await create_operation_ctx(*schema, ranges[0].start()->value().token(), aoe.abort_source());
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
         co_return *redirect;
     }
     auto& op = get<operation_ctx>(op_result);
 
-    co_await op.raft_server.server().read_barrier(nullptr);
+    try {
+        co_await op.raft_server.server().read_barrier(&aoe.abort_source());
+    } catch (const raft::request_aborted& ex) {
+        // The request could only be aborted if we hit the timeout.
+        logger.debug("query(): read_barrier, operation timed out {}, table {}.{}, tablet {}",
+            ex, schema->ks_name(), schema->cf_name(), op.tablet_id);
+        // FIXME: Use a better exception type.
+        co_return coroutine::return_exception(exceptions::server_exception(
+            "Operation timed out."));
+    }
 
     auto [result, cache_temp] = co_await _db.query(schema, cmd,
         query::result_options::only_result(), ranges, trace_state, timeout);
