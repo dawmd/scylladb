@@ -5,18 +5,26 @@
 #
 
 from test.pylib.manager_client import ManagerClient
-from test.pylib.util import gather_safely, wait_for
+from test.pylib.util import gather_safely, wait_for, Host
 from test.cluster.util import new_test_keyspace
-from test.pylib.internal_types import ServerInfo
+from test.pylib.internal_types import HostID, ServerInfo
 from cassandra.protocol import InvalidRequest
 
+import asyncio
 import pytest
 import logging
 import time
 import uuid
 
+from typing import Tuple
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_CONFIG = {'experimental_features': ['strongly-consistent-tables']}
+DEFAULT_CMDLINE = [
+        '--logger-log-level', 'sc_groups_manager=debug',
+        '--logger-log-level', 'sc_coordinator=debug'
+    ]
 
 
 async def wait_for_leader(manager: ManagerClient, s: ServerInfo, group_id: str):
@@ -28,16 +36,8 @@ async def wait_for_leader(manager: ManagerClient, s: ServerInfo, group_id: str):
 
 @pytest.mark.asyncio
 async def test_basic_write_read(manager: ManagerClient):
-
     logger.info("Bootstrapping cluster")
-    config = {
-        'experimental_features': ['strongly-consistent-tables']
-    }
-    cmdline = [
-        '--logger-log-level', 'sc_groups_manager=debug',
-        '--logger-log-level', 'sc_coordinator=debug'
-    ]
-    servers = await manager.servers_add(3, config=config, cmdline=cmdline, auto_rack_dc='my_dc')
+    servers = await manager.servers_add(3, config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE, auto_rack_dc='my_dc')
     (cql, hosts) = await manager.get_ready_cql(servers)
 
     logger.info("Load host_id-s for servers")
@@ -90,3 +90,98 @@ async def test_basic_write_read(manager: ManagerClient):
 
     # To check that the servers can be stopped gracefully. By default the test runner just kills them.
     await gather_safely(*[manager.server_stop_gracefully(s.server_id) for s in servers])
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+@pytest.mark.parametrize("error_injection_name", [
+    "sc_coordinator_wait_before_acquire_server",
+    "sc_coordinator_wait_before_query_read_barrier"])
+async def test_timed_out_read(manager: ManagerClient, error_injection_name: str):
+    """
+    A simple test verifying that we don't get stuck for an indefinite amount
+    of time while reading from a strongly consistent table. As soon as the
+    deadline for a query ends, the operation should be canceled and a time-out
+    exception should be returned.
+
+    This test focuses on a Raft operation being the potential reason for
+    getting stuck. It should be aborted when we reach the deadline.
+    """
+
+    s1 = await manager.server_add(config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE)
+    cql, _ = await manager.get_ready_cql([s1])
+
+    log = await manager.server_open_log(s1.server_id)
+    mark = await log.mark()
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+        await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)")
+        await manager.api.enable_injection(s1.ip_addr, error_injection_name, one_shot=True)
+
+        timeout = 1
+
+        read_fut = cql.run_async(f"SELECT * FROM {table} WHERE pk = 0 USING TIMEOUT {timeout}s")
+        await log.wait_for(error_injection_name, from_mark=mark)
+
+        # The sleep will take AT LEAST 1 second. Since we've already hit the error
+        # injection, the operation will have timed out when we wake up.
+        await asyncio.sleep(timeout)
+        await manager.api.message_injection(s1.ip_addr, error_injection_name)
+
+        # FIXME: Once Scylla throws a more proper exception type, adapt this to it.
+        with pytest.raises(Exception, match="Operation timed out"):
+            await read_fut
+
+        # Sanity check: Nothing broke and we can still read from the table.
+        res = await cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
+        assert res[0].v == 13
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+@pytest.mark.parametrize("error_injection_name", [
+    "sc_coordinator_wait_before_acquire_server",
+    "sc_coordinator_wait_before_begin_mutate",
+    "sc_coordinator_wait_before_add_entry"])
+async def test_timed_out_write(manager: ManagerClient, error_injection_name: str):
+    """
+    A simple test verifying that we don't get stuck for an indefinite amount
+    of time while writing to a strongly consistent table. As soon as the
+    deadline for a query ends, the operation should be canceled and a time-out
+    exception should be returned.
+
+    This test focuses on a Raft operation being the potential reason for
+    getting stuck. It should be aborted when we reach the deadline.
+    """
+
+    s1 = await manager.server_add(config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE)
+    cql, _ = await manager.get_ready_cql([s1])
+
+    log = await manager.server_open_log(s1.server_id)
+    mark = await log.mark()
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+        await manager.api.enable_injection(s1.ip_addr, error_injection_name, one_shot=True)
+
+        timeout = 1
+
+        write_fut = cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13) USING TIMEOUT {timeout}s")
+        await log.wait_for(error_injection_name, from_mark=mark)
+
+        # The sleep will take AT LEAST 1 second. Since we've already hit the error
+        # injection, the operation will have timed out when we wake up.
+        await asyncio.sleep(timeout)
+        await manager.api.message_injection(s1.ip_addr, error_injection_name)
+
+        # FIXME: Once Scylla throws a more proper exception type, adapt this to it.
+        with pytest.raises(Exception, match="Operation timed out"):
+            await write_fut
+
+        # Sanity check: Nothing broke and we can still write to the table.
+        await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 7)")
