@@ -281,12 +281,7 @@ async def test_read_when_shutting_down(manager: ManagerClient):
                 return (host, server)
         raise RuntimeError(f"Can't find host for host_id {host_id}")
 
-    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
-        table_name = "my_table"
-        table = f"{ks}.{table_name}"
-
-        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
-
+    async def get_leader(keyspace: str, table: str) -> Tuple[Host, ServerInfo]:
         logger.info("Select raft group id for the tablet")
         table_id = await manager.get_table_id(ks, table_name)
         rows = await cql.run_async(f"SELECT raft_group_id FROM system.tablets WHERE table_id = {table_id}")
@@ -294,9 +289,21 @@ async def test_read_when_shutting_down(manager: ManagerClient):
 
         logger.info(f"Get current leader for the group {group_id}")
         leader_host_id = await wait_for_leader(manager, servers[0], group_id)
+
         logger.info(f"Leader of group {group_id} is {leader_host_id}")
 
         leader_host, leader_info = await pick_leader_info(leader_host_id)
+        logger.info(f"Further information on leader of group {group_id}: server_id={leader_info.server_id}, ip={leader_info.ip_addr}")
+
+        return (leader_host, leader_info)
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+        leader_host, leader_info = await get_leader(ks, table_name)
+
         log = await manager.server_open_log(leader_info.server_id)
         mark = await log.mark()
 
@@ -307,7 +314,7 @@ async def test_read_when_shutting_down(manager: ManagerClient):
         mark = await log.mark()
 
         stop_fut = asyncio.create_task(manager.server_stop_gracefully(leader_info.server_id))
-        await log.wait_for(rf"schedule_raft_group_deletion\(\): starting removing raft server for group id {group_id}")
+        await log.wait_for("Aborting strongly consistent operations", from_mark=mark)
 
         await manager.api.message_injection(leader_info.ip_addr, "sc_coordinator_wait_before_query_read_barrier")
         with pytest.raises(Exception):
@@ -336,12 +343,7 @@ async def test_write_when_shutting_down(manager: ManagerClient):
                 return (host, server)
         raise RuntimeError(f"Can't find host for host_id {host_id}")
 
-    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
-        table_name = "my_table"
-        table = f"{ks}.{table_name}"
-
-        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
-
+    async def get_leader(keyspace: str, table: str) -> Tuple[Host, ServerInfo]:
         logger.info("Select raft group id for the tablet")
         table_id = await manager.get_table_id(ks, table_name)
         rows = await cql.run_async(f"SELECT raft_group_id FROM system.tablets WHERE table_id = {table_id}")
@@ -355,6 +357,15 @@ async def test_write_when_shutting_down(manager: ManagerClient):
         leader_host, leader_info = await pick_leader_info(leader_host_id)
         logger.info(f"Further information on leader of group {group_id}: server_id={leader_info.server_id}, ip={leader_info.ip_addr}")
 
+        return (leader_host, leader_info)
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+        leader_host, leader_info = await get_leader(ks, table_name)
+
         log = await manager.server_open_log(leader_info.server_id)
         mark = await log.mark()
 
@@ -365,7 +376,7 @@ async def test_write_when_shutting_down(manager: ManagerClient):
         mark = await log.mark()
 
         stop_fut = asyncio.create_task(manager.server_stop_gracefully(leader_info.server_id))
-        await log.wait_for(rf"schedule_raft_group_deletion\(\): starting removing raft server for group id {group_id}")
+        await log.wait_for("Aborting strongly consistent operations", from_mark=mark)
 
         await manager.api.message_injection(leader_info.ip_addr, "sc_coordinator_wait_before_adding_entry")
         with pytest.raises(Exception):

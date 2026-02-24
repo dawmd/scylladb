@@ -97,6 +97,7 @@ coordinator::coordinator(groups_manager& groups_manager, replica::database& db)
 }
 
 void coordinator::abort_operations() noexcept {
+    logger.info("Aborting strongly consistent operations");
     _as.request_abort();
 }
 
