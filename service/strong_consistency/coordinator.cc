@@ -84,7 +84,8 @@ coordinator::coordinator(groups_manager& groups_manager, replica::database& db)
 
 future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         const dht::token& token,
-        mutation_gen&& mutation_gen)
+        mutation_gen&& mutation_gen,
+        timeout_clock::time_point timeout)
 {
     auto op_result = co_await create_operation_ctx(*schema, token);
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
@@ -158,7 +159,7 @@ auto coordinator::query(schema_ptr schema,
         const query::read_command& cmd,
         const dht::partition_range_vector& ranges,
         tracing::trace_state_ptr trace_state,
-        db::timeout_clock::time_point timeout
+        timeout_clock::time_point timeout
     ) -> future<query_result_type>
 {
     auto op_result = co_await create_operation_ctx(*schema, ranges[0].start()->value().token());
