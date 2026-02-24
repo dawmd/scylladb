@@ -22,6 +22,10 @@ template <typename T = std::monostate>
 using value_or_redirect = std::variant<T, need_redirect>;
 
 class coordinator : public peering_sharded_service<coordinator> {
+public:
+    using timeout_clock = typename db::timeout_clock;
+
+private:
     groups_manager& _groups_manager;
     replica::database& _db;
 
@@ -33,14 +37,15 @@ public:
     using mutation_gen = noncopyable_function<mutation(api::timestamp_type)>;
     future<value_or_redirect<>> mutate(schema_ptr schema, 
         const dht::token& token,
-        mutation_gen&& mutation_gen);
+        mutation_gen&& mutation_gen,
+        timeout_clock::time_point timeout);
 
     using query_result_type = value_or_redirect<lw_shared_ptr<query::result>>;
     future<query_result_type> query(schema_ptr schema,
         const query::read_command& cmd,
         const dht::partition_range_vector& ranges,
         tracing::trace_state_ptr trace_state,
-        db::timeout_clock::time_point timeout);
+        timeout_clock::time_point timeout);
 };
 
 }
