@@ -1876,6 +1876,20 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                 qp.invoke_on_all(&cql3::query_processor::stop_remote).get();
             });
 
+            // We need to abort all ongoing strongly consistent operations before
+            // query_processor::stop_remote above.
+            //
+            // Why? Because the strongly consistent coordinator is "leased"
+            // with a holder (cf. the function acquire_strongly_consistent_coordinator).
+            // That holder will prevent query_processor::stop_remote from finishing,
+            // and so we'll hang for an indefinite amount of time.
+            //
+            // This is the last point in the shutdown procedure when we can
+            // still abort those operations and avoid postponing it.
+            const auto abort_sc_operations = defer_verbose_shutdown("ongoing strongly consistent operations", [&sc_coordinator] {
+                sc_coordinator.invoke_on_all(&service::strong_consistency::coordinator::abort_operations).get();
+            });
+
             checkpoint(stop_signal, "initializing virtual tables");
             smp::invoke_on_all([&] {
                 return db::initialize_virtual_tables(db, ss, gossiper, raft_gr, sys_ks, tablet_allocator, messaging, *cfg);

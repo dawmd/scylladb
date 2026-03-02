@@ -29,6 +29,19 @@ static const locator::tablet_replica* find_replica(const locator::tablet_info& t
     return it == tinfo.replicas.end() ? nullptr : &*it;
 }
 
+// If any of the sources are triggered, trigger the target with the same exception
+// (or the default one).
+template <typename... Ts>
+    requires (std::same_as<Ts, abort_source> && ...)
+static auto chain_abort_sources(abort_source& target, Ts&... sources) {
+    static_assert(sizeof...(Ts) > 0, "We need to chain at least one abort source!");
+    return std::array{
+        sources.subscribe([&target] (const std::optional<std::exception_ptr>& eptr) noexcept {
+            target.request_abort_ex(eptr.value_or(target.get_default_exception()));
+        })...
+    };
+}
+
 struct coordinator::operation_ctx {
     locator::effective_replication_map_ptr erm;
     raft_server raft_server;
@@ -106,6 +119,11 @@ coordinator::coordinator(groups_manager& groups_manager, replica::database& db)
 {
 }
 
+future<> coordinator::stop() {
+    abort_operations();
+    co_return;
+}
+
 future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         const dht::token& token,
         mutation_gen&& mutation_gen,
@@ -113,7 +131,7 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         abort_source& query_as)
 {
     auto aoe = abort_on_expiry<timeout_clock>(timeout);
-    const auto sub = query_as.subscribe([&aoe] noexcept { aoe.abort_source().request_abort(); });
+    const auto subs = chain_abort_sources(aoe.abort_source(), _as, query_as);
 
     // Potential exceptions are handled by the callee.
     auto op_result = co_await create_operation_ctx(*schema, token, aoe.abort_source());
@@ -229,7 +247,7 @@ auto coordinator::query(schema_ptr schema,
     ) -> future<query_result_type>
 {
     auto aoe = abort_on_expiry<timeout_clock>(timeout);
-    const auto sub = query_as.subscribe([&aoe] noexcept { aoe.abort_source().request_abort(); });
+    const auto subs = chain_abort_sources(aoe.abort_source(), _as, query_as);
 
     // Potential exceptions are handled by the callee.
     auto op_result = co_await create_operation_ctx(*schema, ranges[0].start()->value().token(), aoe.abort_source());
@@ -266,6 +284,16 @@ auto coordinator::query(schema_ptr schema,
         query::result_options::only_result(), ranges, trace_state, timeout);
 
     co_return std::move(result);
+}
+
+void coordinator::abort_operations() noexcept {
+    if (_as.abort_requested()) {
+        return;
+    }
+
+    logger.info("Scheduling aborting ongoing operations");
+    _as.request_abort();
+    logger.info("All ongoing operations have been scheduled to be aborted");
 }
 
 }

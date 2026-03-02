@@ -1011,6 +1011,20 @@ private:
                 _qp.invoke_on_all(&cql3::query_processor::stop_remote).get();
             });
 
+            // We need to abort all ongoing strongly consistent operations before
+            // query_processor::stop_remote above.
+            //
+            // Why? Because the strongly consistent coordinator is "leased"
+            // with a holder (cf. the function acquire_strongly_consistent_coordinator).
+            // That holder will prevent query_processor::stop_remote from finishing,
+            // and so we'll hang for an indefinite amount of time.
+            //
+            // This is the last point in the shutdown procedure when we can
+            // still abort those operations and avoid postponing it.
+            const auto abort_sc_operations = defer_verbose_shutdown("ongoing strongly consistent operations", [this] {
+                _sc_coordinator.invoke_on_all(&service::strong_consistency::coordinator::abort_operations).get();
+            });
+
             _cm.invoke_on_all([&](compaction::compaction_manager& cm) {
                 auto cl = _db.local().commitlog();
                 auto scl = _db.local().schema_commitlog();

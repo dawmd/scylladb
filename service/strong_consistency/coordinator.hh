@@ -29,12 +29,16 @@ private:
     groups_manager& _groups_manager;
     replica::database& _db;
 
+    abort_source _as;
+
     struct operation_ctx;
     future<value_or_redirect<operation_ctx>> create_operation_ctx(const schema& schema,
         const dht::token& token,
         abort_source& as);
 public:
     coordinator(groups_manager& groups_manager, replica::database& db);
+
+    future<> stop();
 
     using mutation_gen = noncopyable_function<mutation(api::timestamp_type)>;
     future<value_or_redirect<>> mutate(schema_ptr schema, 
@@ -50,6 +54,12 @@ public:
         tracing::trace_state_ptr trace_state,
         timeout_clock::time_point timeout,
         abort_source& query_as);
+
+    // Abort all ongoing operations and prevent new ones from starting.
+    // The function only schedules the abortion; it does not wait for them
+    // to finish.
+    // The function is idempotent.
+    void abort_operations() noexcept;
 };
 
 }
