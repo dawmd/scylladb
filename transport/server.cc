@@ -1108,7 +1108,8 @@ template <typename Process>
                                    tracing::trace_state_ptr,
                                    bool,
                                    cql3::computed_function_values,
-                                   cql3::dialect>
+                                   cql3::dialect,
+                                   abort_source&>
 future<cql_server::process_fn_return_type>
 cql_server::connection::process_on_shard(shard_id shard, uint16_t stream, fragmented_temporary_buffer::istream is, service::client_state& cs,
                 tracing::trace_state_ptr trace_state, cql3::dialect dialect, cql3::computed_function_values&& cached_vals, Process process_fn) {
@@ -1121,7 +1122,7 @@ cql_server::connection::process_on_shard(shard_id shard, uint16_t stream, fragme
         auto client_state = gcs.get();
         auto trace_state = gt.get();
         co_return co_await process_fn(client_state, server._query_processor, in, stream, _version,
-                /* FIXME */empty_service_permit(), std::move(trace_state), false, cached_vals, dialect);
+                /* FIXME */empty_service_permit(), std::move(trace_state), false, cached_vals, dialect, server._abort_source);
     });
 }
 
@@ -1141,7 +1142,8 @@ template <typename Process>
                                    tracing::trace_state_ptr,
                                    bool,
                                    cql3::computed_function_values,
-                                   cql3::dialect>
+                                   cql3::dialect,
+                                   abort_source&>
 future<cql_server::result_with_foreign_response_ptr>
 cql_server::connection::process(uint16_t stream, request_reader in, service::client_state& client_state, service_permit permit,
         tracing::trace_state_ptr trace_state, Process process_fn) {
@@ -1150,7 +1152,7 @@ cql_server::connection::process(uint16_t stream, request_reader in, service::cli
     auto dialect = get_dialect();
 
     auto f = co_await coroutine::as_future(process_fn(client_state, _server._query_processor, in, stream,
-            _version, permit, trace_state, true, {}, dialect));
+            _version, permit, trace_state, true, {}, dialect, _server._abort_source));
     if (f.failed()) {
         co_return coroutine::exception(f.get_exception());
     }
@@ -1168,12 +1170,12 @@ static future<cql_server::process_fn_return_type>
 process_query_internal(service::client_state& client_state, sharded<cql3::query_processor>& qp, request_reader in,
         uint16_t stream, cql_protocol_version_type version,
         service_permit permit, tracing::trace_state_ptr trace_state, bool init_trace, cql3::computed_function_values cached_pk_fn_calls,
-        cql3::dialect dialect) {
+        cql3::dialect dialect, abort_source& as) {
     utils::result_with_exception_ptr<std::string_view> query = in.read_long_string_view();
     if (!query) {
         return make_exception_future<cql_server::process_fn_return_type>(std::move(query).assume_error());
     }
-    auto q_state = std::make_unique<cql_query_state>(client_state, trace_state, std::move(permit));
+    auto q_state = std::make_unique<cql_query_state>(client_state, trace_state, std::move(permit), as);
     auto& query_state = q_state->query_state;
     auto o = in.read_options(version, qp.local().get_cql_config());
     if (!o) {
@@ -1246,7 +1248,7 @@ static future<cql_server::process_fn_return_type>
 process_execute_internal(service::client_state& client_state, sharded<cql3::query_processor>& qp, request_reader in,
         uint16_t stream, cql_protocol_version_type version,
         service_permit permit, tracing::trace_state_ptr trace_state, bool init_trace, cql3::computed_function_values cached_pk_fn_calls,
-        cql3::dialect dialect) {
+        cql3::dialect dialect, abort_source& as) {
     utils::result_with_exception_ptr<bytes> cache_key_bytes = in.read_short_bytes();
     if (!cache_key_bytes) {
         return make_exception_future<cql_server::process_fn_return_type>(std::move(cache_key_bytes).assume_error());
@@ -1276,7 +1278,7 @@ process_execute_internal(service::client_state& client_state, sharded<cql3::quer
         metadata_id = cql_metadata_id_wrapper(cql3::cql_metadata_id_type(std::move(metadata_id_bytes).assume_value()), prepared->get_metadata_id());
     }
 
-    auto q_state = std::make_unique<cql_query_state>(client_state, trace_state, std::move(permit));
+    auto q_state = std::make_unique<cql_query_state>(client_state, trace_state, std::move(permit), as);
     auto& query_state = q_state->query_state;
     auto o = in.read_options(version, qp.local().get_cql_config());
     if (!o) {
@@ -1338,7 +1340,9 @@ future<cql_server::result_with_foreign_response_ptr> cql_server::connection::pro
 static future<cql_server::process_fn_return_type>
 process_batch_internal(service::client_state& client_state, sharded<cql3::query_processor>& qp, request_reader in,
         uint16_t stream, cql_protocol_version_type version,
-        service_permit permit, tracing::trace_state_ptr trace_state, bool init_trace, cql3::computed_function_values cached_pk_fn_calls, cql3::dialect dialect) {
+        service_permit permit, tracing::trace_state_ptr trace_state, bool init_trace,
+        cql3::computed_function_values cached_pk_fn_calls, cql3::dialect dialect, abort_source& as)
+{
     const utils::result_with_exception_ptr<int8_t> type = in.read_byte();
     if (!type) {
         return make_exception_future<cql_server::process_fn_return_type>(std::move(type).assume_error());
@@ -1439,7 +1443,7 @@ process_batch_internal(service::client_state& client_state, sharded<cql3::query_
         values.emplace_back(cql3::raw_value_view_vector_with_unset(std::move(tmp), std::move(unset)));
     }
 
-    auto q_state = std::make_unique<cql_query_state>(client_state, trace_state, std::move(permit));
+    auto q_state = std::make_unique<cql_query_state>(client_state, trace_state, std::move(permit), as);
     auto& query_state = q_state->query_state;
     // #563. CQL v2 encodes query_options in v1 format for batch requests.
     auto o = in.read_options(version, qp.local().get_cql_config());

@@ -106,8 +106,8 @@ struct cql_query_state {
     service::query_state query_state;
     std::unique_ptr<cql3::query_options> options;
 
-    cql_query_state(service::client_state& client_state, tracing::trace_state_ptr trace_state_ptr, service_permit permit)
-        : query_state(client_state, std::move(trace_state_ptr), std::move(permit))
+    cql_query_state(service::client_state& client_state, tracing::trace_state_ptr trace_state_ptr, service_permit permit, abort_source& as)
+        : query_state(client_state, std::move(trace_state_ptr), std::move(permit), &as)
     { }
 };
 
@@ -339,7 +339,8 @@ private:
                                            tracing::trace_state_ptr,
                                            bool,
                                            cql3::computed_function_values,
-                                           cql3::dialect>
+                                           cql3::dialect,
+                                           abort_source&>
         future<result_with_foreign_response_ptr>
         process(uint16_t stream, request_reader in, service::client_state& client_state, service_permit permit, tracing::trace_state_ptr trace_state,
                 Process process_fn);
@@ -356,7 +357,8 @@ private:
                                            tracing::trace_state_ptr,
                                            bool,
                                            cql3::computed_function_values,
-                                           cql3::dialect>
+                                           cql3::dialect,
+                                           abort_source&>
         future<process_fn_return_type>
         process_on_shard(shard_id shard, uint16_t stream, fragmented_temporary_buffer::istream is, service::client_state& cs,
                 tracing::trace_state_ptr trace_state, cql3::dialect dialect, cql3::computed_function_values&& cached_vals, Process process_fn);
