@@ -40,14 +40,16 @@ public:
     future<value_or_redirect<>> mutate(schema_ptr schema, 
         const dht::token& token,
         mutation_gen&& mutation_gen,
-        timeout_clock::time_point timeout);
+        timeout_clock::time_point timeout,
+        abort_source& query_as);
 
     using query_result_type = value_or_redirect<lw_shared_ptr<query::result>>;
     future<query_result_type> query(schema_ptr schema,
         const query::read_command& cmd,
         const dht::partition_range_vector& ranges,
         tracing::trace_state_ptr trace_state,
-        timeout_clock::time_point timeout);
+        timeout_clock::time_point timeout,
+        abort_source& query_as);
 };
 
 }

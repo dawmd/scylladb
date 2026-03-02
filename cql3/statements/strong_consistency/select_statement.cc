@@ -41,8 +41,14 @@ future<::shared_ptr<result_message>> select_statement::do_execute(query_processo
         options.get_timestamp(state));
     const auto timeout = db::timeout_clock::now() + get_timeout(state.get_client_state(), options);
     auto [coordinator, holder] = qp.acquire_strongly_consistent_coordinator();
+
+    if (!state.get_abort_source()) {
+        utils::on_internal_error("strong_consistency::select_statement requires that the passed "
+                "abort_source is not a nullptr");
+    }
+
     auto query_result = co_await coordinator.get().query(_query_schema, *read_command,
-        key_ranges, state.get_trace_state(), timeout);
+        key_ranges, state.get_trace_state(), timeout, *state.get_abort_source());
 
     using namespace service::strong_consistency;
     if (const auto* redirect = get_if<need_redirect>(&query_result)) {

@@ -82,6 +82,8 @@ auto coordinator::create_operation_ctx(const schema& schema, const dht::token& t
         };
     } catch (const raft::request_aborted& ex) {
         // The request could only be aborted if we hit the timeout.
+        // It could ALSO be aborted when shutting down, but then the response
+        // can no longer reach the user, so it doesn't matter what we do here.
         logger.debug("create_operation_ctx(): acquire_server, operation aborted {}, table {}.{}, tablet {}",
             ex, schema.ks_name(), schema.cf_name(), tablet_id);
         // FIXME: Use a better exception type.
@@ -107,9 +109,11 @@ coordinator::coordinator(groups_manager& groups_manager, replica::database& db)
 future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         const dht::token& token,
         mutation_gen&& mutation_gen,
-        timeout_clock::time_point timeout)
+        timeout_clock::time_point timeout,
+        abort_source& query_as)
 {
     auto aoe = abort_on_expiry<timeout_clock>(timeout);
+    const auto sub = query_as.subscribe([&aoe] noexcept { aoe.abort_source().request_abort(); });
 
     // Potential exceptions are handled by the callee.
     auto op_result = co_await create_operation_ctx(*schema, token, aoe.abort_source());
@@ -139,6 +143,8 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
                 co_await std::move(wait_for_leader->future);
             } catch (const raft::request_aborted& ex) {
                 // The request could only be aborted if we hit the timeout.
+                // It could ALSO be aborted when shutting down, but then the response
+                // can no longer reach the user, so it doesn't matter what we do here.
                 logger.debug("mutate(): wait_for_leader, operation timed out {}, table {}.{}, tablet {}",
                     ex, schema->ks_name(), schema->cf_name(), op.tablet_id);
                 // FIXME: Use a better exception type.
@@ -178,6 +184,8 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
             auto ex = std::current_exception();
             if (try_catch<raft::request_aborted>(ex)) {
                 // The request could only be aborted if we hit the timeout.
+                // It could ALSO be aborted when shutting down, but then the response
+                // can no longer reach the user, so it doesn't matter what we do here.
                 logger.debug("mutate(): add_entry, operation timed out {}, table {}.{}, tablet {}, term {}",
                     ex, schema->ks_name(), schema->cf_name(), op.tablet_id, term);
                 // FIXME: Use a better exception type.
@@ -216,10 +224,12 @@ auto coordinator::query(schema_ptr schema,
         const query::read_command& cmd,
         const dht::partition_range_vector& ranges,
         tracing::trace_state_ptr trace_state,
-        timeout_clock::time_point timeout
+        timeout_clock::time_point timeout,
+        abort_source& query_as
     ) -> future<query_result_type>
 {
     auto aoe = abort_on_expiry<timeout_clock>(timeout);
+    const auto sub = query_as.subscribe([&aoe] noexcept { aoe.abort_source().request_abort(); });
 
     // Potential exceptions are handled by the callee.
     auto op_result = co_await create_operation_ctx(*schema, ranges[0].start()->value().token(), aoe.abort_source());
@@ -235,6 +245,8 @@ auto coordinator::query(schema_ptr schema,
         co_await op.raft_server.server().read_barrier(&aoe.abort_source());
     } catch (const raft::request_aborted& ex) {
         // The request could only be aborted if we hit the timeout.
+        // It could ALSO be aborted when shutting down, but then the response
+        // can no longer reach the user, so it doesn't matter what we do here.
         logger.debug("query(): read_barrier, operation timed out {}, table {}.{}, tablet {}",
             ex, schema->ks_name(), schema->cf_name(), op.tablet_id);
         // FIXME: Use a better exception type.

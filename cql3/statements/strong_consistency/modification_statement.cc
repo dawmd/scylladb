@@ -47,6 +47,11 @@ future<shared_ptr<result_message>> modification_statement::execute_without_check
     auto [coordinator, holder] = qp.acquire_strongly_consistent_coordinator();
     const auto timeout = db::timeout_clock::now() + _statement->get_timeout(qs.get_client_state(), options);
 
+    if (!qs.get_abort_source()) {
+        utils::on_internal_error("strong_consistency::modification_statement requires that the passed "
+                "abort_source is not a nullptr");
+    }
+
     const auto mutate_result = co_await coordinator.get().mutate(_statement->s,
         keys[0].start()->value().token(),
         [&](api::timestamp_type ts) {
@@ -60,7 +65,7 @@ future<shared_ptr<result_message>> modification_statement::execute_without_check
                     raw_cql_statement, muts.size()));
             }
             return std::move(*muts.begin());
-        }, timeout);
+        }, timeout, *qs.get_abort_source());
 
     using namespace service::strong_consistency;
     if (const auto* redirect = get_if<need_redirect>(&mutate_result)) {
