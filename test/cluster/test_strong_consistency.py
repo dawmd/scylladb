@@ -21,6 +21,13 @@ import random
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_CONFIG = {'experimental_features': ['strongly-consistent-tables']}
+DEFAULT_CMDLINE = [
+        '--logger-log-level', 'sc_groups_manager=debug',
+        '--logger-log-level', 'sc_coordinator=debug'
+    ]
+
+
 async def wait_for_leader(manager: ManagerClient, s: ServerInfo, group_id: str):
     async def get_leader_host_id():
         result = await manager.api.get_raft_leader(s.ip_addr, group_id)
@@ -104,14 +111,7 @@ async def get_table_raft_group_id(manager: ManagerClient, ks: str, table: str):
 async def test_basic_write_read(manager: ManagerClient):
 
     logger.info("Bootstrapping cluster")
-    config = {
-        'experimental_features': ['strongly-consistent-tables']
-    }
-    cmdline = [
-        '--logger-log-level', 'sc_groups_manager=debug',
-        '--logger-log-level', 'sc_coordinator=debug'
-    ]
-    servers = await manager.servers_add(3, config=config, cmdline=cmdline, auto_rack_dc='my_dc')
+    servers = await manager.servers_add(3, config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE, auto_rack_dc='my_dc')
     (cql, hosts) = await manager.get_ready_cql(servers)
 
     logger.info("Load host_id-s for servers")
@@ -180,15 +180,8 @@ async def test_multi_shard_write_read(manager: ManagerClient):
     succeed and that we can read back all data correctly.
     """
     logger.info("Bootstrapping cluster with 4 shards per node")
-    config = {
-        'experimental_features': ['strongly-consistent-tables']
-    }
-    cmdline = [
-        '--smp=4',
-        '--logger-log-level', 'sc_groups_manager=debug',
-        '--logger-log-level', 'sc_coordinator=debug'
-    ]
-    servers = await manager.servers_add(3, config=config, cmdline=cmdline, auto_rack_dc='my_dc')
+    cmdline = DEFAULT_CMDLINE + ['--smp=4']
+    servers = await manager.servers_add(3, config=DEFAULT_CONFIG, cmdline=cmdline, auto_rack_dc='my_dc')
     (cql, hosts) = await manager.get_ready_cql(servers)
 
     logger.info("Creating a strongly-consistent keyspace with 4 tablets")
@@ -219,16 +212,11 @@ async def test_sc_multishard_metadata_reads(manager: ManagerClient):
     """
     Verify that multi-shard reads of raft metadata for strongly-consistent tables work correctly.
     """
-    config = {
-        'experimental_features': ['strongly-consistent-tables']
-    }
-    cmdline = [
+    cmdline = DEFAULT_CMDLINE + [
         '--smp=4',
-        '--logger-log-level', 'sc_groups_manager=debug',
-        '--logger-log-level', 'sc_coordinator=debug',
         '--logger-log-level', 'fixed_shard=trace',
     ]
-    server = await manager.server_add(config=config, cmdline=cmdline)
+    server = await manager.server_add(config=DEFAULT_CONFIG, cmdline=cmdline)
     (cql, hosts) = await manager.get_ready_cql([server])
 
     async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 8} AND consistency = 'local'") as ks:
@@ -318,16 +306,11 @@ async def test_sc_persistence_restart_with_smp_increase(manager: ManagerClient):
     on a single-node cluster, we don't start reading/writing raft metadata
     from/to incorrect shards.
     """
-    config = {
-        'experimental_features': ['strongly-consistent-tables']
-    }
-    cmdline = [
+    cmdline = DEFAULT_CMDLINE + [
         '--smp=2',
-        '--logger-log-level', 'sc_groups_manager=debug',
-        '--logger-log-level', 'sc_coordinator=debug',
         '--logger-log-level', 'fixed_shard=trace',
     ]
-    server = await manager.server_add(config=config, cmdline=cmdline)
+    server = await manager.server_add(config=DEFAULT_CONFIG, cmdline=cmdline)
     (cql, hosts) = await manager.get_ready_cql([server])
 
     async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 2} AND consistency = 'local'") as ks:
@@ -372,15 +355,8 @@ async def test_sc_persistence_with_compaction(manager: ManagerClient):
     directly, bit it does compact SSTables written with them, so in this test we
     verify that after compaction the raft metadata is still readable and correct.
     """
-    config = {
-        'experimental_features': ['strongly-consistent-tables']
-    }
-    cmdline = [
-        '--logger-log-level', 'sc_groups_manager=debug',
-        '--logger-log-level', 'sc_coordinator=debug',
-        '--logger-log-level', 'fixed_shard=trace',
-    ]
-    server = await manager.server_add(config=config, cmdline=cmdline)
+    cmdline = DEFAULT_CMDLINE + ['--logger-log-level', 'fixed_shard=trace']
+    server = await manager.server_add(config=DEFAULT_CONFIG, cmdline=cmdline)
     (cql, hosts) = await manager.get_ready_cql([server])
 
     async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 4} AND consistency = 'local'") as ks:
@@ -423,15 +399,8 @@ async def test_sc_persistence_after_crash(manager: ManagerClient):
     Verify that metadata for strongly-consistent tables is recovered
     after a non-graceful stop (crash simulation).
     """
-    config = {
-        'experimental_features': ['strongly-consistent-tables']
-    }
-    cmdline = [
-        '--logger-log-level', 'sc_groups_manager=debug',
-        '--logger-log-level', 'sc_coordinator=debug',
-        '--logger-log-level', 'fixed_shard=trace',
-    ]
-    server = await manager.server_add(config=config, cmdline=cmdline)
+    cmdline = DEFAULT_CMDLINE + ['--logger-log-level', 'fixed_shard=trace']
+    server = await manager.server_add(config=DEFAULT_CONFIG, cmdline=cmdline)
     (cql, hosts) = await manager.get_ready_cql([server])
 
     async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 4} AND consistency = 'local'") as ks:
@@ -464,17 +433,11 @@ async def test_sc_persistence_after_crash(manager: ManagerClient):
 @pytest.mark.asyncio
 @pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
 async def test_no_schema_when_apply_write(manager: ManagerClient):
-    config = {
-        'experimental_features': ['strongly-consistent-tables']
-    }
-    cmdline = [
-        '--logger-log-level', 'sc_groups_manager=debug',
-        '--logger-log-level', 'sc_coordinator=debug'
-    ]
-    servers = await manager.servers_add(2, config=config, cmdline=cmdline, auto_rack_dc='my_dc')
+    servers = await manager.servers_add(2, config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE, auto_rack_dc='my_dc')
     # We don't want `servers[2]` to be a Raft leader (for both group0 and strong consistency groups),
     # because we want `servers[2]` to receive Raft commands from others.
-    servers += [await manager.server_add(config=config | {'error_injections_at_startup': ['avoid_being_raft_leader']}, cmdline=cmdline, property_file={'dc':'my_dc', 'rack': 'rack3'})]
+    config = DEFAULT_CONFIG | {'error_injections_at_startup': ['avoid_being_raft_leader']}
+    servers += [await manager.server_add(config=config, cmdline=DEFAULT_CMDLINE, property_file={'dc':'my_dc', 'rack': 'rack3'})]
     (cql, hosts) = await manager.get_ready_cql(servers)
     host_ids = await gather_safely(*[manager.get_host_id(s.server_id) for s in servers])
 
@@ -515,17 +478,11 @@ async def test_no_schema_when_apply_write(manager: ManagerClient):
 @pytest.mark.asyncio
 @pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
 async def test_old_schema_when_apply_write(manager: ManagerClient):
-    config = {
-        'experimental_features': ['strongly-consistent-tables']
-    }
-    cmdline = [
-        '--logger-log-level', 'sc_groups_manager=debug',
-        '--logger-log-level', 'sc_coordinator=debug'
-    ]
-    servers = await manager.servers_add(2, config=config, cmdline=cmdline, auto_rack_dc='my_dc')
+    servers = await manager.servers_add(2, config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE, auto_rack_dc='my_dc')
     # We don't want `servers[2]` to be a Raft leader (for both group0 and strong consistency groups),
     # because we want `servers[2]` to receive Raft commands from others.
-    servers += [await manager.server_add(config=config | {'error_injections_at_startup': ['avoid_being_raft_leader']}, cmdline=cmdline, property_file={'dc':'my_dc', 'rack': 'rack3'})]
+    config = DEFAULT_CONFIG | {'error_injections_at_startup': ['avoid_being_raft_leader']}
+    servers += [await manager.server_add(config=config, cmdline=DEFAULT_CMDLINE, property_file={'dc':'my_dc', 'rack': 'rack3'})]
     (cql, hosts) = await manager.get_ready_cql(servers)
     host_ids = await gather_safely(*[manager.get_host_id(s.server_id) for s in servers])
 
@@ -568,14 +525,7 @@ async def test_reject_user_provided_timestamps(manager: ManagerClient):
     user-provided timestamps in queries to strongly consistent tables.
     """
 
-    config = {
-        'experimental_features': ['strongly-consistent-tables']
-    }
-    cmdline = [
-        '--logger-log-level', 'sc_groups_manager=debug',
-        '--logger-log-level', 'sc_coordinator=debug'
-    ]
-    server = await manager.server_add(config=config, cmdline=cmdline)
+    server = await manager.server_add(config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE)
     cql, _ = await manager.get_ready_cql([server])
 
     async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
