@@ -308,6 +308,8 @@ future<> server::shutdown() {
         _logger.debug("shutdown connection {} out of {} done", ++nr_conn, nr_conn_total);
     });
     _abort_source.request_abort();
+
+    _logger.debug("generic_server::shutdown completed");
 }
 
 future<>
