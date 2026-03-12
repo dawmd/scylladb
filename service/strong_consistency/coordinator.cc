@@ -56,6 +56,34 @@ static const locator::tablet_replica* find_replica(const locator::tablet_info& t
     return it == tinfo.replicas.end() ? nullptr : &*it;
 }
 
+// Subscribe target to sources and return an array of the corresponding
+// subscriptions.
+//
+// The subscribing process will follow the order of the passed abort
+// sources. The corresponding subscriptions in the returned array will
+// also keep the same order.
+//
+// If some of the passed abort sources have already been triggered,
+// they will immediately trigger target. This will be done in their
+// relative order in the function's argument list.
+template <std::same_as<abort_source>... Ts>
+static auto chain_abort_sources(abort_source& target, Ts&... sources) {
+    static_assert(sizeof...(Ts) > 0, "We need to chain at least one abort source!");
+    auto source_array = std::array{std::ref(sources)...};
+
+    for (abort_source& source : source_array) {
+        if (source.abort_requested()) {
+            target.request_abort_ex(source.abort_requested_exception_ptr());
+        }
+    }
+
+    return std::array{
+        sources.subscribe([&target] (const std::optional<std::exception_ptr>& eptr) noexcept {
+            target.request_abort_ex(eptr.value_or(target.get_default_exception()));
+        })...
+    };
+}
+
 struct coordinator::operation_ctx {
     locator::effective_replication_map_ptr erm;
     raft_server raft_server;
@@ -117,9 +145,11 @@ coordinator::coordinator(groups_manager& groups_manager, replica::database& db)
 future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         const dht::token& token,
         mutation_gen&& mutation_gen,
-        timeout_clock::time_point timeout)
+        timeout_clock::time_point timeout,
+        abort_source& as)
 {
     auto aoe = abort_on_expiry<timeout_clock>(timeout);
+    [[maybe_unused]] const auto subs = chain_abort_sources(aoe.abort_source(), as);
 
     try {
         auto op_result = co_await create_operation_ctx(*schema, token, aoe.abort_source());
@@ -223,10 +253,12 @@ auto coordinator::query(schema_ptr schema,
         const query::read_command& cmd,
         const dht::partition_range_vector& ranges,
         tracing::trace_state_ptr trace_state,
-        timeout_clock::time_point timeout
+        timeout_clock::time_point timeout,
+        abort_source& as
     ) -> future<query_result_type>
 {
     auto aoe = abort_on_expiry<timeout_clock>(timeout);
+    [[maybe_unused]] const auto subs = chain_abort_sources(aoe.abort_source(), as);
 
     try {
         auto op_result = co_await create_operation_ctx(*schema, ranges[0].start()->value().token(), aoe.abort_source());
