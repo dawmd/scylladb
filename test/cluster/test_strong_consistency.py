@@ -955,3 +955,146 @@ async def test_write_when_shutting_down(manager: ManagerClient):
                 pass
 
             await stop_fut
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="SCYLLADB-1056")
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_abort_state_machine_apply_after_dropping_table(manager: ManagerClient):
+    """
+    This test verifies that ongoing executions of state_machine::apply are
+    aborted when their corresponding Raft group is being removed. We test
+    that by dropping the table, but it should also correspond to other cases
+    like tablet migration.
+
+    For a similar scenario during a node shutdown, see test_abort_state_machine_apply_during_shutdown.
+    """
+
+    cmdline = DEFAULT_CMDLINE + ["--logger-log-level", "sc_state_machine=debug:raft=debug"]
+    leader_server = await manager.server_add(config=DEFAULT_CONFIG, cmdline=cmdline,
+                                             property_file={"dc": "dc1", "rack": "rack1"})
+
+    # We want to prevent target_server from becoming the leader of either group0
+    # or the strongly consistent Raft group so it might not have the latest
+    # schema version and is forced to perform a read barrier.
+    config = DEFAULT_CONFIG | {"error_injections_at_startup": ["avoid_being_raft_leader"]}
+    target_server = await manager.server_add(config=config, cmdline=cmdline, property_file={"dc": "dc1", "rack": "rack2"})
+
+    cql, [leader_host, _] = await manager.get_ready_cql([leader_server, target_server])
+
+    leader_host_id, target_host_id = await gather_safely(*[
+        manager.get_host_id(leader_server.server_id),
+        manager.get_host_id(target_server.server_id)
+    ])
+
+    wait_before_apply_injection = "strong_consistency_state_machine_wait_before_apply"
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+
+        group_id = await get_table_raft_group_id(manager, ks, table_name)
+        leader_host_id = await wait_for_leader(manager, leader_server, group_id)
+        assert leader_host_id != target_host_id
+
+        await gather_safely(*[
+            manager.api.enable_injection(target_server.ip_addr, wait_before_apply_injection, one_shot=True),
+            manager.api.enable_injection(target_server.ip_addr, "sc_state_machine_return_empty_schema", one_shot=True)
+        ])
+
+        log = await manager.server_open_log(target_server.server_id)
+        mark = await log.mark()
+
+        # We won't wait for the follower to apply the state, so we can await this right away.
+        await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)", host=leader_host)
+
+        await log.wait_for(wait_before_apply_injection, from_mark=mark)
+        mark = await log.mark()
+
+        await cql.run_async(f"DROP TABLE {table}")
+        # Wait until the Raft group has started being removed.
+        await log.wait_for(rf"schedule_raft_group_deletion\(\): starting aborting raft server for group id {group_id}", from_mark=mark)
+        mark = await log.mark()
+
+        # At this point, the Raft server should already be getting aborted,
+        # so we can resume state_machine::apply.
+        await manager.api.message_injection(target_server.ip_addr, wait_before_apply_injection)
+        # Verify that state_machine::apply was really aborted.
+        await log.wait_for(rf"apply\(\): execution for tablet \S+, group_id={group_id} aborted", from_mark=mark)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="SCYLLADB-1056")
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_abort_state_machine_apply_during_shutdown(manager: ManagerClient):
+    """
+    This test verifies that ongoing executions of state_machine::apply are
+    aborted when a node is shutting down.
+    """
+
+    cmdline = DEFAULT_CMDLINE + ["--logger-log-level", "sc_state_machine=debug:raft=debug"]
+    leader_server = await manager.server_add(config=DEFAULT_CONFIG, cmdline=cmdline,
+                                             property_file={"dc": "dc1", "rack": "rack1"})
+
+    # We want to prevent target_server from becoming the leader of either group0
+    # or the strongly consistent Raft group so it might not have the latest
+    # schema version and is forced to perform a read barrier.
+    config = DEFAULT_CONFIG | {"error_injections_at_startup": ["avoid_being_raft_leader"]}
+    target_server = await manager.server_add(config=config, cmdline=cmdline, property_file={"dc": "dc1", "rack": "rack2"})
+
+    cql, [leader_host, target_host] = await manager.get_ready_cql([leader_server, target_server])
+
+    leader_host_id, target_host_id = await gather_safely(*[
+        manager.get_host_id(leader_server.server_id),
+        manager.get_host_id(target_server.server_id)
+    ])
+
+    wait_before_apply_injection = "strong_consistency_state_machine_wait_before_apply"
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2} AND tablets = {'initial': 1} AND consistency = 'local'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+
+        group_id = await get_table_raft_group_id(manager, ks, table_name)
+        leader_host_id = await wait_for_leader(manager, leader_server, group_id)
+        assert leader_host_id != target_host_id
+
+        await gather_safely(*[
+            manager.api.enable_injection(target_server.ip_addr, wait_before_apply_injection, one_shot=True),
+            manager.api.enable_injection(target_server.ip_addr, "sc_state_machine_return_empty_schema", one_shot=True)
+        ])
+
+        log = await manager.server_open_log(target_server.server_id)
+        mark = await log.mark()
+
+        # We won't wait for the follower to apply the state, so we can await this right away.
+        await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)", host=leader_host)
+
+        await log.wait_for(wait_before_apply_injection, from_mark=mark)
+        mark = await log.mark()
+
+        stop_task = asyncio.create_task(manager.server_stop_gracefully(target_server.server_id))
+        # Wait until the Raft group has started being removed.
+        await log.wait_for(rf"schedule_raft_group_deletion\(\): starting aborting raft server for group id {group_id}", from_mark=mark)
+        mark = await log.mark()
+
+        # At this point, the Raft server should already be getting aborted,
+        # so we can resume state_machine::apply.
+        await manager.api.message_injection(target_server.ip_addr, wait_before_apply_injection)
+        # Verify that state_machine::apply was really aborted.
+        await log.wait_for(rf"apply\(\): execution for tablet \S+, group_id={group_id} aborted", from_mark=mark)
+
+        # The test framework should verify that we haven't observed any errors
+        # during the stopping procedure.
+        await stop_task
+
+        await manager.server_start(target_server.server_id)
+        cql, [target_host] = await manager.get_ready_cql([target_server])
+
+        rows = await cql.run_async(f"SELECT * FROM {table} WHERE pk = 0", host=target_host)
+        assert len(rows) == 1
+        assert rows[0].v == 13
