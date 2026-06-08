@@ -7160,4 +7160,118 @@ SEASTAR_THREAD_TEST_CASE(test_load_balancing_with_dropped_table) {
     }).get();
 }
 
+// Tests for tablet_version computation and version block encoding/matching
+// used by TABLETS_ROUTING_V2.
+
+SEASTAR_THREAD_TEST_CASE(test_compute_tablet_version_ec) {
+    // EC version: hash of sorted replicas. Order of input should not matter.
+    auto h1 = host_id(utils::UUID("00000000-0000-0000-0000-000000000001"));
+    auto h2 = host_id(utils::UUID("00000000-0000-0000-0000-000000000002"));
+    auto h3 = host_id(utils::UUID("00000000-0000-0000-0000-000000000003"));
+
+    tablet_replica_set replicas_ordered = {{h1, 0}, {h2, 1}, {h3, 2}};
+    tablet_replica_set replicas_reversed = {{h3, 2}, {h2, 1}, {h1, 0}};
+    tablet_replica_set replicas_shuffled = {{h2, 1}, {h3, 2}, {h1, 0}};
+
+    auto v1 = compute_tablet_version(replicas_ordered);
+    auto v2 = compute_tablet_version(replicas_reversed);
+    auto v3 = compute_tablet_version(replicas_shuffled);
+
+    // All orderings produce the same version (sorted internally).
+    BOOST_REQUIRE_EQUAL(v1, v2);
+    BOOST_REQUIRE_EQUAL(v1, v3);
+
+    // Different replica sets produce different versions.
+    tablet_replica_set different_replicas = {{h1, 0}, {h2, 1}};
+    auto v_different = compute_tablet_version(different_replicas);
+    BOOST_REQUIRE_NE(v1, v_different);
+
+    // Version is non-zero for non-empty input.
+    BOOST_REQUIRE_NE(v1, tablet_version(0));
+}
+
+SEASTAR_THREAD_TEST_CASE(test_compute_tablet_version_sc) {
+    // SC version: sorted replicas shifted so leader is first, then hashed.
+    auto h1 = host_id(utils::UUID("00000000-0000-0000-0000-000000000001"));
+    auto h2 = host_id(utils::UUID("00000000-0000-0000-0000-000000000002"));
+    auto h3 = host_id(utils::UUID("00000000-0000-0000-0000-000000000003"));
+
+    tablet_replica_set replicas = {{h3, 2}, {h1, 0}, {h2, 1}};
+
+    tablet_replica leader_h1 = {h1, 0};
+    tablet_replica leader_h2 = {h2, 1};
+    tablet_replica leader_h3 = {h3, 2};
+
+    auto v_leader_h1 = compute_tablet_version(replicas, leader_h1);
+    auto v_leader_h2 = compute_tablet_version(replicas, leader_h2);
+    auto v_leader_h3 = compute_tablet_version(replicas, leader_h3);
+
+    // Different leaders produce different versions.
+    BOOST_REQUIRE_NE(v_leader_h1, v_leader_h2);
+    BOOST_REQUIRE_NE(v_leader_h1, v_leader_h3);
+    BOOST_REQUIRE_NE(v_leader_h2, v_leader_h3);
+
+    // SC version with leader differs from EC version.
+    auto v_ec = compute_tablet_version(replicas);
+    BOOST_REQUIRE_NE(v_leader_h1, v_ec);
+
+    // Input order doesn't matter — it's sorted internally.
+    tablet_replica_set replicas_alt = {{h1, 0}, {h2, 1}, {h3, 2}};
+    BOOST_REQUIRE_EQUAL(compute_tablet_version(replicas_alt, leader_h2),
+                        compute_tablet_version(replicas, leader_h2));
+
+    // If leader is not in replica list, falls back to EC version.
+    tablet_replica missing_leader = {host_id(utils::UUID("00000000-0000-0000-0000-000000000099")), 5};
+    BOOST_REQUIRE_EQUAL(compute_tablet_version(replicas, missing_leader), v_ec);
+}
+
+SEASTAR_THREAD_TEST_CASE(test_extract_tablet_version_block) {
+    // Version 0x123456789ABCDEF0 — each nibble from MSB to LSB is:
+    // block 0=1, block 1=2, block 2=3, ..., block 15=0
+    tablet_version version = 0x123456789ABCDEF0ULL;
+
+    // Block 0: index=0, value=0x1 → byte = 0x01
+    BOOST_REQUIRE_EQUAL(extract_tablet_version_block(version, 0), uint8_t(0x01));
+    // Block 1: index=1, value=0x2 → byte = 0x12
+    BOOST_REQUIRE_EQUAL(extract_tablet_version_block(version, 1), uint8_t(0x12));
+    // Block 4: index=4, value=0x5 → byte = 0x45
+    BOOST_REQUIRE_EQUAL(extract_tablet_version_block(version, 4), uint8_t(0x45));
+    // Block 12: index=12, value=0xD → byte = 0xCD
+    BOOST_REQUIRE_EQUAL(extract_tablet_version_block(version, 12), uint8_t(0xCD));
+    // Block 13: index=13, value=0xE → byte = 0xDE
+    BOOST_REQUIRE_EQUAL(extract_tablet_version_block(version, 13), uint8_t(0xDE));
+    // Block 15: index=15, value=0x0 → byte = 0xF0
+    BOOST_REQUIRE_EQUAL(extract_tablet_version_block(version, 15), uint8_t(0xF0));
+}
+
+SEASTAR_THREAD_TEST_CASE(test_tablet_version_block_matches) {
+    tablet_version version = 0xABCD1234DEADBEEFULL;
+
+    // All 16 blocks should match when extracted from the same version.
+    for (unsigned i = 0; i < 16; ++i) {
+        auto block = extract_tablet_version_block(version, i);
+        BOOST_REQUIRE(tablet_version_block_matches(version, block));
+    }
+
+    // A block from a different version should not match.
+    tablet_version other = 0x1111111111111111ULL;
+    for (unsigned i = 0; i < 16; ++i) {
+        auto block = extract_tablet_version_block(other, i);
+        // It's very unlikely all 16 blocks of two different versions match,
+        // but to be safe we test that at least some don't match.
+        if (!tablet_version_block_matches(version, block)) {
+            // Expected — at least one mismatch confirms the logic works.
+            break;
+        }
+        BOOST_REQUIRE_MESSAGE(i < 15, "All 16 blocks matched between two different versions — unexpected");
+    }
+
+    // A manually crafted wrong block should not match.
+    // Block 0 of version: high nibble 0xA → block index 0, value = 0xA → byte 0x0A
+    auto correct_block_0 = extract_tablet_version_block(version, 0);
+    // Flip the value nibble.
+    auto wrong_block_0 = static_cast<tablet_version_block>((correct_block_0 & 0xF0) | ((correct_block_0 + 1) & 0x0F));
+    BOOST_REQUIRE(!tablet_version_block_matches(version, wrong_block_0));
+}
+
 BOOST_AUTO_TEST_SUITE_END()

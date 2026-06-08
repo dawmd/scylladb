@@ -56,6 +56,9 @@
 #include "compaction/compaction_manager.hh"
 #include "service/query_state.hh"
 #include "service_permit.hh"
+#include "transport/cql_protocol_extension.hh"
+#include "locator/tablets.hh"
+#include "replica/tablets.hh"
 
 
 BOOST_AUTO_TEST_SUITE(cql_query_test)
@@ -5985,6 +5988,15 @@ bool has_tablet_routing(::shared_ptr<cql_transport::messages::result_message> re
     return true;
 }
 
+static
+bool has_tablet_routing_v2(::shared_ptr<cql_transport::messages::result_message> result) {
+    auto custom_payload = result->custom_payload();
+    if (!custom_payload.has_value() || custom_payload->find("tablets-routing-v2") == custom_payload->end()) {
+        return false;
+    }
+    return true;
+}
+
 SEASTAR_TEST_CASE(test_sending_tablet_info_unprepared_insert) {
     BOOST_ASSERT(this_smp_shard_count() == 2);
     return do_with_cql_env_thread([](cql_test_env& e) {
@@ -6270,6 +6282,263 @@ SEASTAR_TEST_CASE(test_sstable_load_mixed_generation_type) {
                 {int32_type->decompose(2), int32_type->decompose(2)}
             });
     });
+}
+
+// Verifies that when a TABLETS_ROUTING_V2 connection sends a mismatching
+// version block, the response contains "tablets-routing-v2" payload
+// with the correct format and contents.
+SEASTAR_TEST_CASE(test_tablets_routing_v2_mismatch_returns_payload) {
+    return do_with_cql_env_thread([](cql_test_env& e) {
+        e.execute_cql("create keyspace ks_tablet with replication = "
+            "{'class': 'NetworkTopologyStrategy', 'replication_factor': 1} "
+            "and tablets = {'initial': 1};").get();
+        e.execute_cql("create table ks_tablet.tbl (pk int PRIMARY KEY, v int);").get();
+        e.execute_cql("insert into ks_tablet.tbl (pk, v) VALUES (1, 100);").get();
+
+        auto insert_id = e.prepare("insert into ks_tablet.tbl (pk, v) VALUES (?, ?);").get();
+        auto select_id = e.prepare("select v from ks_tablet.tbl where pk = ?;").get();
+
+        const auto sptr = e.local_db().find_schema("ks_tablet", "tbl");
+        auto pk = partition_key::from_singular(*sptr, int32_t(1));
+        auto token = dht::get_token(*sptr, pk.view());
+        unsigned local_shard = sptr->table().shard_for_reads(token);
+
+        smp::submit_to(local_shard, [&] {
+            return seastar::async([&] {
+                // Set up V2 protocol extension on client state.
+                cql_transport::cql_protocol_extension_enum_set exts;
+                exts.set(cql_transport::cql_protocol_extension::TABLETS_ROUTING_V2);
+                e.local_client_state().set_protocol_extensions(std::move(exts));
+
+                // Use a deliberately wrong version block (0xFF = block 15, value 0xF).
+                auto options = std::make_unique<cql3::query_options>(
+                    db::consistency_level::ONE,
+                    cql3::raw_value_vector_with_unset({
+                        cql3::raw_value::make_value(int32_type->decompose(int32_t{1})),
+                        cql3::raw_value::make_value(int32_type->decompose(int32_t{42})),
+                    }),
+                    cql3::query_options::specific_options::DEFAULT);
+                options->set_tablet_version_block(0xFF);
+
+                auto result = e.execute_prepared_with_qo(insert_id, std::move(options)).get();
+                if (result->custom_payload().has_value()) {
+                    fmt::println("CUSTM PAYLOAD: {}", result->custom_payload().value() | std::views::keys | std::ranges::to<std::vector>());
+                } else {
+                    fmt::println("NO CUSTOM PAYLOAD!");
+                }
+                BOOST_REQUIRE_MESSAGE(has_tablet_routing_v2(result),
+                    "Expected tablets-routing-v2 payload on version mismatch (INSERT)");
+
+                // Verify the payload can be deserialized.
+                auto& payload = result->custom_payload().value().at("tablets-routing-v2");
+                auto type = replica::get_tablet_info_v2_type();
+                // Deserialize the tuple: (u64, u64, u64, List<Tuple<UUID, u32>>)
+                auto val = type->deserialize(payload);
+                BOOST_REQUIRE(!val.is_null());
+
+                // Test SELECT with wrong version block.
+                auto sel_options = std::make_unique<cql3::query_options>(
+                    db::consistency_level::ONE,
+                    cql3::raw_value_vector_with_unset({
+                        cql3::raw_value::make_value(int32_type->decompose(int32_t{1})),
+                    }),
+                    cql3::query_options::specific_options::DEFAULT);
+                sel_options->set_tablet_version_block(0xFF);
+
+                auto sel_result = e.execute_prepared_with_qo(select_id, std::move(sel_options)).get();
+                BOOST_REQUIRE_MESSAGE(has_tablet_routing_v2(sel_result),
+                    "Expected tablets-routing-v2 payload on version mismatch (SELECT)");
+            });
+        }).get();
+    }, tablet_cql_test_config());
+}
+
+// Verifies that when the version block matches the actual tablet version,
+// no routing information is returned.
+SEASTAR_TEST_CASE(test_tablets_routing_v2_match_no_payload) {
+    return do_with_cql_env_thread([](cql_test_env& e) {
+        e.execute_cql("create keyspace ks_tablet with replication = "
+            "{'class': 'NetworkTopologyStrategy', 'replication_factor': 1} "
+            "and tablets = {'initial': 1};").get();
+        e.execute_cql("create table ks_tablet.tbl (pk int PRIMARY KEY, v int);").get();
+
+        auto insert_id = e.prepare("insert into ks_tablet.tbl (pk, v) VALUES (?, ?);").get();
+        auto select_id = e.prepare("select v from ks_tablet.tbl where pk = ?;").get();
+
+        const auto sptr = e.local_db().find_schema("ks_tablet", "tbl");
+        auto pk = partition_key::from_singular(*sptr, int32_t(1));
+        auto token = dht::get_token(*sptr, pk.view());
+        unsigned local_shard = sptr->table().shard_for_reads(token);
+
+        smp::submit_to(local_shard, [&] {
+            return seastar::async([&] {
+                // Set up V2 extension.
+                cql_transport::cql_protocol_extension_enum_set exts;
+                exts.set(cql_transport::cql_protocol_extension::TABLETS_ROUTING_V2);
+                e.local_client_state().set_protocol_extensions(std::move(exts));
+
+                // Get the actual tablet version for the partition token.
+                auto erm = sptr->table().get_effective_replication_map();
+                auto& tablet_map = erm->get_token_metadata().tablets().get_tablet_map(sptr->id());
+                auto tid = tablet_map.get_tablet_id(token);
+                BOOST_REQUIRE(tablet_map.has_tablet_versions());
+                auto actual_version = tablet_map.get_tablet_version(tid);
+
+                // Extract a correct version block (block 0).
+                auto correct_block = locator::extract_tablet_version_block(actual_version, 0);
+
+                // INSERT with matching version block.
+                auto options = std::make_unique<cql3::query_options>(
+                    db::consistency_level::ONE,
+                    cql3::raw_value_vector_with_unset({
+                        cql3::raw_value::make_value(int32_type->decompose(int32_t{1})),
+                        cql3::raw_value::make_value(int32_type->decompose(int32_t{42})),
+                    }),
+                    cql3::query_options::specific_options::DEFAULT);
+                options->set_tablet_version_block(correct_block);
+
+                auto result = e.execute_prepared_with_qo(insert_id, std::move(options)).get();
+                BOOST_REQUIRE_MESSAGE(!has_tablet_routing_v2(result),
+                    "Expected no tablets-routing-v2 payload when version matches (INSERT)");
+
+                // SELECT with matching version block.
+                auto sel_options = std::make_unique<cql3::query_options>(
+                    db::consistency_level::ONE,
+                    cql3::raw_value_vector_with_unset({
+                        cql3::raw_value::make_value(int32_type->decompose(int32_t{1})),
+                    }),
+                    cql3::query_options::specific_options::DEFAULT);
+                sel_options->set_tablet_version_block(correct_block);
+
+                auto sel_result = e.execute_prepared_with_qo(select_id, std::move(sel_options)).get();
+                BOOST_REQUIRE_MESSAGE(!has_tablet_routing_v2(sel_result),
+                    "Expected no tablets-routing-v2 payload when version matches (SELECT)");
+            });
+        }).get();
+    }, tablet_cql_test_config());
+}
+
+// Verifies that a TABLETS_ROUTING_V1-only connection does NOT receive
+// "tablets-routing-v2" payload, even when routing info is returned.
+SEASTAR_TEST_CASE(test_tablets_routing_v1_no_v2_payload) {
+    return do_with_cql_env_thread([](cql_test_env& e) {
+        e.execute_cql("create keyspace ks_tablet with replication = "
+            "{'class': 'NetworkTopologyStrategy', 'replication_factor': 1} "
+            "and tablets = {'initial': 8};").get();
+        e.execute_cql("create table ks_tablet.tbl (pk int PRIMARY KEY, v int);").get();
+
+        auto insert_id = e.prepare("insert into ks_tablet.tbl (pk, v) VALUES (?, ?);").get();
+
+        const auto sptr = e.local_db().find_schema("ks_tablet", "tbl");
+        auto pk = partition_key::from_singular(*sptr, int32_t(2));
+        auto token = dht::get_token(*sptr, pk.view());
+        unsigned local_shard = sptr->table().shard_for_reads(token);
+        unsigned foreign_shard = (local_shard + 1) % smp::count;
+
+        // Execute from the wrong shard with V1 only. V1 routing should fire,
+        // but V2 payload should NOT be present.
+        smp::submit_to(foreign_shard, [&] {
+            return seastar::async([&] {
+                // Explicitly set only V1.
+                cql_transport::cql_protocol_extension_enum_set exts;
+                exts.set(cql_transport::cql_protocol_extension::TABLETS_ROUTING_V1);
+                e.local_client_state().set_protocol_extensions(std::move(exts));
+
+                std::vector<cql3::raw_value> raw_values;
+                raw_values.emplace_back(cql3::raw_value::make_value(int32_type->decompose(int32_t{2})));
+                raw_values.emplace_back(cql3::raw_value::make_value(int32_type->decompose(int32_t{99})));
+
+                auto result = e.execute_prepared(insert_id, std::move(raw_values)).get();
+                // V1 should fire (cross-shard).
+                BOOST_REQUIRE_MESSAGE(has_tablet_routing(result),
+                    "Expected tablets-routing-v1 payload on cross-shard request");
+                // V2 should NOT be present.
+                BOOST_REQUIRE_MESSAGE(!has_tablet_routing_v2(result),
+                    "V1-only connection must not receive tablets-routing-v2 payload");
+            });
+        }).get();
+    }, tablet_cql_test_config());
+}
+
+// Verifies the format of the "tablets-routing-v2" payload:
+// TupleType(u64, u64, u64, List<Tuple<UUID, u32>>)
+// containing (tablet_version, first_token, last_token, replicas).
+SEASTAR_TEST_CASE(test_tablets_routing_v2_payload_format) {
+    return do_with_cql_env_thread([](cql_test_env& e) {
+        e.execute_cql("create keyspace ks_tablet with replication = "
+            "{'class': 'NetworkTopologyStrategy', 'replication_factor': 1} "
+            "and tablets = {'initial': 1};").get();
+        e.execute_cql("create table ks_tablet.tbl (pk int PRIMARY KEY, v int);").get();
+
+        auto insert_id = e.prepare("insert into ks_tablet.tbl (pk, v) VALUES (?, ?);").get();
+
+        const auto sptr = e.local_db().find_schema("ks_tablet", "tbl");
+        auto pk = partition_key::from_singular(*sptr, int32_t(1));
+        auto token = dht::get_token(*sptr, pk.view());
+        unsigned local_shard = sptr->table().shard_for_reads(token);
+
+        smp::submit_to(local_shard, [&] {
+            return seastar::async([&] {
+                cql_transport::cql_protocol_extension_enum_set exts;
+                exts.set(cql_transport::cql_protocol_extension::TABLETS_ROUTING_V2);
+                e.local_client_state().set_protocol_extensions(std::move(exts));
+
+                // Get expected values from the tablet_map.
+                auto erm = sptr->table().get_effective_replication_map();
+                auto& tablet_map = erm->get_token_metadata().tablets().get_tablet_map(sptr->id());
+                auto tid = tablet_map.get_tablet_id(token);
+                auto actual_version = tablet_map.get_tablet_version(tid);
+                auto& info = tablet_map.get_tablet_info(tid);
+                auto last_token = tablet_map.get_last_token(tid);
+                auto first_token = (tid == tablet_map.first_tablet())
+                    ? dht::minimum_token()
+                    : tablet_map.get_last_token(locator::tablet_id(size_t(tid) - 1));
+
+                // Send a mismatching block to trigger V2 payload.
+                auto wrong_block = static_cast<uint8_t>(~locator::extract_tablet_version_block(actual_version, 0));
+                auto options = std::make_unique<cql3::query_options>(
+                    db::consistency_level::ONE,
+                    cql3::raw_value_vector_with_unset({
+                        cql3::raw_value::make_value(int32_type->decompose(int32_t{1})),
+                        cql3::raw_value::make_value(int32_type->decompose(int32_t{1})),
+                    }),
+                    cql3::query_options::specific_options::DEFAULT);
+                options->set_tablet_version_block(wrong_block);
+
+                auto result = e.execute_prepared_with_qo(insert_id, std::move(options)).get();
+                BOOST_REQUIRE(has_tablet_routing_v2(result));
+
+                // Deserialize the payload.
+                auto& payload_bytes = result->custom_payload().value().at("tablets-routing-v2");
+                auto type = replica::get_tablet_info_v2_type();
+                auto val = type->deserialize(payload_bytes);
+                BOOST_REQUIRE(!val.is_null());
+
+                // Extract tuple elements: (version, first_token, last_token, replicas).
+                auto tuple_val = value_cast<tuple_type_impl::native_type>(val);
+                BOOST_REQUIRE_EQUAL(tuple_val.size(), 4u);
+
+                // Element 0: tablet_version (int64 serialized).
+                auto returned_version = static_cast<locator::tablet_version>(
+                    value_cast<int64_t>(tuple_val[0]));
+                BOOST_REQUIRE_EQUAL(returned_version, actual_version);
+
+                // Element 1: first_token.
+                auto returned_first = dht::token::from_int64(
+                    value_cast<int64_t>(tuple_val[1]));
+                BOOST_REQUIRE_EQUAL(returned_first, first_token);
+
+                // Element 2: last_token.
+                auto returned_last = dht::token::from_int64(
+                    value_cast<int64_t>(tuple_val[2]));
+                BOOST_REQUIRE_EQUAL(returned_last, last_token);
+
+                // Element 3: replicas list.
+                auto replicas_list = value_cast<list_type_impl::native_type>(tuple_val[3]);
+                BOOST_REQUIRE_EQUAL(replicas_list.size(), info.replicas.size());
+            });
+        }).get();
+    }, tablet_cql_test_config());
 }
 
 BOOST_AUTO_TEST_SUITE_END()
