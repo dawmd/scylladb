@@ -389,6 +389,37 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
     }
 }
 
+std::optional<locator::tablet_routing_info_v2> groups_manager::check_tablet_version(
+        raft::group_id gid,
+        locator::tablet_version_block request_block,
+        const locator::tablet_replica_set& replicas,
+        std::pair<dht::token, dht::token> token_range) const {
+    auto it = _raft_groups.find(gid);
+    if (it == _raft_groups.end() || !it->second.tablet_version) {
+        return std::nullopt;
+    }
+    auto version = *it->second.tablet_version;
+    if (locator::tablet_version_block_matches(version, request_block)) {
+        return std::nullopt;
+    }
+    // Build the replica list in the same order used for version computation:
+    // sorted, then shifted so the leader is first.
+    auto sorted = replicas;
+    std::sort(sorted.begin(), sorted.end());
+    if (it->second.server) {
+        auto current_leader = it->second.server->current_leader();
+        if (current_leader != raft::server_id{}) {
+            auto leader_host = locator::host_id{current_leader.uuid()};
+            auto leader_it = std::find_if(sorted.begin(), sorted.end(),
+                [&](const locator::tablet_replica& r) { return r.host == leader_host; });
+            if (leader_it != sorted.end()) {
+                std::rotate(sorted.begin(), leader_it, sorted.end());
+            }
+        }
+    }
+    return locator::tablet_routing_info_v2{version, std::move(sorted), token_range};
+}
+
 void groups_manager::update(token_metadata_ptr new_tm) {
     if (!_features.strongly_consistent_tables) {
         return;

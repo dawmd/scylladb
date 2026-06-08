@@ -10,9 +10,12 @@
 
 #include "db/consistency_level_type.hh"
 #include "db/timeout_clock.hh"
+#include "replica/database.hh"
 #include "transport/messages/result_message.hh"
+#include "transport/cql_protocol_extension.hh"
 #include "cql3/query_processor.hh"
 #include "service/strong_consistency/coordinator.hh"
+#include "service/strong_consistency/groups_manager.hh"
 #include "cql3/statements/strong_consistency/statement_helpers.hh"
 #include "exceptions/exceptions.hh"
 #include "utils/error_injection.hh"
@@ -86,7 +89,31 @@ future<shared_ptr<result_message>> modification_statement::execute_without_check
         throw exceptions::mutation_write_timeout_exception{"", "", options.get_consistency(), 0, 0, db::write_type::SIMPLE};
     });
 
-    co_return seastar::make_shared<result_message::void_message>();
+    auto result = seastar::make_shared<result_message::void_message>();
+
+    // Attach TABLETS_ROUTING_V2 info if the version block doesn't match.
+    if (qs.get_client_state().is_protocol_extension_set(cql_transport::cql_protocol_extension::TABLETS_ROUTING_V2)) {
+        auto tvb = options.get_tablet_version_block();
+        if (tvb) {
+            auto& table = _statement->s->table();
+            auto erm = table.get_effective_replication_map();
+            auto& tablet_map = erm->get_token_metadata().tablets().get_tablet_map(_statement->s->id());
+            auto token = keys[0].start()->value().token();
+            auto tid = tablet_map.get_tablet_id(token);
+            auto& raft_info = tablet_map.get_tablet_raft_info(tid);
+            auto& info = tablet_map.get_tablet_info(tid);
+            auto first_token = (tid == tablet_map.first_tablet())
+                ? dht::minimum_token() : tablet_map.get_last_token(locator::tablet_id(size_t(tid) - 1));
+            auto routing_info = coordinator.get().get_groups_manager().check_tablet_version(
+                raft_info.group_id, *tvb, info.replicas,
+                {first_token, tablet_map.get_last_token(tid)});
+            if (routing_info) {
+                result->add_tablet_info_v2(std::move(*routing_info));
+            }
+        }
+    }
+
+    co_return std::move(result);
 }
 
 future<> modification_statement::check_access(query_processor& qp, const service::client_state& state) const {

@@ -1038,6 +1038,14 @@ struct tablet_routing_info {
     std::pair<dht::token, dht::token> token_range;
 };
 
+/// Routing info for TABLETS_ROUTING_V2.
+/// Includes the tablet_version and a replica list ordered with the leader first (for SC tablets).
+struct tablet_routing_info_v2 {
+    tablet_version version;
+    tablet_replica_set tablet_replicas; // For SC: leader is first in the list.
+    std::pair<dht::token, dht::token> token_range;
+};
+
 /// Compute the tablet_version for an eventually-consistent tablet.
 /// The replica list is sorted deterministically and hashed.
 tablet_version compute_tablet_version(const tablet_replica_set& replicas);

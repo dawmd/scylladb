@@ -10,8 +10,11 @@
 
 #include "db/consistency_level_type.hh"
 #include "query/query-request.hh"
+#include "replica/database.hh"
 #include "cql3/query_processor.hh"
+#include "transport/cql_protocol_extension.hh"
 #include "service/strong_consistency/coordinator.hh"
+#include "service/strong_consistency/groups_manager.hh"
 #include "cql3/statements/strong_consistency/statement_helpers.hh"
 
 namespace cql3::statements::strong_consistency {
@@ -66,8 +69,31 @@ future<::shared_ptr<result_message>> select_statement::do_execute(query_processo
         co_return co_await redirect_statement(qp, options, redirect->target, timeout, is_write, coordinator.get().get_stats(), std::move(redirect->on_node_resolved));
     }
 
-    co_return co_await process_results(get<lw_shared_ptr<query::result>>(std::move(query_result)),
+    auto result = co_await process_results(get<lw_shared_ptr<query::result>>(std::move(query_result)),
         read_command, options, now);
+
+    // Attach TABLETS_ROUTING_V2 info if the version block doesn't match.
+    if (state.get_client_state().is_protocol_extension_set(cql_transport::cql_protocol_extension::TABLETS_ROUTING_V2)) {
+        auto tvb = options.get_tablet_version_block();
+        if (tvb) {
+            auto erm = _query_schema->table().get_effective_replication_map();
+            auto& tablet_map = erm->get_token_metadata().tablets().get_tablet_map(_query_schema->id());
+            auto token = key_ranges[0].start()->value().as_decorated_key().token();
+            auto tid = tablet_map.get_tablet_id(token);
+            auto& raft_info = tablet_map.get_tablet_raft_info(tid);
+            auto& info = tablet_map.get_tablet_info(tid);
+            auto first_token = (tid == tablet_map.first_tablet())
+                ? dht::minimum_token() : tablet_map.get_last_token(locator::tablet_id(size_t(tid) - 1));
+            auto routing_info = coordinator.get().get_groups_manager().check_tablet_version(
+                raft_info.group_id, *tvb, info.replicas,
+                {first_token, tablet_map.get_last_token(tid)});
+            if (routing_info) {
+                result->add_tablet_info_v2(std::move(*routing_info));
+            }
+        }
+    }
+
+    co_return std::move(result);
 }
 
 }

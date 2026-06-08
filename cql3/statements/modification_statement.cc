@@ -312,11 +312,33 @@ modification_statement::do_execute(query_processor& qp, service::query_state& qs
     }
     if (keys_size_one) {
         auto&& table = s->table();
-        if (_may_use_token_aware_routing && table.uses_tablets() && qs.get_client_state().is_protocol_extension_set(cql_transport::cql_protocol_extension::TABLETS_ROUTING_V1)) {
-            auto erm = table.get_effective_replication_map();
-            auto tablet_info = erm->check_locality(token, qs.get_client_state().get_original_shard());
-            if (tablet_info.has_value()) {
-                result->add_tablet_info(std::move(*tablet_info));
+        if (_may_use_token_aware_routing && table.uses_tablets()) {
+            if (qs.get_client_state().is_protocol_extension_set(cql_transport::cql_protocol_extension::TABLETS_ROUTING_V2)) {
+                auto tvb = options.get_tablet_version_block();
+                if (tvb) {
+                    auto erm = table.get_effective_replication_map();
+                    auto& tablet_map = erm->get_token_metadata().tablets().get_tablet_map(s->id());
+                    auto tid = tablet_map.get_tablet_id(token);
+                    if (tablet_map.has_tablet_versions()) {
+                        auto actual_version = tablet_map.get_tablet_version(tid);
+                        if (!locator::tablet_version_block_matches(actual_version, *tvb)) {
+                            auto& info = tablet_map.get_tablet_info(tid);
+                            auto first_token = (tid == tablet_map.first_tablet())
+                                ? dht::minimum_token() : tablet_map.get_last_token(locator::tablet_id(size_t(tid) - 1));
+                            result->add_tablet_info_v2(locator::tablet_routing_info_v2{
+                                actual_version,
+                                info.replicas,
+                                {first_token, tablet_map.get_last_token(tid)}
+                            });
+                        }
+                    }
+                }
+            } else if (qs.get_client_state().is_protocol_extension_set(cql_transport::cql_protocol_extension::TABLETS_ROUTING_V1)) {
+                auto erm = table.get_effective_replication_map();
+                auto tablet_info = erm->check_locality(token, qs.get_client_state().get_original_shard());
+                if (tablet_info.has_value()) {
+                    result->add_tablet_info(std::move(*tablet_info));
+                }
             }
         }
     }

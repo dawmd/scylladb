@@ -84,6 +84,7 @@ public:
     coordinator(groups_manager& groups_manager, replica::database& db, gms::gossiper& gossiper);
 
     stats& get_stats() { return _stats; }
+    groups_manager& get_groups_manager() { return _groups_manager; }
 
     using mutation_gen = noncopyable_function<mutation(api::timestamp_type)>;
     future<value_or_redirect<>> mutate(schema_ptr schema, 

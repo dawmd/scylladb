@@ -25,6 +25,16 @@ void result_message::add_tablet_info(locator::tablet_routing_info info) {
     add_custom_payload("tablets-routing-v1", tablets_routing.serialize_nonnull());
 }
 
+void result_message::add_tablet_info_v2(locator::tablet_routing_info_v2 info) {
+    auto replicas_values = make_list_value(replica::get_replica_set_type(), replica::replicas_to_data_value(info.tablet_replicas));
+    auto tv = data_value(static_cast<int64_t>(info.version));
+    auto v1 = data_value(dht::token::to_int64(info.token_range.first));
+    auto v2 = data_value(dht::token::to_int64(info.token_range.second));
+
+    auto tablets_routing = make_tuple_value(replica::get_tablet_info_v2_type(), {tv, v1, v2, replicas_values});
+    add_custom_payload("tablets-routing-v2", tablets_routing.serialize_nonnull());
+}
+
 std::ostream& operator<<(std::ostream& os, const result_message::void_message& msg) {
     fmt::print(os, "{{result_message::void}}");
     return os;

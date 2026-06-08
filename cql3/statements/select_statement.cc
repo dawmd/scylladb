@@ -483,14 +483,37 @@ select_statement::do_execute(query_processor& qp,
 
     auto token = dht::token();
     std::optional<locator::tablet_routing_info> tablet_info = {};
+    std::optional<locator::tablet_routing_info_v2> tablet_info_v2 = {};
 
     auto&& table = _schema->table();
-    if (_may_use_token_aware_routing && table.uses_tablets() && state.get_client_state().is_protocol_extension_set(cql_transport::cql_protocol_extension::TABLETS_ROUTING_V1)) {
-        if (key_ranges.size() == 1 && query::is_single_partition(key_ranges.front())) {
-            token = key_ranges[0].start()->value().as_decorated_key().token();
-
-            auto erm = table.get_effective_replication_map();
-            tablet_info = erm->check_locality(token, state.get_client_state().get_original_shard());
+    if (_may_use_token_aware_routing && table.uses_tablets()) {
+        if (state.get_client_state().is_protocol_extension_set(cql_transport::cql_protocol_extension::TABLETS_ROUTING_V2)) {
+            auto tvb = options.get_tablet_version_block();
+            if (tvb && key_ranges.size() == 1 && query::is_single_partition(key_ranges.front())) {
+                token = key_ranges[0].start()->value().as_decorated_key().token();
+                auto erm = table.get_effective_replication_map();
+                auto& tablet_map = erm->get_token_metadata().tablets().get_tablet_map(_schema->id());
+                auto tid = tablet_map.get_tablet_id(token);
+                if (tablet_map.has_tablet_versions()) {
+                    auto actual_version = tablet_map.get_tablet_version(tid);
+                    if (!locator::tablet_version_block_matches(actual_version, *tvb)) {
+                        auto& info = tablet_map.get_tablet_info(tid);
+                        auto first_token = (tid == tablet_map.first_tablet())
+                            ? dht::minimum_token() : tablet_map.get_last_token(locator::tablet_id(size_t(tid) - 1));
+                        tablet_info_v2 = locator::tablet_routing_info_v2{
+                            actual_version,
+                            info.replicas,
+                            {first_token, tablet_map.get_last_token(tid)}
+                        };
+                    }
+                }
+            }
+        } else if (state.get_client_state().is_protocol_extension_set(cql_transport::cql_protocol_extension::TABLETS_ROUTING_V1)) {
+            if (key_ranges.size() == 1 && query::is_single_partition(key_ranges.front())) {
+                token = key_ranges[0].start()->value().as_decorated_key().token();
+                auto erm = table.get_effective_replication_map();
+                tablet_info = erm->check_locality(token, state.get_client_state().get_original_shard());
+            }
         }
     }
 
@@ -522,8 +545,15 @@ select_statement::do_execute(query_processor& qp,
             nonpaged_filtering, parsed_limit, std::move(cas_shard));
     }
 
-    if (!tablet_info.has_value()) {
+    if (!tablet_info.has_value() && !tablet_info_v2.has_value()) {
         return f;
+    }
+
+    if (tablet_info_v2.has_value()) {
+        return f.then([tablet_info_v2 = std::move(*tablet_info_v2)] (auto res) mutable {
+            res->add_tablet_info_v2(std::move(tablet_info_v2));
+            return res;
+        });
     }
 
     return f.then([tablet_info = std::move(*tablet_info)] (auto res) mutable {

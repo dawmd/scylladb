@@ -193,6 +193,27 @@ public:
     future<> wait_for_table_raft_groups_on_all_hosts(table_id table, lowres_clock::time_point timeout);
 
     tablet_group_leader_cache& leader_cache() { return _leader_cache; }
+
+    /// Returns the cached tablet_version for a Raft group on this shard,
+    /// or nullopt if the group is not running here, is a candidate, or the version is unknown.
+    std::optional<locator::tablet_version> get_tablet_version(raft::group_id gid) const {
+        auto it = _raft_groups.find(gid);
+        if (it == _raft_groups.end()) {
+            return std::nullopt;
+        }
+        return it->second.tablet_version;
+    }
+
+    /// Build tablet_routing_info_v2 for the given group if the version block doesn't match.
+    /// Returns nullopt if:
+    ///  - the group is not on this shard
+    ///  - the version is unknown (election in progress)
+    ///  - the version block matches (no update needed)
+    std::optional<locator::tablet_routing_info_v2> check_tablet_version(
+        raft::group_id gid,
+        locator::tablet_version_block request_block,
+        const locator::tablet_replica_set& replicas,
+        std::pair<dht::token, dht::token> token_range) const;
 };
 
 /// A temporary, RAII-style handle to an active Raft group server instance,
