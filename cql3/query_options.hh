@@ -279,8 +279,15 @@ public:
     void set_cached_pk_function_calls(computed_function_values vals);
     computed_function_values::mapped_type* find_cached_pk_function_call(computed_function_values::key_type id) const;
 
+    /// Set the tablet_version_block received in an EXECUTE request (TABLETS_ROUTING_V2).
+    void set_tablet_version_block(uint8_t block) { _tablet_version_block = block; }
+
+    /// Returns the tablet_version_block from the EXECUTE request, if present.
+    std::optional<uint8_t> get_tablet_version_block() const { return _tablet_version_block; }
+
 private:
     void fill_value_views();
+    std::optional<uint8_t> _tablet_version_block;
 };
 
 template <typename Values>
