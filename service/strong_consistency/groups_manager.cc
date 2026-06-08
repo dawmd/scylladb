@@ -316,15 +316,52 @@ future<> groups_manager::leader_info_updater(raft_group_state& state, global_tab
                     .term = current_term,
                     .last_timestamp = schema->table().get_max_timestamp_for_tablet(tablet.tablet)
                 };
+
+                // Recompute tablet_version with this node as leader.
+                auto& cf = _db.find_column_family(tablet.table);
+                auto erm = cf.get_effective_replication_map();
+                const auto& tablet_map = erm->get_token_metadata().tablets().get_tablet_map(tablet.table);
+                const auto& tablet_info = tablet_map.get_tablet_info(tablet.tablet);
+                const auto this_replica = locator::tablet_replica {
+                    .host = erm->get_token_metadata().get_my_id(),
+                    .shard = this_shard_id()
+                };
+                state.tablet_version = locator::compute_tablet_version(tablet_info.replicas, this_replica);
+
                 logger.debug("leader_info_updater({}-{}): read_barrier() completed, "
-                    "new leader term {}, last_timestamp {}",
+                    "new leader term {}, last_timestamp {}, tablet_version {:016x}",
                     tablet, gid,
                     state.leader_info->term,
-                    state.leader_info->last_timestamp);
-            } else if (state.leader_info) {
-                logger.debug("leader_info_updater({}-{}): this replica {} is no longer a leader, current leader {}",
-                    tablet, gid, server_id, current_leader);
-                state.leader_info = std::nullopt;
+                    state.leader_info->last_timestamp,
+                    *state.tablet_version);
+            } else if (current_leader != raft::server_id{}) {
+                // Not the leader, but we know who is. Compute tablet_version
+                // so non-linearizable reads processed on this replica can check it.
+                if (state.leader_info) {
+                    logger.debug("leader_info_updater({}-{}): this replica {} is no longer a leader, current leader {}",
+                        tablet, gid, server_id, current_leader);
+                    state.leader_info = std::nullopt;
+                }
+                auto& cf = _db.find_column_family(tablet.table);
+                auto erm = cf.get_effective_replication_map();
+                const auto& tablet_map = erm->get_token_metadata().tablets().get_tablet_map(tablet.table);
+                const auto& tablet_info = tablet_map.get_tablet_info(tablet.tablet);
+                const auto leader_host = locator::host_id{current_leader.uuid()};
+                // Find the leader's replica entry (host_id + shard).
+                auto leader_it = std::find_if(tablet_info.replicas.begin(), tablet_info.replicas.end(),
+                    [&](const locator::tablet_replica& r) { return r.host == leader_host; });
+                if (leader_it != tablet_info.replicas.end()) {
+                    state.tablet_version = locator::compute_tablet_version(tablet_info.replicas, *leader_it);
+                } else {
+                    // Leader not in replica set (possible during migration). Cannot compute version.
+                    state.tablet_version = std::nullopt;
+                }
+            } else {
+                // Election in progress (candidate state). Cannot determine leader.
+                if (state.leader_info) {
+                    state.leader_info = std::nullopt;
+                }
+                state.tablet_version = std::nullopt;
             }
             state.leader_info_cond.broadcast();
 
@@ -390,6 +427,23 @@ void groups_manager::update(token_metadata_ptr new_tm) {
 
             // Don't start the raft server if it is already (started or starting) and not stopping.
             if (state.gate && !state.gate->is_closed()) {
+                // Replica set may have changed. Recompute tablet_version if leader is known.
+                // Safe without locks: single-threaded per shard (Seastar cooperative scheduling).
+                // If leader_info_updater runs later, it will also recompute with the latest state.
+                if (state.server) {
+                    const auto current_leader = state.server->current_leader();
+                    if (current_leader != raft::server_id{}) {
+                        const auto& new_tablet_info = tablet_map.get_tablet_info(tid);
+                        const auto leader_host = locator::host_id{current_leader.uuid()};
+                        auto leader_it = std::find_if(new_tablet_info.replicas.begin(), new_tablet_info.replicas.end(),
+                            [&](const locator::tablet_replica& r) { return r.host == leader_host; });
+                        if (leader_it != new_tablet_info.replicas.end()) {
+                            state.tablet_version = locator::compute_tablet_version(new_tablet_info.replicas, *leader_it);
+                        } else {
+                            state.tablet_version = std::nullopt;
+                        }
+                    }
+                }
                 continue;
             }
 

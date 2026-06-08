@@ -18,6 +18,7 @@
 #include "utils/stall_free.hh"
 #include "utils/rjson.hh"
 #include "utils/div_ceil.hh"
+#include "utils/xx_hasher.hh"
 #include "gms/feature_service.hh"
 
 #include <algorithm>
@@ -376,6 +377,7 @@ future<> tablet_metadata::mutate_tablet_map_async(table_id id, noncopyable_funct
     }
     auto tablet_map_copy = make_lw_shared<tablet_map>(co_await it->second->clone_gently());
     co_await func(*tablet_map_copy);
+    tablet_map_copy->compute_tablet_versions();
     auto new_map_ptr = lw_shared_ptr<const tablet_map>(std::move(tablet_map_copy));
     // share the tablet map with all co-located tables
     for (auto colocated_id : _table_groups.at(id)) {
@@ -401,6 +403,7 @@ future<tablet_metadata> tablet_metadata::copy() const {
 }
 
 void tablet_metadata::set_tablet_map(table_id id, tablet_map map) {
+    map.compute_tablet_versions();
     auto map_ptr = make_lw_shared<const tablet_map>(std::move(map));
     if (auto it = _table_groups.find(id); it == _table_groups.end()) {
         _table_groups[id] = {id};
@@ -552,7 +555,7 @@ tablet_layout tablet_map::get_layout() const {
 
 tablet_map tablet_map::clone() const {
     return tablet_map(_tablet_ids, _tablets, _transitions, _resize_decision, _resize_task_info,
-                      _repair_scheduler_config, _raft_info);
+                      _repair_scheduler_config, _raft_info, _tablet_versions);
 }
 
 future<tablet_map> tablet_map::clone_gently() const {
@@ -580,7 +583,8 @@ future<tablet_map> tablet_map::clone_gently() const {
     }
 
     co_return tablet_map(std::move(ids), std::move(tablets), std::move(transitions),
-                         _resize_decision, _resize_task_info, _repair_scheduler_config, std::move(raft_info));
+                         _resize_decision, _resize_task_info, _repair_scheduler_config, std::move(raft_info),
+                         _tablet_versions);
 }
 
 void tablet_map::check_tablet_id(tablet_id id) const {
@@ -844,6 +848,26 @@ void tablet_map::set_tablet_raft_info(tablet_id id, tablet_raft_info raft_info) 
                 id, raft_info.group_id));
     }
     _raft_info[size_t(id)] = std::move(raft_info);
+}
+
+tablet_version tablet_map::get_tablet_version(tablet_id id) const {
+    check_tablet_id(id);
+    if (_tablet_versions.empty()) {
+        on_internal_error(tablet_logger, "Tablet map doesn't have precomputed tablet versions");
+    }
+    return _tablet_versions[size_t(id)];
+}
+
+void tablet_map::compute_tablet_versions() {
+    // For SC tablets, versions are tracked per Raft group (in raft_group_state),
+    // because they depend on the leader identity which only group members know.
+    if (has_raft_info()) {
+        return;
+    }
+    _tablet_versions.resize(tablet_count());
+    for (size_t i = 0; i < tablet_count(); ++i) {
+        _tablet_versions[i] = compute_tablet_version(_tablets[i].replicas);
+    }
 }
 
 // The names are persisted in system tables so should not be changed.
@@ -2190,3 +2214,66 @@ locator::tablet_task_info locator::tablet_task_info::make_merge_request() {
     auto tablet_task_id = locator::tablet_task_id(utils::UUID_gen::get_time_UUID());
     return locator::tablet_task_info{locator::tablet_task_type::merge, tablet_task_id, db_clock::now(), sched_nr, db_clock::time_point()};
 }
+
+namespace {
+
+void feed_replica_to_hasher(xx_hasher& h, const locator::tablet_replica& r) {
+    const auto& uuid = r.host.uuid();
+    auto msb = cpu_to_be(static_cast<uint64_t>(uuid.get_most_significant_bits()));
+    auto lsb = cpu_to_be(static_cast<uint64_t>(uuid.get_least_significant_bits()));
+    h.update(reinterpret_cast<const char*>(&msb), sizeof(msb));
+    h.update(reinterpret_cast<const char*>(&lsb), sizeof(lsb));
+    auto shard = cpu_to_be(static_cast<uint32_t>(r.shard));
+    h.update(reinterpret_cast<const char*>(&shard), sizeof(shard));
+}
+
+locator::tablet_version hash_replica_list(const locator::tablet_replica_set& replicas) {
+    xx_hasher h;
+    for (const auto& r : replicas) {
+        feed_replica_to_hasher(h, r);
+    }
+    return h.finalize_uint64();
+}
+
+} // anonymous namespace
+
+namespace locator {
+
+tablet_version compute_tablet_version(const tablet_replica_set& replicas) {
+    // Sort replicas deterministically using the default <=> operator.
+    auto sorted = replicas;
+    std::sort(sorted.begin(), sorted.end());
+    return hash_replica_list(sorted);
+}
+
+tablet_version compute_tablet_version(const tablet_replica_set& replicas, tablet_replica leader) {
+    // Sort replicas deterministically.
+    auto sorted = replicas;
+    std::sort(sorted.begin(), sorted.end());
+
+    // Shift the sorted list so that the leader is first.
+    auto it = std::find(sorted.begin(), sorted.end(), leader);
+    if (it == sorted.end()) {
+        // Leader not in list — fall back to EC algorithm (no shift).
+        return hash_replica_list(sorted);
+    }
+    std::rotate(sorted.begin(), it, sorted.end());
+    return hash_replica_list(sorted);
+}
+
+tablet_version_block extract_tablet_version_block(tablet_version version, unsigned block_idx) {
+    // A tablet_version is divided into 16 blocks of 4 bits each.
+    // Block 0 is the most-significant nibble.
+    // The encoded byte: high nibble = block_idx, low nibble = block value.
+    auto shift = (15 - block_idx) * 4;
+    auto block_value = static_cast<uint8_t>((version >> shift) & 0xF);
+    return static_cast<tablet_version_block>((block_idx << 4) | block_value);
+}
+
+bool tablet_version_block_matches(tablet_version version, tablet_version_block block) {
+    auto block_idx = static_cast<unsigned>(block >> 4);
+    auto expected_block = extract_tablet_version_block(version, block_idx);
+    return block == expected_block;
+}
+
+} // namespace locator

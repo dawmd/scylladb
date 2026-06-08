@@ -690,10 +690,21 @@ public:
 ///    tablet_info& info = tmap.get_tablet_info(id);
 ///
 /// A tablet_id obtained from an instance of tablet_map is valid for that instance only.
+
+/// A 64-bit hash computed from a tablet's replica list (and optionally the leader identity).
+/// Used by TABLETS_ROUTING_V2 to detect when a driver's cached routing is stale.
+using tablet_version = uint64_t;
+
+/// A single-byte encoding of one 4-bit block of a tablet_version.
+/// The high nibble is the block index (0-15), the low nibble is the block's value.
+/// Used in EXECUTE requests to minimize network usage.
+using tablet_version_block = uint8_t;
+
 class tablet_map {
 public:
     using tablet_container = utils::chunked_vector<tablet_info>;
     using raft_info_container = utils::chunked_vector<tablet_raft_info>;
+    using tablet_version_container = utils::chunked_vector<tablet_version>;
     struct initialized_later {};
 private:
     using transitions_map = std::unordered_map<tablet_id, tablet_transition_info>;
@@ -704,6 +715,10 @@ private:
     tablet_task_info _resize_task_info;
     std::optional<repair_scheduler_config> _repair_scheduler_config;
     raft_info_container _raft_info;
+    // Precomputed tablet versions for TABLETS_ROUTING_V2.
+    // Populated for EC tablets (where !has_raft_info()) via compute_tablet_versions().
+    // For SC tablets, versions are stored per-group in raft_group_state instead.
+    tablet_version_container _tablet_versions;
 
     // Internal constructor, used by clone() and clone_gently().
     tablet_map(tablet_id_map ids,
@@ -712,7 +727,8 @@ private:
                resize_decision resize_decision,
                tablet_task_info resize_task_info,
                std::optional<repair_scheduler_config> repair_scheduler_config,
-               raft_info_container raft_info)
+               raft_info_container raft_info,
+               tablet_version_container tablet_versions)
         : _tablet_ids(std::move(ids))
         , _tablets(std::move(tablets))
         , _transitions(std::move(transitions))
@@ -720,6 +736,7 @@ private:
         , _resize_task_info(std::move(resize_task_info))
         , _repair_scheduler_config(std::move(repair_scheduler_config))
         , _raft_info(std::move(raft_info))
+        , _tablet_versions(std::move(tablet_versions))
     {}
 public:
     /// Constructs a tablet map.
@@ -784,6 +801,16 @@ public:
     /// Returns Raft information for the given tablet_id.
     /// It is an internal error to call this method if has_raft_info() returns false.
     const tablet_raft_info& get_tablet_raft_info(tablet_id) const;
+
+    /// Returns the precomputed tablet_version for an EC tablet.
+    /// Only valid after compute_tablet_versions() has been called.
+    /// For SC tablets, use raft_group_state::tablet_version instead.
+    tablet_version get_tablet_version(tablet_id id) const;
+
+    /// Returns true if tablet versions have been computed for this map.
+    bool has_tablet_versions() const {
+        return !_tablet_versions.empty();
+    }
 
     /// Returns the largest token owned by a given tablet.
     /// \throws std::logic_error If the given id does not belong to this instance.
@@ -908,6 +935,11 @@ public:
     void clear_transitions();
     void set_tablet_raft_info(tablet_id, tablet_raft_info);
 
+    /// Precompute tablet_versions for all tablets in this map (EC tablets only).
+    /// Should be called once after the tablet map is fully populated.
+    /// For SC tablets (has_raft_info()), this is a no-op.
+    void compute_tablet_versions();
+
     // Destroys gently.
     // The tablet map is not usable after this call and should be destroyed.
     future<> clear_gently();
@@ -1005,6 +1037,25 @@ struct tablet_routing_info {
     tablet_replica_set tablet_replicas;
     std::pair<dht::token, dht::token> token_range;
 };
+
+/// Compute the tablet_version for an eventually-consistent tablet.
+/// The replica list is sorted deterministically and hashed.
+tablet_version compute_tablet_version(const tablet_replica_set& replicas);
+
+/// Compute the tablet_version for a strongly-consistent tablet.
+/// The replica list is sorted deterministically, then shifted so that the leader
+/// is the first element, and hashed.
+/// If the leader is not found in the replica list, falls back to the EC algorithm.
+tablet_version compute_tablet_version(const tablet_replica_set& replicas, tablet_replica leader);
+
+/// Extract a tablet version block from a tablet_version.
+/// \param version   the full 64-bit tablet version
+/// \param block_idx the block index (0-15)
+/// \returns the encoded tablet_version_block byte
+tablet_version_block extract_tablet_version_block(tablet_version version, unsigned block_idx);
+
+/// Check whether a tablet_version_block matches the corresponding block of the actual version.
+bool tablet_version_block_matches(tablet_version version, tablet_version_block block);
 
 /// Split a list of ranges, such that conceptually each input range is
 /// intersected with each tablet range.

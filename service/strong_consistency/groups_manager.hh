@@ -124,6 +124,12 @@ class groups_manager : public peering_sharded_service<groups_manager> {
         std::optional<leader_info> leader_info = std::nullopt;
         condition_variable leader_info_cond = condition_variable();
         future<> leader_info_updater = make_ready_future<>();
+
+        // Precomputed tablet_version for TABLETS_ROUTING_V2.
+        // Only valid when this node is a member of the Raft group.
+        // For SC tablets, includes leader identity in the hash (shifted replica list).
+        // Updated whenever leadership changes.
+        std::optional<locator::tablet_version> tablet_version = std::nullopt;
     };
 
     netw::messaging_service& _ms;
