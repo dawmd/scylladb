@@ -23,7 +23,7 @@ from test.pylib.scylla_cluster import ReplaceConfig
 from test.pylib.util import gather_safely, wait_for
 
 from test.pylib import nodetool
-from test.cluster.util import get_topology_coordinator, keyspace_has_tablets, new_test_keyspace, new_test_table
+from test.cluster.util import get_topology_coordinator, keyspace_has_tablets, new_test_keyspace
 
 
 logger = logging.getLogger(__name__)
@@ -199,32 +199,32 @@ async def test_write_cl_any_to_dead_node_generates_hints(manager: ScyllaClusterM
     cmdline = ["--logger-log-level", "hints_manager=trace"]
     servers = await manager.servers_add(node_count, cmdline=cmdline)
 
+    # The keyspace isn't dropped at the end of the test: that would require starting
+    # the stopped node again.
     cql = manager.get_cql()
-    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}") as ks:
-        uses_tablets = await keyspace_has_tablets(manager, ks)
-        # If the keyspace uses tablets, let's explicitly require the table to use multiple tablets.
-        # Otherwise, it could happen that all mutations would target servers[0] only, which would
-        # ultimately lead to a test failure here. We rely on the assumption that mutations will be
-        # distributed more or less uniformly!
-        extra_opts = "WITH tablets = {'min_tablet_count': 16}" if uses_tablets else ""
-        async with new_test_table(manager, ks, "pk int PRIMARY KEY, v int", extra_opts) as table:
-            await manager.server_stop_gracefully(servers[1].server_id)
+    await cql.run_async("CREATE KEYSPACE ks WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}")
+    uses_tablets = await keyspace_has_tablets(manager, "ks")
+    # If the keyspace uses tablets, let's explicitly require the table to use multiple tablets.
+    # Otherwise, it could happen that all mutations would target servers[0] only, which would
+    # ultimately lead to a test failure here. We rely on the assumption that mutations will be
+    # distributed more or less uniformly!
+    extra_opts = "WITH tablets = {'min_tablet_count': 16}" if uses_tablets else ""
+    await cql.run_async(f"CREATE TABLE ks.t (pk int PRIMARY KEY, v int) {extra_opts}")
 
-            hints_before = await get_hint_metrics(manager.metrics, servers[0].ip_addr, "written")
+    await manager.server_stop_gracefully(servers[1].server_id)
 
-            stmt = cql.prepare(f"INSERT INTO {table} (pk, v) VALUES (?, ?)")
-            stmt.consistency_level = ConsistencyLevel.ANY
+    hints_before = await get_hint_metrics(manager.metrics, servers[0].ip_addr, "written")
 
-            # Some of the inserts will be targeted to the dead node.
-            # The coordinator doesn't have live targets to send the write to, but it should write a hint.
-            await gather_safely(*[cql.run_async(stmt, (i, i + 1)) for i in range(100)])
+    stmt = cql.prepare("INSERT INTO ks.t (pk, v) VALUES (?, ?)")
+    stmt.consistency_level = ConsistencyLevel.ANY
 
-            # Verify hints are written
-            await wait_until_hint_writing_settled(manager, [servers[0]])
-            assert await get_hint_metrics(manager.metrics, servers[0].ip_addr, "written") > hints_before
+    # Some of the inserts will be targeted to the dead node.
+    # The coordinator doesn't have live targets to send the write to, but it should write a hint.
+    await gather_safely(*[cql.run_async(stmt, (i, i + 1)) for i in range(100)])
 
-            # For dropping the keyspace
-            await manager.server_start(servers[1].server_id)
+    # Verify hints are written
+    await wait_until_hint_writing_settled(manager, [servers[0]])
+    assert await get_hint_metrics(manager.metrics, servers[0].ip_addr, "written") > hints_before
 
 @pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
 async def test_limited_concurrency_of_writes(manager: ScyllaClusterManager):
@@ -238,24 +238,22 @@ async def test_limited_concurrency_of_writes(manager: ScyllaClusterManager):
     }, property_file = {"dc":"dc1", "rack":"rack1"})
     node2 = await manager.server_add(property_file = {"dc":"dc1", "rack":"rack2"})
 
+    # The keyspace isn't dropped at the end of the test: that would require starting
+    # the stopped node again.
     cql = await manager.get_cql_exclusive(node1)
-    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2}") as ks:
-        table = f"{ks}.t"
-        await cql.run_async(f"CREATE TABLE {table} (pk int primary key, v int)")
+    await cql.run_async("CREATE KEYSPACE ks WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2}")
+    await cql.run_async("CREATE TABLE ks.t (pk int primary key, v int)")
 
-        await manager.server_stop_gracefully(node2.server_id)
+    await manager.server_stop_gracefully(node2.server_id)
 
-        async with inject_error(manager.api, node1.ip_addr, "slow_down_writing_hints"):
-            try:
-                for i in range(100):
-                    await cql.run_async(SimpleStatement(f"INSERT INTO {table} (pk, v) VALUES ({i}, {i})", consistency_level=ConsistencyLevel.ONE))
-                pytest.fail("The coordinator node has not been overloaded, which indiciates that the concurrency of writing hints is NOT limited")
-            except NoHostAvailable as e:
-                for _, err in e.errors.items():
-                    assert err.summary == "Coordinator node overloaded" and re.match(r"Too many in flight hints: \d+", err.message)
-
-        # For dropping the keyspace
-        await manager.server_start(node2.server_id)
+    async with inject_error(manager.api, node1.ip_addr, "slow_down_writing_hints"):
+        try:
+            for i in range(100):
+                await cql.run_async(SimpleStatement(f"INSERT INTO ks.t (pk, v) VALUES ({i}, {i})", consistency_level=ConsistencyLevel.ONE))
+            pytest.fail("The coordinator node has not been overloaded, which indiciates that the concurrency of writing hints is NOT limited")
+        except NoHostAvailable as e:
+            for _, err in e.errors.items():
+                assert err.summary == "Coordinator node overloaded" and re.match(r"Too many in flight hints: \d+", err.message)
 
 async def test_sync_point(manager: ScyllaClusterManager):
     """
