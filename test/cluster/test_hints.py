@@ -265,7 +265,10 @@ async def test_sync_point(manager: ScyllaClusterManager):
     live nodes.
     """
     node_count = 3
-    [node1, node2, node3] = await manager.servers_add(node_count, auto_rack_dc="dc1")
+    # Make hints replayable quickly. Error injections are disabled in release mode,
+    # where this has no effect.
+    config = {"error_injections_at_startup": ["decrease_hints_flush_period"]}
+    [node1, node2, node3] = await manager.servers_add(node_count, config=config, auto_rack_dc="dc1")
 
     cql = manager.get_cql()
     async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3}") as ks:
@@ -723,7 +726,8 @@ async def test_hint_to_pending(manager: ScyllaClusterManager):
     is induced using error injections.
     At the end, we verify that the hint was successfully applied.
     """
-    servers = await manager.servers_add(2, property_file=[
+    config = {"error_injections_at_startup": ["decrease_hints_flush_period"]}
+    servers = await manager.servers_add(2, config=config, property_file=[
         {"dc": "dc1", "rack": "r1"},
         {"dc": "dc1", "rack": "r1"},
     ])
@@ -1024,7 +1028,8 @@ async def test_hints_counter(manager: ScyllaClusterManager):
     being one ("orphaned" hints) - the two use different code paths when being sent. Counters
     are not idempotent, so an incorrectly replayed hint is immediately visible in the values.
     """
-    s1, s2 = await manager.servers_add(2, auto_rack_dc="dc1")
+    config = {"error_injections_at_startup": ["decrease_hints_flush_period"]}
+    s1, s2 = await manager.servers_add(2, config=config, auto_rack_dc="dc1")
 
     cql = await manager.get_cql_exclusive(s1)
     await cql.run_async("CREATE KEYSPACE ks WITH REPLICATION = {'class': 'NetworkTopologyStrategy', "
@@ -1140,7 +1145,10 @@ async def test_hints_dont_revive(manager: ScyllaClusterManager):
     A hint carries the timestamp of the original write, so replaying it after the row has been
     deleted must not resurrect the row.
     """
-    s1, s2 = await manager.servers_add(2, auto_rack_dc="dc1")
+    # Make hints replayable quickly. Error injections are disabled in release mode,
+    # where this has no effect.
+    config = {"error_injections_at_startup": ["decrease_hints_flush_period"]}
+    s1, s2 = await manager.servers_add(2, config=config, auto_rack_dc="dc1")
 
     cql = await manager.get_cql_exclusive(s1)
     await cql.run_async("CREATE KEYSPACE ks WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2}")
@@ -1206,10 +1214,12 @@ async def test_support_max_hh_concurrency_param(manager: ScyllaClusterManager,
     whether it's left at its default, set in scylla.yaml, or passed on the command line, and
     hints must still be delivered when the concurrency is capped.
     """
+    # Make hints replayable quickly. Error injections are disabled in release mode,
+    # where this has no effect.
+    config = {"error_injections_at_startup": ["decrease_hints_flush_period"]}
     # 0 is the default and means "8 * shard_count", so it's deliberately left unset.
-    config = None
     if cmdline is None and max_hinted_handoff_concurrency != 0:
-        config = {"max_hinted_handoff_concurrency": max_hinted_handoff_concurrency}
+        config["max_hinted_handoff_concurrency"] = max_hinted_handoff_concurrency
 
     servers = await manager.servers_add(2, cmdline=cmdline, config=config, auto_rack_dc="dc1")
     s1, s2 = servers
@@ -1281,7 +1291,10 @@ async def test_hints_switch_config_in_runtime_via_http_api(manager: ScyllaCluste
     # the configuration file and would prevent the option from being reloaded at runtime.
     # Multiple shards are used so that we also check that the filtering is updated on all of them.
     cmdline = ["--smp", "3", "--logger-log-level", "hints_manager=trace"]
-    config = {"hinted_handoff_enabled": "false"}
+    # Make hints replayable quickly. Error injections are disabled in release mode,
+    # where this has no effect.
+    config = {"hinted_handoff_enabled": "false",
+              "error_injections_at_startup": ["decrease_hints_flush_period"]}
     s1, s2, s3 = await manager.servers_add(3, cmdline=cmdline, config=config, property_file=[
         {"dc": "dc1", "rack": "rack1"},
         {"dc": "dc2", "rack": "rack1"},
@@ -1397,6 +1410,7 @@ async def test_hintedhandoff_sync_point_api(manager: ScyllaClusterManager):
                 pytest.fail(f"Got unexpected failure: {e}")
 
     s1, s2 = await manager.servers_add(2, cmdline=["--smp", "3", "--logger-log-level", "hints_manager=trace"],
+                                       config={"error_injections_at_startup": ["decrease_hints_flush_period"]},
                                        property_file={"dc": "dc1", "rack": "r1"})
 
     # We are using RF=1, so roughly half of the writes will be written as hints
@@ -1595,7 +1609,10 @@ async def test_hint_storage_proxy_metrics(manager: ScyllaClusterManager):
     received_total_metric = "scylla_storage_proxy_replica_received_hints_total"
     received_bytes_total_metric = "scylla_storage_proxy_replica_received_hints_bytes_total"
 
-    s1, s2 = await manager.servers_add(2, auto_rack_dc="dc1")
+    # Make hints replayable quickly. Error injections are disabled in release mode,
+    # where this has no effect.
+    config = {"error_injections_at_startup": ["decrease_hints_flush_period"]}
+    s1, s2 = await manager.servers_add(2, config=config, auto_rack_dc="dc1")
 
     cql = await manager.get_cql_exclusive(s1)
     await cql.run_async("CREATE KEYSPACE ks WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2}")
