@@ -549,9 +549,11 @@ async def test_hints_consistency_during_decommission(manager: ScyllaClusterManag
         await manager.server_start(server3.server_id)
         await manager.servers_see_each_other([server1, server2, server3])
 
-        # Record the current position of hints so that we can wait for them later
-        sync_points = await asyncio.gather(*[create_sync_point(manager.api.client, srv.ip_addr) for srv in (server1, server2)])
-        sync_points = list(sync_points)
+        # Record how many hints have been written so that we can wait for them later
+        await wait_until_hint_writing_settled(manager, [server1, server2])
+        written = sum(await gather_safely(*[get_hint_metrics(manager.metrics, srv.ip_addr, "written")
+                                            for srv in (server1, server2)]))
+        assert written > 0
 
         async with asyncio.TaskGroup() as tg:
             coord = await get_topology_coordinator(manager)
@@ -577,8 +579,7 @@ async def test_hints_consistency_during_decommission(manager: ScyllaClusterManag
                 await manager.api.disable_injection(srv.ip_addr, "hinted_handoff_pause_hint_replay")
 
             logger.info("Wait until hints are replayed from nodes 1 and 2")
-            await asyncio.gather(*(await_sync_point(manager.api.client, srv.ip_addr, pt, timeout=30)
-                                   for srv, pt in zip((server1, server2), sync_points)))
+            await wait_until_hints_are_sent_from(manager, [server1, server2], written)
 
             # Unpause streaming and let decommission finish
             logger.info("Unpause streaming")
@@ -618,21 +619,15 @@ async def test_hints_consistency_during_replace(manager: ScyllaClusterManager):
             await cql.run_async(SimpleStatement(f"INSERT INTO {table} (pk, v) VALUES ({i}, {i + 1})", consistency_level=ConsistencyLevel.ANY))
 
         # Hint writes are fire-and-forget (store_hint() submits do_store_hint()
-        # asynchronously via a gate). Wait for all pending hint writes to complete
-        # before creating the sync point, otherwise it may capture a stale
-        # replay position and miss some hints.
-        async def no_pending_hint_writes():
-            size = await get_hint_metrics(manager.metrics, servers[0].ip_addr, "size_of_hints_in_progress")
-            if size == 0:
-                return True
-            return None
-        await wait_for(no_pending_hint_writes, time.time() + 30)
-
-        sync_point = await create_sync_point(manager.api.client, servers[0].ip_addr)
+        # asynchronously via a gate), so wait for them to finish before reading
+        # the number of written hints.
+        await wait_until_hint_writing_settled(manager, [servers[0]])
+        written = await get_hint_metrics(manager.metrics, servers[0].ip_addr, "written")
+        assert written > 0
 
         await manager.server_add(replace_cfg=ReplaceConfig(replaced_id = servers[2].server_id, reuse_ip_addr = False, use_host_id = True))
 
-        assert await await_sync_point(manager.api.client, servers[0].ip_addr, sync_point, 30)
+        await wait_until_hints_are_sent_from(manager, [servers[0]], written)
         # Verify that all rows were recovered by the hint replay
         for i in range(100):
             assert list(await cql.run_async(f"SELECT v FROM {table} WHERE pk = {i}")) == [(i + 1,)]
@@ -743,10 +738,12 @@ async def test_hint_to_pending(manager: ScyllaClusterManager):
         await manager.others_not_see_server(servers[1].ip_addr)
 
         await cql.run_async(SimpleStatement(f"INSERT INTO {table} (pk, v) VALUES (0, 0)", consistency_level=ConsistencyLevel.ANY))
+        await wait_until_hint_writing_settled(manager, [servers[0]])
+        written = await get_hint_metrics(manager.metrics, servers[0].ip_addr, "written")
+        assert written == 1
 
         await manager.api.enable_injection(servers[0].ip_addr, "hinted_handoff_pause_hint_replay", False)
         await manager.server_start(servers[1].server_id)
-        sync_point = await create_sync_point(manager.api.client, servers[0].ip_addr)
 
         await manager.api.enable_injection(servers[0].ip_addr, "pause_after_streaming_tablet", False)
         tablet_migration = asyncio.create_task(manager.api.move_tablet(servers[0].ip_addr, ks, "t", host_ids[1], 0, host_ids[0], 0, 0))
@@ -758,7 +755,7 @@ async def test_hint_to_pending(manager: ScyllaClusterManager):
         await wait_for(migration_reached_streaming, time.time() + 60)
 
         await manager.api.disable_injection(servers[0].ip_addr, "hinted_handoff_pause_hint_replay")
-        assert await await_sync_point(manager.api.client, servers[0].ip_addr, sync_point, 30)
+        await wait_until_hints_are_sent_from(manager, [servers[0]], written)
 
         await manager.api.message_injection(servers[0].ip_addr, "pause_after_streaming_tablet")
         done, pending = await asyncio.wait([tablet_migration])
@@ -776,10 +773,7 @@ async def test_hint_to_leaving_when_reducing_rf(manager: ScyllaClusterManager):
     belongs to a tablet which is being removed due to RF--. This is needed to improve
     consistency. https://scylladb.atlassian.net/browse/SCYLLADB-287
     '''
-    # We have only one shard to force the two sets of hints to the same shard and avoid
-    # the problem with waiting for hint sync point timing out when the only hint on a shard has been dropped
-    # https://scylladb.atlassian.net/browse/SCYLLADB-1192
-    cmdline = ['--smp=1', "--logger-log-level", "hints_manager=trace"]
+    cmdline = ["--logger-log-level", "hints_manager=trace"]
     # Re-enabling stream_tablet_wait raises no topology event; the coordinator resumes on the
     # load stats refresh tick, which is 60s by default. Hint replay runs once per flush period (10s).
     config = {'tablet_load_stats_refresh_interval_in_seconds': 1,
@@ -808,12 +802,9 @@ async def test_hint_to_leaving_when_reducing_rf(manager: ScyllaClusterManager):
 
         # This will attempt to write the hints for both replicas, but only the write for the hint for host_ids[2] will succeed
         await cql.run_async(SimpleStatement(f"INSERT INTO {table} (pk, v) VALUES (0, 0)", consistency_level=ConsistencyLevel.ANY))
-
-        # Write another record, but this time disable dropping the hint. This is needed to get around the problem
-        # where waiting for the hint sync point times out when we only have a single hint which was dropped
-        # https://scylladb.atlassian.net/browse/SCYLLADB-1192
-        await manager.api.disable_injection(servers[0].ip_addr, 'drop_hint_for_host')
-        await cql.run_async(SimpleStatement(f"INSERT INTO {table} (pk, v) VALUES (1, 1)", consistency_level=ConsistencyLevel.ANY))
+        await wait_until_hint_writing_settled(manager, [servers[0]])
+        written = await get_hint_metrics(manager.metrics, servers[0].ip_addr, "written")
+        assert written == 1
 
         await manager.api.enable_injection(servers[0].ip_addr, "hinted_handoff_pause_hint_replay", one_shot=False)
         await manager.server_start(servers[1].server_id)
@@ -831,11 +822,9 @@ async def test_hint_to_leaving_when_reducing_rf(manager: ScyllaClusterManager):
             return set(["streaming"]) == set([row.stage for row in stages]) or None
         await wait_for(migration_reached_streaming, time.time() + 60)
 
-        sync_point = await create_sync_point(manager.api.client, servers[0].ip_addr)
-
         # Complete hints handoff
         await manager.api.disable_injection(servers[0].ip_addr, "hinted_handoff_pause_hint_replay")
-        assert await await_sync_point(manager.api.client, servers[0].ip_addr, sync_point, 30)
+        await wait_until_hints_are_sent_from(manager, [servers[0]], written)
 
         await manager.api.disable_injection(coord_serv.ip_addr, "stream_tablet_wait")
 
