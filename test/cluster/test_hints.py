@@ -110,6 +110,31 @@ async def wait_until_hints_are_sent_from(manager: ScyllaClusterManager, servers:
     await wait_for(check, time.time() + timeout)
 
 
+async def pause_servers(manager: ScyllaClusterManager, servers: list[ServerInfo],
+                        live_servers: list[ServerInfo]) -> None:
+    """
+    Pause `servers` and make `live_servers` see them as down right away.
+    It's a much faster way to take nodes down than stopping them.
+
+    ScyllaClusterManager.convict_on_all() can't be used here: it would also
+    send requests to the paused servers, which can't answer them.
+    """
+    host_ids = await gather_safely(*[manager.get_host_id(srv.server_id) for srv in servers])
+    await gather_safely(*[manager.server_pause(srv.server_id) for srv in servers])
+    await gather_safely(*[manager.api.convict(live.ip_addr, host_id)
+                          for live in live_servers for host_id in host_ids])
+
+
+async def unpause_servers(manager: ScyllaClusterManager, servers: list[ServerInfo],
+                          live_servers: list[ServerInfo]) -> None:
+    """
+    Unpause `servers` paused with pause_servers() and wait until they and `live_servers`
+    see each other as alive.
+    """
+    await gather_safely(*[manager.server_unpause(srv.server_id) for srv in servers])
+    await manager.servers_see_each_other(servers + live_servers)
+
+
 async def create_sync_point(client: TCPRESTClient, server_ip: IPAddress, target_hosts=None) -> str:
     params = {"target_hosts": target_hosts} if target_hosts else None
     response = await client.post_json(
@@ -283,15 +308,14 @@ async def test_sync_point(manager: ScyllaClusterManager):
         table = f"{ks}.t"
         await cql.run_async(f"CREATE TABLE {table} (pk int primary key, v int)")
 
-        await manager.server_stop_gracefully(node2.server_id)
-        await manager.server_stop_gracefully(node3.server_id)
+        await pause_servers(manager, [node2, node3], live_servers=[node1])
 
-        await manager.server_not_sees_other_server(node1.ip_addr, node2.ip_addr)
-        await manager.server_not_sees_other_server(node1.ip_addr, node3.ip_addr)
-
+        # The driver doesn't know that the paused nodes are down,
+        # so make sure it doesn't send requests to them.
+        cql1 = await manager.get_cql_exclusive(node1)
         mutation_count = 5
         for primary_key in range(mutation_count):
-            await cql.run_async(SimpleStatement(f"INSERT INTO {table} (pk, v) VALUES ({primary_key}, {primary_key})", consistency_level=ConsistencyLevel.ONE))
+            await cql1.run_async(SimpleStatement(f"INSERT INTO {table} (pk, v) VALUES ({primary_key}, {primary_key})", consistency_level=ConsistencyLevel.ONE))
 
         # Mutations need to be applied to hinted handoff's commitlog before we create the sync point.
         # Otherwise, the sync point will correspond to no hints at all.
@@ -302,16 +326,14 @@ async def test_sync_point(manager: ScyllaClusterManager):
 
         sync_point1 = await create_sync_point(manager.api.client, node1.ip_addr)
 
-        await manager.server_start(node2.server_id)
-        await manager.server_sees_other_server(node1.ip_addr, node2.ip_addr)
+        await unpause_servers(manager, [node2], live_servers=[node1])
 
         # Once the hints towards node2 have been sent, only the hints towards node3
         # can keep the sync point from being reached.
         await wait_until_hints_are_sent_from(manager, [node1], mutation_count)
         assert not (await await_sync_point(manager.api.client, node1.ip_addr, sync_point1, 0))
 
-        await manager.server_start(node3.server_id)
-        await manager.server_sees_other_server(node1.ip_addr, node3.ip_addr)
+        await unpause_servers(manager, [node3], live_servers=[node1, node2])
 
         assert await await_sync_point(manager.api.client, node1.ip_addr, sync_point1, 30)
 
@@ -351,8 +373,7 @@ async def test_discard_hint_segments_up_to_sync_point(manager: ScyllaClusterMana
                         "'replication_factor': 2}")
     await cql.run_async("CREATE TABLE ks.tbl (pk int PRIMARY KEY, v int)")
 
-    await manager.server_stop_gracefully(node2.server_id)
-    await manager.server_not_sees_other_server(node1.ip_addr, node2.ip_addr)
+    await pause_servers(manager, [node2], live_servers=[node1])
 
     stmt = cql.prepare("INSERT INTO ks.tbl (pk, v) VALUES (?, ?)")
     stmt.consistency_level = ConsistencyLevel.ONE
@@ -415,7 +436,7 @@ async def test_discard_hint_segments_up_to_sync_point(manager: ScyllaClusterMana
 
     sync_point = await create_sync_point(manager.api.client, node1.ip_addr)
 
-    await manager.server_start(node2.server_id)
+    await unpause_servers(manager, [node2], live_servers=[node1])
     assert await await_sync_point(manager.api.client, node1.ip_addr, sync_point, timeout=120)
 
     metrics = await get_all_hint_metrics(manager.metrics, node1.ip_addr)
@@ -425,7 +446,7 @@ async def test_discard_hint_segments_up_to_sync_point(manager: ScyllaClusterMana
     assert metrics["sent_total"] >= len(preserved_keys), f"Too few hints have been sent: {metrics}"
 
     # Hints are the only way the written rows could have reached node2.
-    await manager.server_stop_gracefully(node1.server_id)
+    await pause_servers(manager, [node1], live_servers=[node2])
     cql = await manager.get_cql_exclusive(node2)
 
     await assert_rows_present(cql, "ks.tbl", "pk", discarded_keys, present=False)
@@ -460,9 +481,7 @@ async def test_discard_hint_segments_only_for_sync_point_hosts(manager: ScyllaCl
                         "'replication_factor': 3}")
     await cql.run_async("CREATE TABLE ks.tbl (pk int PRIMARY KEY, v int)")
 
-    await gather_safely(*[manager.server_stop_gracefully(srv.server_id) for srv in (node2, node3)])
-    await manager.server_not_sees_other_server(node1.ip_addr, node2.ip_addr)
-    await manager.server_not_sees_other_server(node1.ip_addr, node3.ip_addr)
+    await pause_servers(manager, [node2, node3], live_servers=[node1])
 
     stmt = cql.prepare("INSERT INTO ks.tbl (pk, v) VALUES (?, ?)")
     stmt.consistency_level = ConsistencyLevel.ONE
@@ -483,8 +502,7 @@ async def test_discard_hint_segments_only_for_sync_point_hosts(manager: ScyllaCl
     # All segments are in place now, so let the hint sender refresh freely.
     await manager.api.disable_injection(node1.ip_addr, "hinted_handoff_skip_periodic_flush")
 
-    await gather_safely(*[manager.server_start(srv.server_id) for srv in (node2, node3)])
-    await manager.servers_see_each_other([node1, node2, node3])
+    await unpause_servers(manager, [node2, node3], live_servers=[node1])
     assert await await_sync_point(manager.api.client, node1.ip_addr, sync_point, timeout=120)
 
     metrics = await get_all_hint_metrics(manager.metrics, node1.ip_addr)
@@ -634,7 +652,10 @@ async def test_draining_hints(manager: ScyllaClusterManager):
     This test verifies that all hints are drained when a node is being decommissioned.
     """
 
-    s1, s2, s3 = await manager.servers_add(3, auto_rack_dc="dc")
+    # The tablet load balancer, which drives the decommission, needs the tablet load stats
+    # of all nodes. Those of a node that's been paused are only refreshed periodically.
+    config = {"tablet_load_stats_refresh_interval_in_seconds": 1}
+    s1, s2, s3 = await manager.servers_add(3, config=config, auto_rack_dc="dc")
 
     cql = await manager.get_cql_exclusive(s1)
 
@@ -643,8 +664,7 @@ async def test_draining_hints(manager: ScyllaClusterManager):
     await cql.run_async("CREATE KEYSPACE ks WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3}")
     await cql.run_async("CREATE TABLE ks.t (pk int PRIMARY KEY, v int)")
 
-    await manager.server_stop_gracefully(s2.server_id)
-    await manager.server_not_sees_other_server(s1.ip_addr, s2.ip_addr)
+    await pause_servers(manager, [s2], live_servers=[s1, s3])
 
     # s1 coordinates all of the writes and s2 is a replica of every key,
     # so every write generates a hint towards s2 on s1.
@@ -656,7 +676,7 @@ async def test_draining_hints(manager: ScyllaClusterManager):
     await wait_until_hint_writing_settled(manager, [s1])
     assert await get_hint_metrics(manager.metrics, s1.ip_addr, "written") == row_count
     sync_point = await create_sync_point(manager.api.client, s1.ip_addr)
-    await manager.server_start(s2.server_id)
+    await unpause_servers(manager, [s2], live_servers=[s1, s3])
 
     await cql.run_async(f"ALTER KEYSPACE ks WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'dc': {[s2.rack, s3.rack]}}}")
     async with asyncio.TaskGroup() as tg:
@@ -721,8 +741,8 @@ async def test_hint_to_pending(manager: ScyllaClusterManager):
     """
     This test reproduces the scenario where sending a hint to a pending replica is needed
     for consistency as in https://github.com/scylladb/scylladb/issues/19835.
-    In the test, we have 2 servers and a table with RF=1. One server is stopped, and we
-    perform a write generating a hint to it. Then, we start the stopped server again and
+    In the test, we have 2 servers and a table with RF=1. One server is paused, and we
+    perform a write generating a hint to it. Then, we unpause the server and
     immediately request a tablet migration from that server. The hint is sent after the
     tablet migration performs streaming but before it completes. The order of operations
     is induced using error injections.
@@ -745,8 +765,7 @@ async def test_hint_to_pending(manager: ScyllaClusterManager):
             # We'll use server 0 as the source of the hint, so the tablet replica needs to be on server 1
             await manager.api.move_tablet(servers[0].ip_addr, ks, "t", replica[0], replica[1], host_ids[1], 0, 0)
 
-        await manager.server_stop_gracefully(servers[1].server_id)
-        await manager.others_not_see_server(servers[1].ip_addr)
+        await pause_servers(manager, [servers[1]], live_servers=[servers[0]])
 
         await cql.run_async(SimpleStatement(f"INSERT INTO {table} (pk, v) VALUES (0, 0)", consistency_level=ConsistencyLevel.ANY))
         await wait_until_hint_writing_settled(manager, [servers[0]])
@@ -754,7 +773,7 @@ async def test_hint_to_pending(manager: ScyllaClusterManager):
         assert written == 1
 
         await manager.api.enable_injection(servers[0].ip_addr, "hinted_handoff_pause_hint_replay", False)
-        await manager.server_start(servers[1].server_id)
+        await unpause_servers(manager, [servers[1]], live_servers=[servers[0]])
 
         await manager.api.enable_injection(servers[0].ip_addr, "pause_after_streaming_tablet", False)
         tablet_migration = asyncio.create_task(manager.api.move_tablet(servers[0].ip_addr, ks, "t", host_ids[1], 0, host_ids[0], 0, 0))
@@ -802,11 +821,8 @@ async def test_hint_to_leaving_when_reducing_rf(manager: ScyllaClusterManager):
         await cql.run_async(f"CREATE TABLE {table} (pk int primary key, v int) WITH tablets = {{'min_tablet_count': 1}};")
         host_ids = [await manager.get_host_id(server.server_id) for server in servers]
 
-        # Stop the servers with replicas
-        await manager.server_stop_gracefully(servers[1].server_id)
-        await manager.others_not_see_server(servers[1].ip_addr)
-        await manager.server_stop_gracefully(servers[2].server_id)
-        await manager.others_not_see_server(servers[2].ip_addr)
+        # Take down the servers with replicas
+        await pause_servers(manager, servers[1:], live_servers=[servers[0]])
 
         # This will cause the hint for host_ids[1] to be dropped
         await manager.api.enable_injection(servers[0].ip_addr, 'drop_hint_for_host', one_shot=False, parameters={'hint_host_dst': host_ids[1]})
@@ -818,8 +834,7 @@ async def test_hint_to_leaving_when_reducing_rf(manager: ScyllaClusterManager):
         assert written == 1
 
         await manager.api.enable_injection(servers[0].ip_addr, "hinted_handoff_pause_hint_replay", one_shot=False)
-        await manager.server_start(servers[1].server_id)
-        await manager.server_start(servers[2].server_id)
+        await unpause_servers(manager, servers[1:], live_servers=[servers[0]])
 
         coord = await get_topology_coordinator(manager)
         coord_serv = await manager.find_server_by_host_id(servers, coord)
@@ -990,8 +1005,7 @@ async def test_hints_basic_check(manager: ScyllaClusterManager):
     await cql.run_async("CREATE KEYSPACE ks WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2}")
     await cql.run_async("CREATE TABLE ks.t (pk int PRIMARY KEY, v int)")
 
-    await manager.server_stop_gracefully(s2.server_id)
-    await manager.others_not_see_server(s2.ip_addr)
+    await pause_servers(manager, [s2], live_servers=[s1])
 
     await cql.run_async(SimpleStatement("INSERT INTO ks.t (pk, v) VALUES (0, 1)",
                                         consistency_level=ConsistencyLevel.ONE))
@@ -1001,11 +1015,11 @@ async def test_hints_basic_check(manager: ScyllaClusterManager):
     written = await get_hint_metrics(manager.metrics, s1.ip_addr, "written")
     assert written > 0
 
-    await manager.server_start(s2.server_id)
+    await unpause_servers(manager, [s2], live_servers=[s1])
     await wait_until_hints_are_sent_from(manager, [s1], written)
 
     cql = await manager.get_cql_exclusive(s2)
-    await manager.server_stop_gracefully(s1.server_id)
+    await pause_servers(manager, [s1], live_servers=[s2])
 
     rows = list(await cql.run_async(SimpleStatement("SELECT v FROM ks.t WHERE pk = 0",
                                                     consistency_level=ConsistencyLevel.ONE)))
@@ -1028,8 +1042,7 @@ async def test_hints_counter(manager: ScyllaClusterManager):
                         "'replication_factor': 2}")
     await cql.run_async("CREATE TABLE ks.tbl (pk int PRIMARY KEY, c counter) WITH speculative_retry = 'NONE'")
 
-    await manager.server_stop_gracefully(s2.server_id)
-    await manager.others_not_see_server(s2.ip_addr)
+    await pause_servers(manager, [s2], live_servers=[s1])
 
     # Counter updates need at least CL=ONE, they can't use CL=ANY.
     stmt = cql.prepare("UPDATE ks.tbl SET c = c + ? WHERE pk = ?")
@@ -1042,9 +1055,8 @@ async def test_hints_counter(manager: ScyllaClusterManager):
 
     await manager.api.enable_injection(s1.ip_addr, "hinted_handoff_pause_hint_replay", one_shot=False)
 
-    logger.info("Starting s2...")
-    await manager.server_start(s2.server_id)
-    await manager.servers_see_each_other([s1, s2])
+    logger.info("Unpausing s2...")
+    await unpause_servers(manager, [s2], live_servers=[s1])
 
     # The new node makes some of the stored hints orphaned.
     logger.info("Adding s3...")
@@ -1064,7 +1076,7 @@ async def test_hints_counter(manager: ScyllaClusterManager):
     # different code path for sending and we want to test them both.
     #
     # We can check if values written by both paths have sensible values
-    # by stopping node1 and reading with CL=ONE.
+    # by taking node1 down and reading with CL=ONE.
     # - Rows with nodes 1 & 2 as replicas were written to node2
     #   by non-orphaned hints. We will read those rows from node2 only,
     #   because node1 is down.
@@ -1075,7 +1087,7 @@ async def test_hints_counter(manager: ScyllaClusterManager):
     # - Rows with nodes 2 & 3 as replicas will be read from either node2
     #   or node3. They should have correct value, but it won't be obvious
     #   from which node the value came if it is incorrect.
-    await manager.server_stop_gracefully(s1.server_id)
+    await pause_servers(manager, [s1], live_servers=[s2, s3])
 
     cql = await manager.get_cql_exclusive(s3)
     rows = await cql.run_async(SimpleStatement(
@@ -1090,7 +1102,11 @@ async def test_hints_decom(manager: ScyllaClusterManager):
     Verify that hints are drained when a target for hints is decommissioned.
     """
     cmdline = ["--logger-log-level", "hints_manager=trace:storage_proxy=trace"]
-    s1, s2, s3 = await manager.servers_add(3, cmdline=cmdline, property_file={"dc": "dc1", "rack": "r1"})
+    # The tablet load balancer, which drives the decommission, needs the tablet load stats
+    # of all nodes. Those of a node that's been paused are only refreshed periodically.
+    config = {"tablet_load_stats_refresh_interval_in_seconds": 1}
+    s1, s2, s3 = await manager.servers_add(3, cmdline=cmdline, config=config,
+                                           property_file={"dc": "dc1", "rack": "r1"})
 
     s1_hints_dir = await get_hints_dir(manager, s1)
     s2_hints_dir = await get_hints_dir(manager, s2)
@@ -1101,8 +1117,7 @@ async def test_hints_decom(manager: ScyllaClusterManager):
                         "'replication_factor': 1}")
     await cql.run_async("CREATE TABLE ks.tbl (pk int PRIMARY KEY, v int)")
 
-    await manager.server_stop_gracefully(s3.server_id)
-    await manager.others_not_see_server(s3.ip_addr)
+    await pause_servers(manager, [s3], live_servers=[s1, s2])
 
     row_count = 100
     await gather_safely(*[cql.run_async(SimpleStatement(
@@ -1117,8 +1132,7 @@ async def test_hints_decom(manager: ScyllaClusterManager):
     log = await manager.server_open_log(s1.server_id)
     mark = await log.mark()
 
-    await manager.server_start(s3.server_id)
-    await manager.servers_see_each_other([s1, s2, s3])
+    await unpause_servers(manager, [s3], live_servers=[s1, s2])
 
     await manager.decommission_node(s3.server_id)
     await log.wait_for(f"Draining starts for {s3_host_id}", from_mark=mark)
@@ -1141,48 +1155,51 @@ async def test_hints_dont_revive(manager: ScyllaClusterManager):
     # where this has no effect.
     config = {"error_injections_at_startup": ["decrease_hints_flush_period"]}
     s1, s2 = await manager.servers_add(2, config=config, auto_rack_dc="dc1")
+    s1_host_id, s2_host_id = await gather_safely(*[manager.get_host_id(srv.server_id) for srv in (s1, s2)])
 
-    cql = await manager.get_cql_exclusive(s1)
-    await cql.run_async("CREATE KEYSPACE ks WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2}")
-    await cql.run_async("CREATE TABLE ks.t (pk int PRIMARY KEY, v int)")
+    cql1 = await manager.get_cql_exclusive(s1)
+    cql2 = await manager.get_cql_exclusive(s2)
+    await cql1.run_async("CREATE KEYSPACE ks WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2}")
+    await cql1.run_async("CREATE TABLE ks.t (pk int PRIMARY KEY, v int)")
 
-    await manager.server_stop_gracefully(s2.server_id)
-    await manager.others_not_see_server(s2.ip_addr)
+    await pause_servers(manager, [s2], live_servers=[s1])
 
-    await cql.run_async(SimpleStatement("INSERT INTO ks.t (pk, v) VALUES (0, 1)",
-                                        consistency_level=ConsistencyLevel.ONE))
+    await cql1.run_async(SimpleStatement("INSERT INTO ks.t (pk, v) VALUES (0, 1)",
+                                         consistency_level=ConsistencyLevel.ONE))
     await wait_until_hint_writing_settled(manager, [s1])
     s1_written = await get_hint_metrics(manager.metrics, s1.ip_addr, "written")
     assert s1_written > 0
 
-    await manager.server_stop_gracefully(s1.server_id)
-    await manager.server_start(s2.server_id)
+    # Swap the nodes. s1 has to be down before s2 is back. Otherwise,
+    # s1 could replay its hint before s2 deletes the row.
+    await pause_servers(manager, [s1], live_servers=[])
+    await manager.server_unpause(s2.server_id)
+    await manager.api.convict(s2.ip_addr, s1_host_id)
 
-    cql = await manager.get_cql_exclusive(s2)
-    await cql.run_async(SimpleStatement("DELETE FROM ks.t WHERE pk = 0",
-                                        consistency_level=ConsistencyLevel.ONE))
+    await cql2.run_async(SimpleStatement("DELETE FROM ks.t WHERE pk = 0",
+                                         consistency_level=ConsistencyLevel.ONE))
     await wait_until_hint_writing_settled(manager, [s2])
     s2_written = await get_hint_metrics(manager.metrics, s2.ip_addr, "written")
     assert s2_written > 0
 
-    await manager.server_start(s1.server_id)
+    await unpause_servers(manager, [s1], live_servers=[s2])
     await wait_until_hints_are_sent_from(manager, [s1], s1_written)
     await wait_until_hints_are_sent_from(manager, [s2], s2_written)
 
-    await manager.server_stop_gracefully(s1.server_id)
-    results = await cql.run_async(SimpleStatement(
-        "SELECT * FROM ks.t WHERE pk = 0",
-        consistency_level=ConsistencyLevel.ONE))
-    assert len(results) == 0
+    async def check_row_deleted(cql) -> None:
+        results = await cql.run_async(SimpleStatement(
+            "SELECT * FROM ks.t WHERE pk = 0",
+            consistency_level=ConsistencyLevel.ONE))
+        assert len(results) == 0
 
-    await manager.server_stop_gracefully(s2.server_id)
-    await manager.server_start(s1.server_id)
+    # Read the row from each node alone.
+    await pause_servers(manager, [s1], live_servers=[s2])
+    await check_row_deleted(cql2)
 
-    cql = await manager.get_cql_exclusive(s1)
-    results = await cql.run_async(SimpleStatement(
-        "SELECT * FROM ks.t WHERE pk = 0",
-        consistency_level=ConsistencyLevel.ONE))
-    assert len(results) == 0
+    await pause_servers(manager, [s2], live_servers=[])
+    await manager.server_unpause(s1.server_id)
+    await manager.api.convict(s1.ip_addr, s2_host_id)
+    await check_row_deleted(cql1)
 
 
 async def validate_max_hinted_handoff_concurrency(manager: ScyllaClusterManager, server: ServerInfo,
@@ -1222,20 +1239,18 @@ async def test_support_max_hh_concurrency_param(manager: ScyllaClusterManager,
     await cql.run_async("CREATE KEYSPACE ks WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2}")
     await cql.run_async("CREATE TABLE ks.t (pk int PRIMARY KEY, v int)")
 
-    await manager.server_stop_gracefully(s1.server_id)
-    await manager.others_not_see_server(s1.ip_addr)
+    await pause_servers(manager, [s1], live_servers=[s2])
 
     row_count = 100
     stmt = cql.prepare("INSERT INTO ks.t (pk, v) VALUES (?, ?)")
     stmt.consistency_level = ConsistencyLevel.ONE
     await gather_safely(*[cql.run_async(stmt, (pk, pk + 1)) for pk in range(row_count)])
 
-    await manager.server_start(s1.server_id)
-    await manager.servers_see_each_other([s1, s2])
+    await unpause_servers(manager, [s1], live_servers=[s2])
 
     await wait_until_hints_are_sent_from(manager, [s2], expected_count=row_count)
 
-    await manager.server_stop_gracefully(s2.server_id)
+    await pause_servers(manager, [s2], live_servers=[s1])
 
     cql = await manager.get_cql_exclusive(s1)
     results = await cql.run_async(SimpleStatement(
@@ -1302,11 +1317,7 @@ async def test_hints_switch_config_in_runtime_via_http_api(manager: ScyllaCluste
                         "{'class': 'NetworkTopologyStrategy', 'dc1': 1, 'dc2': 1, 'dc3': 1}")
     await cql.run_async("CREATE TABLE ks.t (pk int PRIMARY KEY, v int)")
 
-    await gather_safely(*[
-        manager.server_stop_gracefully(s2.server_id),
-        manager.server_stop_gracefully(s3.server_id)])
-    await manager.server_not_sees_other_server(s1.ip_addr, s2.ip_addr)
-    await manager.server_not_sees_other_server(s1.ip_addr, s3.ip_addr)
+    await pause_servers(manager, [s2, s3], live_servers=[s1])
 
     stmt = cql.prepare("INSERT INTO ks.t (pk, v) VALUES (?, ?)")
     stmt.consistency_level = ConsistencyLevel.ONE
@@ -1328,9 +1339,7 @@ async def test_hints_switch_config_in_runtime_via_http_api(manager: ScyllaCluste
     await insert(keys_dc3_only)
     expected_hints += len(keys_dc3_only)
 
-    await gather_safely(*[
-        manager.server_start(s2.server_id),
-        manager.server_start(s3.server_id)])
+    await unpause_servers(manager, [s2, s3], live_servers=[s1])
 
     await update_hh_enabled_via_http_api(manager, s1, "true")
     await wait_until_hints_are_sent_from(manager, [s1], expected_hints)
@@ -1394,9 +1403,14 @@ async def test_hintedhandoff_sync_point_api(manager: ScyllaClusterManager):
             else:
                 pytest.fail(f"Got unexpected failure: {e}")
 
+    config = {
+        "error_injections_at_startup": ["decrease_hints_flush_period"],
+        # The tablet load balancer, which drives the decommission in subtest 5, needs the tablet
+        # load stats of all nodes. Those of a node that's been paused are only refreshed periodically.
+        "tablet_load_stats_refresh_interval_in_seconds": 1,
+    }
     s1, s2 = await manager.servers_add(2, cmdline=["--smp", "3", "--logger-log-level", "hints_manager=trace"],
-                                       config={"error_injections_at_startup": ["decrease_hints_flush_period"]},
-                                       property_file={"dc": "dc1", "rack": "r1"})
+                                       config=config, property_file={"dc": "dc1", "rack": "r1"})
 
     # We are using RF=1, so roughly half of the writes will be written as hints
     keys1 = list(range(100))
@@ -1421,9 +1435,8 @@ async def test_hintedhandoff_sync_point_api(manager: ScyllaClusterManager):
 
     logger.info("SUBTEST 1: Create a hint sync point, unpause hint replay and wait until they are replayed to the end")
 
-    logger.info("Stopping s2...")
-    await manager.server_stop_gracefully(s2.server_id)
-    await manager.others_not_see_server(s2.ip_addr)
+    logger.info("Pausing s2...")
+    await pause_servers(manager, [s2], live_servers=[s1])
 
     logger.info("Pause hint replay on s1")
     await manager.api.enable_injection(s1.ip_addr, "hinted_handoff_pause_hint_replay", one_shot=False)
@@ -1431,8 +1444,8 @@ async def test_hintedhandoff_sync_point_api(manager: ScyllaClusterManager):
     logger.info(f"Inserting {len(keys1)} keys...")
     await insert(keys1)
 
-    logger.info("Starting s2...")
-    await start_node(s2)
+    logger.info("Unpausing s2...")
+    await unpause_servers(manager, [s2], live_servers=[s1])
 
     logger.info("Create hint sync point")
     sync_point_id = await get_sync_point()
@@ -1458,9 +1471,8 @@ async def test_hintedhandoff_sync_point_api(manager: ScyllaClusterManager):
 
     logger.info("SUBTEST 2: Create a hint sync point, shutdown the waiting node and observe the failure")
 
-    logger.info("Stopping s2...")
-    await manager.server_stop_gracefully(s2.server_id)
-    await manager.others_not_see_server(s2.ip_addr)
+    logger.info("Pausing s2...")
+    await pause_servers(manager, [s2], live_servers=[s1])
 
     logger.info("Pause hint replay on s1")
     await manager.api.enable_injection(s1.ip_addr, "hinted_handoff_pause_hint_replay", one_shot=False)
@@ -1468,8 +1480,8 @@ async def test_hintedhandoff_sync_point_api(manager: ScyllaClusterManager):
     logger.info(f"Inserting {len(keys2)} keys...")
     await insert(keys2)
 
-    logger.info("Starting s2...")
-    await start_node(s2)
+    logger.info("Unpausing s2...")
+    await unpause_servers(manager, [s2], live_servers=[s1])
 
     logger.info("Create hint sync point...")
     sync_point_id = await get_sync_point()
@@ -1495,9 +1507,8 @@ async def test_hintedhandoff_sync_point_api(manager: ScyllaClusterManager):
 
     logger.info("SUBTEST 3: Create a hint sync point, restart with different shard count and wait until hints are replayed")
 
-    logger.info("Stopping s2...")
-    await manager.server_stop_gracefully(s2.server_id)
-    await manager.others_not_see_server(s2.ip_addr)
+    logger.info("Pausing s2...")
+    await pause_servers(manager, [s2], live_servers=[s1])
 
     logger.info("Pause hint replay on s1")
     await manager.api.enable_injection(s1.ip_addr, "hinted_handoff_pause_hint_replay", one_shot=False)
@@ -1505,8 +1516,8 @@ async def test_hintedhandoff_sync_point_api(manager: ScyllaClusterManager):
     logger.info(f"Inserting {len(keys3)} keys...")
     await insert(keys3)
 
-    logger.info("Starting s2...")
-    await start_node(s2)
+    logger.info("Unpausing s2...")
+    await unpause_servers(manager, [s2], live_servers=[s1])
 
     logger.info("Create hint sync point")
     sync_point_id = await get_sync_point()
@@ -1548,9 +1559,8 @@ async def test_hintedhandoff_sync_point_api(manager: ScyllaClusterManager):
 
     logger.info("SUBTEST 5: Create a hint sync point and decommission the target node - waiting should succeed")
 
-    logger.info("Stopping s2...")
-    await manager.server_stop_gracefully(s2.server_id)
-    await manager.others_not_see_server(s2.ip_addr)
+    logger.info("Pausing s2...")
+    await pause_servers(manager, [s2], live_servers=[s1])
 
     logger.info("Pause hint replay on s1")
     await manager.api.enable_injection(s1.ip_addr, "hinted_handoff_pause_hint_replay", one_shot=False)
@@ -1558,8 +1568,8 @@ async def test_hintedhandoff_sync_point_api(manager: ScyllaClusterManager):
     logger.info(f"Inserting {len(keys5)} keys...")
     await insert(keys5)
 
-    logger.info("Starting s2...")
-    await start_node(s2)
+    logger.info("Unpausing s2...")
+    await unpause_servers(manager, [s2], live_servers=[s1])
 
     logger.info("Create hint sync point on s1")
     sync_point_id = await get_sync_point()
@@ -1603,8 +1613,7 @@ async def test_hint_storage_proxy_metrics(manager: ScyllaClusterManager):
     await cql.run_async("CREATE KEYSPACE ks WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2}")
     await cql.run_async("CREATE TABLE ks.t (pk int PRIMARY KEY, v int)")
 
-    await manager.server_stop_gracefully(s2.server_id)
-    await manager.others_not_see_server(s2.ip_addr)
+    await pause_servers(manager, [s2], live_servers=[s1])
 
     await cql.run_async(SimpleStatement("INSERT INTO ks.t (pk, v) VALUES (0, 1)",
                                         consistency_level=ConsistencyLevel.ONE))
@@ -1612,10 +1621,10 @@ async def test_hint_storage_proxy_metrics(manager: ScyllaClusterManager):
     written = await get_hint_metrics(manager.metrics, s1.ip_addr, "written")
     assert written > 0
 
-    await manager.server_start(s2.server_id)
+    await unpause_servers(manager, [s2], live_servers=[s1])
     await wait_until_hints_are_sent_from(manager, [s1], written)
 
-    sent = await get_hint_metrics(manager.metrics, s1.ip_addr, "sent_total")
+    sent =await get_hint_metrics(manager.metrics, s1.ip_addr, "sent_total")
 
     async def metrics_agree():
         received = await get_metric(manager.metrics, s2.ip_addr, received_total_metric)
@@ -1659,8 +1668,8 @@ async def test_hint_retransmission_keeps_column_mappings(manager: ScyllaClusterM
     Reproducing that requires the segment to be retransmitted from a position *past* the
     entry holding the column mapping, i.e. some hints of the segment must be applied before
     the rest fail. The test arranges exactly that:
-      1. node2 is stopped and hints for it accumulate on node1 while replay is paused,
-      2. node2 is restarted with hint application blocked on an error injection, so that we
+      1. node2 is paused and hints for it accumulate on node1 while replay is paused,
+      2. node2 is unpaused with hint application blocked on an error injection, so that we
          decide which hints get applied,
       3. the first hint of the segment - the one whose entry carries the column mapping - is
          let through,
@@ -1701,9 +1710,8 @@ async def test_hint_retransmission_keeps_column_mappings(manager: ScyllaClusterM
                         f"{{'class': 'NetworkTopologyStrategy', 'replication_factor': 2}}")
     await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
 
-    logger.info("Stopping node 2 so that every write stores a hint on node 1")
-    await manager.server_stop_gracefully(node2.server_id)
-    await manager.others_not_see_server(node2.ip_addr)
+    logger.info("Pausing node 2 so that every write stores a hint on node 1")
+    await pause_servers(manager, [node2], live_servers=[node1])
 
     # Replay must not start before we are able to control which hints get applied.
     await manager.api.enable_injection(node1.ip_addr, "hinted_handoff_pause_hint_replay", one_shot=False)
@@ -1717,9 +1725,8 @@ async def test_hint_retransmission_keeps_column_mappings(manager: ScyllaClusterM
     written = await get_hint_metrics(manager.metrics, node1.ip_addr, "written")
     assert written > 0
 
-    logger.info("Restarting node 2 with hint application blocked on an injection")
-    await manager.server_start(node2.server_id)
-    await manager.servers_see_each_other([node1, node2])
+    logger.info("Unpausing node 2 and blocking hint application on it with an injection")
+    await unpause_servers(manager, [node2], live_servers=[node1])
     await manager.api.enable_injection(node2.ip_addr, "database_apply", one_shot=False,
                                        parameters={"ks_name": ks_name, "cf_name": cf_name, "what": "wait"})
 
@@ -1777,7 +1784,7 @@ async def test_hint_retransmission_keeps_column_mappings(manager: ScyllaClusterM
     # The metric above is the direct regression check. Verify the data as well so that the
     # test keeps its meaning if hints ever get lost without being accounted as discarded.
     logger.info("Verifying that node 2 received all the rows")
-    await manager.server_stop_gracefully(node1.server_id)
+    await pause_servers(manager, [node1], live_servers=[node2])
     cql = await manager.get_cql_exclusive(node2)
     rows = await cql.run_async(SimpleStatement(f"SELECT pk, v FROM {table}",
                                                 consistency_level=ConsistencyLevel.ONE))
