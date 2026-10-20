@@ -294,7 +294,10 @@ async def test_sync_point(manager: ScyllaClusterManager):
         await manager.server_start(node2.server_id)
         await manager.server_sees_other_server(node1.ip_addr, node2.ip_addr)
 
-        assert not (await await_sync_point(manager.api.client, node1.ip_addr, sync_point1, 3))
+        # Once the hints towards node2 have been sent, only the hints towards node3
+        # can keep the sync point from being reached.
+        await wait_until_hints_are_sent_from(manager, [node1], mutation_count)
+        assert not (await await_sync_point(manager.api.client, node1.ip_addr, sync_point1, 0))
 
         await manager.server_start(node3.server_id)
         await manager.server_sees_other_server(node1.ip_addr, node3.ip_addr)
