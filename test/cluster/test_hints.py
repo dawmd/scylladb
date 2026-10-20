@@ -199,14 +199,6 @@ async def test_write_cl_any_to_dead_node_generates_hints(manager: ScyllaClusterM
     cmdline = ["--logger-log-level", "hints_manager=trace"]
     servers = await manager.servers_add(node_count, cmdline=cmdline)
 
-    async def wait_for_hints_written(min_hint_count: int, timeout: int):
-        async def aux():
-            hints_written = await get_hint_metrics(manager.metrics, servers[0].ip_addr, "written")
-            if hints_written >= min_hint_count:
-                return True
-            return None
-        assert await wait_for(aux, time.time() + timeout)
-
     cql = manager.get_cql()
     async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}") as ks:
         uses_tablets = await keyspace_has_tablets(manager, ks)
@@ -228,7 +220,8 @@ async def test_write_cl_any_to_dead_node_generates_hints(manager: ScyllaClusterM
             await gather_safely(*[cql.run_async(stmt, (i, i + 1)) for i in range(100)])
 
             # Verify hints are written
-            await wait_for_hints_written(hints_before + 1, timeout=60)
+            await wait_until_hint_writing_settled(manager, [servers[0]])
+            assert await get_hint_metrics(manager.metrics, servers[0].ip_addr, "written") > hints_before
 
             # For dropping the keyspace
             await manager.server_start(servers[1].server_id)
@@ -291,18 +284,10 @@ async def test_sync_point(manager: ScyllaClusterManager):
 
         # Mutations need to be applied to hinted handoff's commitlog before we create the sync point.
         # Otherwise, the sync point will correspond to no hints at all.
-
-        async def check_written_hints(min_count: int) -> bool:
-            errors = await get_hint_metrics(manager.metrics, node1.ip_addr, "errors")
-            assert errors == 0, "Writing hints to disk failed"
-
-            hints = await get_hint_metrics(manager.metrics, node1.ip_addr, "written")
-            if hints >= min_count:
-                return True
-            return None
-
-        deadline = time.time() + 30
-        await wait_for(lambda: check_written_hints(2 * mutation_count), deadline)
+        await wait_until_hint_writing_settled(manager, [node1])
+        metrics = await get_all_hint_metrics(manager.metrics, node1.ip_addr)
+        assert metrics["errors"] == 0, f"Writing hints to disk failed: {metrics}"
+        assert metrics["written"] == 2 * mutation_count, f"Unexpected number of written hints: {metrics}"
 
         sync_point1 = await create_sync_point(manager.api.client, node1.ip_addr)
 
@@ -652,6 +637,7 @@ async def test_draining_hints(manager: ScyllaClusterManager):
     for i in range(1000):
         await cql.run_async(SimpleStatement(f"INSERT INTO ks.t (pk, v) VALUES ({i}, {i + 1})", consistency_level=ConsistencyLevel.ANY))
 
+    await wait_until_hint_writing_settled(manager, [s1])
     sync_point = await create_sync_point(manager.api.client, s1.ip_addr)
     await manager.server_start(s2.server_id)
 
@@ -682,6 +668,7 @@ async def test_canceling_hint_draining(manager: ScyllaClusterManager):
     for i in range(1000):
         await cql.run_async(SimpleStatement(f"INSERT INTO ks.t (pk, v) VALUES ({i}, {i + 1})", consistency_level=ConsistencyLevel.ANY))
 
+    await wait_until_hint_writing_settled(manager, [s1])
     sync_point = await create_sync_point(manager.api.client, s1.ip_addr)
 
     await manager.api.enable_injection(s1.ip_addr, "hinted_handoff_pause_hint_replay", False, {})
@@ -1034,6 +1021,9 @@ async def test_hints_counter(manager: ScyllaClusterManager):
     stmt.consistency_level = ConsistencyLevel.ONE
     expected = {pk: 100 * pk for pk in range(100)}
     await gather_safely(*[cql.run_async(stmt, (value, pk)) for pk, value in expected.items()])
+    await wait_until_hint_writing_settled(manager, [s1])
+    written = await get_hint_metrics(manager.metrics, s1.ip_addr, "written")
+    assert written == len(expected)
 
     await manager.api.enable_injection(s1.ip_addr, "hinted_handoff_pause_hint_replay", one_shot=False)
 
@@ -1045,14 +1035,11 @@ async def test_hints_counter(manager: ScyllaClusterManager):
     logger.info("Adding s3...")
     s3 = await manager.server_add(property_file=s2.property_file())
 
-    logger.info("Restarting s1 with hinted handoff enabled...")
+    logger.info("Resuming hint replay on s1...")
     await manager.api.disable_injection(s1.ip_addr, "hinted_handoff_pause_hint_replay")
     await manager.servers_see_each_other([s1, s2, s3])
 
-    async def hints_sent() -> bool | None:
-        sent = await get_hint_metrics(manager.metrics, s1.ip_addr, "sent_total")
-        return True if sent and sent >= len(expected) else None
-    await wait_for(hints_sent, time.time() + 60)
+    await wait_until_hints_are_sent_from(manager, [s1], written)
 
     # We want to check that hints for counters are sent correctly.
     # At this point, there should be 100 hints sent from node1 and node2.
