@@ -212,6 +212,7 @@ async def test_write_cl_any_to_dead_node_generates_hints(manager: ScyllaClusterM
     await cql.run_async(f"CREATE TABLE ks.t (pk int PRIMARY KEY, v int) {extra_opts}")
 
     await manager.server_stop_gracefully(servers[1].server_id)
+    await manager.server_not_sees_other_server(servers[0].ip_addr, servers[1].ip_addr)
 
     hints_before = await get_hint_metrics(manager.metrics, servers[0].ip_addr, "written")
 
@@ -245,6 +246,7 @@ async def test_limited_concurrency_of_writes(manager: ScyllaClusterManager):
     await cql.run_async("CREATE TABLE ks.t (pk int primary key, v int)")
 
     await manager.server_stop_gracefully(node2.server_id)
+    await manager.server_not_sees_other_server(node1.ip_addr, node2.ip_addr)
 
     async with inject_error(manager.api, node1.ip_addr, "slow_down_writing_hints"):
         try:
