@@ -851,7 +851,7 @@ async def test_hints_rebalance(manager: ScyllaClusterManager):
     that the hint directories of shards which no longer exist are removed, and that the hints
     are still delivered afterwards.
     """
-    config = {"error_injections_at_startup": ["decrease_hint_segment_size", "decrease_hints_flush_period"]}
+    config = {"error_injections_at_startup": ["decrease_hints_flush_period"]}
     servers = await manager.servers_add(2, cmdline=["--smp", "1"], config=config, auto_rack_dc="dc1")
     s1, s2 = servers
 
@@ -871,36 +871,26 @@ async def test_hints_rebalance(manager: ScyllaClusterManager):
     await manager.server_stop_gracefully(s2.server_id)
     await manager.others_not_see_server(s2.ip_addr)
 
-    # We cannot rely on glob listing the segments as some of them
-    # may get removed by commitlog if they're redundant.
-    async def populate_segments(min_segment_count: int) -> None:
-        # This relies on the segment storing no more than 1 MiB of data.
-        inserts_per_segment = 4500
-        # Let's give ourselves some slack to make sure that we really
-        # create those segments.
-        insert_count = (inserts_per_segment + 1500) * min_segment_count
-        batch_size = 1000
-        batch_count = insert_count // batch_size
-
-        insert_stmt = cql.prepare("INSERT INTO ks.t (pk, v) VALUES (?, ?)")
-        insert_stmt.consistency_level = ConsistencyLevel.ONE
-
-        for batch_idx in range(0, batch_count):
-            begin, end = batch_idx * batch_size, (batch_idx + 1) * batch_size
-            await gather_safely(*[cql.run_async(insert_stmt, (pk, pk)) for pk in range(begin, end)])
-            # Avoid overloading the server.
-            await wait_until_hint_writing_settled(manager, [s1])
-
-        dropped = await get_hint_metrics(manager.metrics, s1.ip_addr, "dropped")
-        errors = await get_hint_metrics(manager.metrics, s1.ip_addr, "errors")
-        assert dropped == 0, f"{s1.ip_addr} dropped hints count: {dropped}"
-        assert errors == 0, f"{s1.ip_addr} error count: {errors}"
-
-        return insert_count
-
     # Three segments should be enough to get confident rebalancing works
     # after changing SMP: 1 -> 3 -> 2.
-    expected_rows = await populate_segments(3)
+    segment_count = 3
+    rows_per_segment = 100
+    expected_rows = segment_count * rows_per_segment
+
+    insert_stmt = cql.prepare("INSERT INTO ks.t (pk, v) VALUES (?, ?)")
+    insert_stmt.consistency_level = ConsistencyLevel.ONE
+
+    # Flushing hints closes the segment they're being written to, so every
+    # iteration leaves a segment with hints behind. The hint senders also close
+    # the segments periodically, so we may end up with even more segments.
+    for i in range(segment_count):
+        keys = range(i * rows_per_segment, (i + 1) * rows_per_segment)
+        await gather_safely(*[cql.run_async(insert_stmt, (pk, pk)) for pk in keys])
+        await wait_until_hint_writing_settled(manager, [s1])
+        await flush_hints(manager.api.client, s1.ip_addr)
+
+    metrics = await get_all_hint_metrics(manager.metrics, s1.ip_addr)
+    assert metrics["written"] == expected_rows, f"Unexpected number of written hints: {metrics}"
 
     async def restart_with_smp(server_id, smp: int, hinted_handoff_enabled: bool):
         await manager.server_stop_gracefully(server_id)
@@ -913,9 +903,9 @@ async def test_hints_rebalance(manager: ScyllaClusterManager):
         async def check():
             counts = [count_hint_segments(hints_dir, s2_host_id, shard) for shard in range(num_shards)]
             logger.info(f"Hint segments per shard: {counts}")
-            # If there are no directories, the test verifies nothing.
-            # Let's not silently pass.
-            if max(counts) == 0:
+            # Segments with hints that haven't been sent must survive the restart.
+            # If they didn't, the test would verify nothing. Let's not silently pass.
+            if sum(counts) < segment_count:
                 return None
             if max(counts) - min(counts) <= 1:
                 return True
