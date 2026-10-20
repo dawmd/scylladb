@@ -181,8 +181,16 @@ async def update_hh_enabled_via_http_api(manager: ScyllaClusterManager, server: 
     assert response == expected
 
 
-async def assert_rows_present(cql, table: str, pk: str, keys, present: bool) -> None:
-    stmt = SimpleStatement(f"SELECT {pk} FROM {table}", consistency_level=ConsistencyLevel.ONE)
+async def assert_rows_present(cql, table: str, pk: str, keys, present: bool, local: bool = False) -> None:
+    """
+    Check that the rows with partition keys `keys` are all present in `table` or all absent from it.
+
+    If `local` is true, only the data stored on the node `cql` is connected to is
+    taken into account, regardless of what the other replicas store. In that case,
+    `cql` must be connected to a single node, e.g. via `get_cql_exclusive()`.
+    """
+    source = f"MUTATION_FRAGMENTS({table})" if local else table
+    stmt = SimpleStatement(f"SELECT {pk} FROM {source}", consistency_level=ConsistencyLevel.ONE)
     rows = await cql.run_async(stmt, all_pages=True)
     results = set(getattr(row, pk) for row in rows)
     keys = set(keys)
@@ -487,16 +495,10 @@ async def test_discard_hint_segments_only_for_sync_point_hosts(manager: ScyllaCl
     assert metrics["sent_total"] >= len(keys), f"Too few hints have been sent: {metrics}"
 
     # Hints are the only way the written rows could have reached node 2 and node 3.
-    await gather_safely(*[manager.server_stop_gracefully(srv.server_id) for srv in (node1, node3)])
     cql = await manager.get_cql_exclusive(node2)
-    await assert_rows_present(cql, "ks.tbl", "pk", keys, present=False)
-
-    await gather_safely(*[
-        manager.server_start(node3.server_id),
-        manager.server_stop_gracefully(node2.server_id)])
-
+    await assert_rows_present(cql, "ks.tbl", "pk", keys, present=False, local=True)
     cql = await manager.get_cql_exclusive(node3)
-    await assert_rows_present(cql, "ks.tbl", "pk", keys, present=True)
+    await assert_rows_present(cql, "ks.tbl", "pk", keys, present=True, local=True)
 
 
 @pytest.mark.skip_mode(mode='release', reason="error injections aren't enabled in release mode")
@@ -1343,22 +1345,15 @@ async def test_hints_switch_config_in_runtime_via_http_api(manager: ScyllaCluste
     await update_hh_enabled_via_http_api(manager, s1, "true")
     await wait_until_hints_are_sent_from(manager, [s1], expected_hints)
 
-    await gather_safely(*[
-        manager.server_stop_gracefully(s1.server_id),
-        manager.server_stop_gracefully(s3.server_id)])
-
     cql = await manager.get_cql_exclusive(s2)
-    await assert_rows_present(cql, "ks.t", "pk", keys_enabled, present=True)
-    await assert_rows_present(cql, "ks.t", "pk", keys_disabled, present=False)
-    await assert_rows_present(cql, "ks.t", "pk", keys_dc3_only, present=False)
-
-    await manager.server_start(s3.server_id)
-    await manager.server_stop_gracefully(s2.server_id)
+    await assert_rows_present(cql, "ks.t", "pk", keys_enabled, present=True, local=True)
+    await assert_rows_present(cql, "ks.t", "pk", keys_disabled, present=False, local=True)
+    await assert_rows_present(cql, "ks.t", "pk", keys_dc3_only, present=False, local=True)
 
     cql = await manager.get_cql_exclusive(s3)
-    await assert_rows_present(cql, "ks.t", "pk", keys_enabled, present=True)
-    await assert_rows_present(cql, "ks.t", "pk", keys_disabled, present=False)
-    await assert_rows_present(cql, "ks.t", "pk", keys_dc3_only, present=True)
+    await assert_rows_present(cql, "ks.t", "pk", keys_enabled, present=True, local=True)
+    await assert_rows_present(cql, "ks.t", "pk", keys_disabled, present=False, local=True)
+    await assert_rows_present(cql, "ks.t", "pk", keys_dc3_only, present=True, local=True)
 
 
 @pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
